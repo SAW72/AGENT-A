@@ -162,24 +162,33 @@ The enforcer hook receives:
 
 ADJ rows bypass both masks so a cancel still applies while #7 and #9 are open.
 
-Disclaimer links (#11) are `disclaimer_links` in the config. All six slots are empty strings until Lawyer fills them. The read API always returns the slots and this line:
+Disclaimer links (#11) are `disclaimer_links` in the config. Empty slots are returned as `null` until Lawyer fills them. The read API always returns the slots inside `disclaimer.links` and this line as `disclaimer.text`:
 
 > Testnet only. Not a token. Can't be transferred, sold, or redeemed. May be adjusted or cancelled, and may never convert to anything.
 
+The default eligibility hook reports API `eligibility.status` `"unverified"` and `points_withheld: true`. That is the same fail-closed mask (`eligible: false`, reason `ofac_unconfigured`): rows are stored and `points` is 0. `allowAllEligibility` is a test hook that reports `status: "eligible"` and `points_withheld: false`. If the enforcer has withheld that wallet, `points_withheld` is true even when the eligibility hook would otherwise allow the row.
+
 ## Read API
 
-Mounted on the existing claim relayer. `POST /v1/claims` auth is unchanged (`CLAIM_API_SECRET`, `x-claim-secret` or Bearer, fail-closed 503 when unset in live mode).
+Mounted on the existing claim relayer. `POST /v1/claims` auth is unchanged (`CLAIM_API_SECRET`, `x-claim-secret` or Bearer, fail-closed 503 when unset in live mode). Reputation GET routes use their own CORS policy (`REPUTATION_CORS_PAGES_ORIGIN`, `REPUTATION_CORS_PREVIEW_HOST`, `REPUTATION_CORS_LOCAL_HOSTS`). The default allows `https://agent-a-wallet-ux.pages.dev`, one-label preview hosts under `*.agent-a-wallet-ux.pages.dev`, and `http://localhost` / `http://127.0.0.1` on any port. It does not allow `*.pages.dev` and it does not set credentials. `CORS_ORIGINS` for claim routes is not widened.
 
 | Method | Path | Auth |
 | --- | --- | --- |
-| GET | `/v1/reputation/:address` | None. Rate limited (60/minute/IP, in memory, reset on cold start). |
-| GET | `/v1/reputation/:address/history` | Same. |
+| GET | `/v1/reputation/config` | None. Registered before `/{address}` so `config` is never parsed as an address. |
+| GET | `/v1/reputation/{address}` | None. Rate limited (60/minute/IP, in memory, reset on cold start). |
+| GET | `/v1/reputation/{address}/history` | Same. |
 
-Query `chainId` must be omitted or `84532`. `ledger` must be one of the two ledger names. `limit` is an integer from 1 to 100 (default 20). `cursor` is an opaque page token. A bad address, limit, cursor, or ledger is 400. Any other method on these paths is 405. There is no write or admin route.
+`chainId` defaults to 84532 when omitted. Any other value is 400 and the body has no ledger data. `1` and `8453` are `mainnet_refused`. The address must match `^0x[0-9a-fA-F]{40}$` and is lowercased for the lookup and the `address` field. An unknown address is 200 with zeros, not 404.
 
-The balance body has `chainId: 84532`, `caps_draft: true`, `caps_label: "DRAFT/GUESS"`, `disclaimer`, `disclaimer_links`, and `ledgers` with one object per ledger (`final_points`, `provisional_points` only). History rows add `outcome_label` in plain words (Bot onboarded, Escrow completed without dispute, Refund path, Dispute path completed, Standalone dispute, Vote on an escrow-linked dispute, Vote matched the outcome, Manual adjustment) plus `status` and `tx_hash`.
+Balance `ledgers.usage` and `ledgers.arbitrator` each carry `ledger`, `final`, and `provisional`. There is no combined total and no USD, ETH, or token field. `eligibility` is `{ status, points_withheld }`. `indexed_to_block` is the safe head supplied to replay (null before any head is loaded). `indexed_to_block_timestamp` is the timestamp of the newest ingested log at or below that head, or null. `finalized_block` is the finalized head. `disclaimer` is `{ text, links }`.
 
-Copy does not use "reward" or "earn".
+History requires `ledger=usage` or `ledger=arbitrator`. `limit` defaults to 25 and caps at 100. `cursor` is opaque. Items are section 6 fields only, sorted by `block_number` descending, then `log_index` descending. An unknown address returns `items: []`.
+
+`GET /v1/reputation/config` returns the active caps and thresholds. While checklist #12 is open each value has `status: "draft"`, and the body has `status: "draft"`, `config_version`, and `rule_version`.
+
+Example responses, labeled as example data and not a live scan, are in `claim-relayer/fixtures/reputation/`.
+
+Copy does not use "reward" or "earn". Any method other than GET or OPTIONS on these paths is 405. There is no write or admin route.
 
 ## Checklist (Lawyer's dozen)
 
@@ -195,8 +204,8 @@ Copy does not use "reward" or "earn".
 | 8 | A later claim needs its own terms. Points are not a claim. | No reputation claim or redeem route. The existing `POST /v1/claims` path is the escrow relayer and is unchanged. |
 | 9 | Name the sybil / abuse enforcer and write the policy. **Open.** | `enforcer` hook. O5 bursts withhold later usage credits. Burns and listings are signals. Cancels are ADJ. Owner is not named. |
 | 10 | No cross-product dashboard and no summed ledgers. | Two objects. Tests reject a combined key. |
-| 11 | Securities, master, AS IS, and not-investment links. **Open.** | Empty link slots from config, always present on the read API. |
-| 12 | Lock caps before soft launch. **Open.** | Section 7 numbers in config, labeled `DRAFT/GUESS`. Response sets `caps_draft: true`. |
+| 11 | Securities, master, AS IS, and not-investment links. **Open.** | `disclaimer.links` from config. Empty slots are `null` until the links exist. |
+| 12 | Lock caps before soft launch. **Open.** | Section 7 numbers in `config/reputation/sepolia.json`, labeled `DRAFT/GUESS`. `GET /v1/reputation/config` returns `status: "draft"` on the body and on each cap and threshold. |
 
 ## Open questions for Tokenomics
 

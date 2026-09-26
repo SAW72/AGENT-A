@@ -205,12 +205,14 @@ The public funding wallet is not assumed to be a Vault operator. A live `createE
 
 ## Reputation read API (draft)
 
-Off-chain Base Sepolia reputation for Bot Verifier. Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth.
+Off-chain Base Sepolia reputation for Bot Verifier. Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth or the claim-route CORS list.
 
-- `GET /v1/reputation/:address` returns the usage ledger and the arbitrator ledger as separate objects. There is no combined total.
-- `GET /v1/reputation/:address/history` pages the same rows. `limit` defaults to 20 and caps at 100.
-- Reads are unauthenticated and rate limited. There is no write or admin route. `chainId` other than 84532 is refused, including 1 and 8453.
-- Caps are loaded from [`config/reputation/sepolia.json`](../config/reputation/sepolia.json) and labeled `DRAFT/GUESS`. The response always includes the testnet disclaimer and empty disclaimer-link slots.
+- `GET /v1/reputation/config?chainId=84532` returns caps and thresholds with `status: "draft"` while checklist #12 is open. This path is matched before `/{address}`.
+- `GET /v1/reputation/{address}?chainId=84532` returns `ledgers.usage` and `ledgers.arbitrator` as separate objects (`final` and `provisional`). There is no combined total. Omitted `chainId` defaults to 84532. Any other chain is 400, including 1 and 8453, and the body has no ledger data. An unknown address is 200 with zeros.
+- `GET /v1/reputation/{address}/history?ledger=usage|arbitrator` pages section 6 fields. `limit` defaults to 25 and caps at 100.
+- Reads are unauthenticated and rate limited. There is no write or admin route.
+- Reputation GET CORS is separate. Defaults allow `https://agent-a-wallet-ux.pages.dev`, one-label `*.agent-a-wallet-ux.pages.dev` previews, and `http://localhost:*` / `http://127.0.0.1:*`. No credentials. It does not allow `*.pages.dev`. Override with `REPUTATION_CORS_PAGES_ORIGIN`, `REPUTATION_CORS_PREVIEW_HOST`, and `REPUTATION_CORS_LOCAL_HOSTS`. `CORS_ORIGINS` still applies only to the other routes.
+- Caps are loaded from [`config/reputation/sepolia.json`](../config/reputation/sepolia.json). Example responses for Wallet UX (not a live scan) are in [`fixtures/reputation/`](fixtures/reputation/).
 
 The in-memory ledger is rebuilt by replaying logs. A cold start on Render wipes it. Nothing here is live chain data.
 

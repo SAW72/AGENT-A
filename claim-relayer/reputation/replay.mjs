@@ -117,6 +117,7 @@ export function replayLedger(input = {}) {
 
   const { entries, signals, enforcerFlags } = materialize(candidates, hooks, head);
   entries.sort(compareEntry);
+  const newest = unique.length ? unique[unique.length - 1] : null;
   return {
     chain_id: 84532,
     usage_ledger: USAGE_LEDGER,
@@ -124,7 +125,12 @@ export function replayLedger(input = {}) {
     entries,
     signals,
     enforcer_flags: enforcerFlags,
-    head: { safe_block: head.safeBlock, finalized_block: head.finalizedBlock },
+    head: {
+      safe_block: head.safeBlock,
+      finalized_block: head.finalizedBlock,
+      indexed_to_block: head.safeBlock,
+      indexed_to_block_timestamp: head.safeBlock === null || !newest ? null : newest.blockTimestamp,
+    },
   };
 }
 

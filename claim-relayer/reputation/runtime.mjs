@@ -1,28 +1,48 @@
-import { getAddress } from "viem";
 import { httpError } from "../config.mjs";
 import { createDefaultHooks } from "./hooks.mjs";
 import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig } from "./reputationConfig.mjs";
 import { contribution, refuseReputationChain, replayLedger } from "./replay.mjs";
 
 const BANNED_COPY = /\b(reward|earn|earnings|apy|yield|allocation)\b/i;
-
-export const OUTCOME_LABELS = {
-  O1: "Bot onboarded",
-  O2: "Escrow completed without dispute",
-  O3: "Refund path",
-  O4: "Dispute path completed",
-  O5: "Standalone dispute",
-  A1: "Vote on an escrow-linked dispute",
-  A2: "Vote matched the outcome",
-  ADJ: "Manual adjustment",
+const LEDGER_QUERY = {
+  usage: USAGE_LEDGER,
+  arbitrator: ARBITRATOR_LEDGER,
 };
 
+export const HISTORY_FIELDS = [
+  "entry_id",
+  "ledger",
+  "chain_id",
+  "wallet",
+  "bot_id",
+  "outcome_code",
+  "points",
+  "status",
+  "source_contract",
+  "event_names",
+  "tx_hash",
+  "log_index",
+  "block_number",
+  "block_hash",
+  "block_timestamp",
+  "escrow_id",
+  "dispute_id",
+  "rule_version",
+  "config_version",
+  "cancel_reason",
+  "cancelled_by",
+];
+
 export function createReputationRuntime(options = {}) {
-  const loaded = options.versions ? { versions: options.versions, adjustments: options.adjustments || [], latest: options.versions[options.versions.length - 1] } : loadReputationConfig();
+  const loaded = options.versions
+    ? { versions: options.versions, adjustments: options.adjustments || [], latest: options.versions[options.versions.length - 1] }
+    : loadReputationConfig();
   const latest = loaded.latest || loaded.versions[loaded.versions.length - 1];
+  const hooks = options.hooks || createDefaultHooks();
   assertCopy(latest.disclaimer);
   return {
     latest,
+    hooks,
     replay() {
       return replayLedger({
         chainId: 84532,
@@ -31,7 +51,7 @@ export function createReputationRuntime(options = {}) {
         finalizedBlock: options.finalizedBlock,
         versions: options.versions,
         adjustments: options.adjustments,
-        hooks: options.hooks || createDefaultHooks(),
+        hooks,
       });
     },
   };
@@ -39,6 +59,8 @@ export function createReputationRuntime(options = {}) {
 
 export function handleReputationRequest(runtime, url) {
   const path = url.pathname.replace(/\/+$/, "") || "/";
+  parseReputationChainQuery(url.searchParams.get("chainId"));
+  if (path === "/v1/reputation/config") return configBody(runtime);
   const match = path.match(/^\/v1\/reputation\/(0x[0-9a-fA-F]{40})(\/history)?$/);
   if (!match) {
     if (path === "/v1/reputation" || path.startsWith("/v1/reputation/")) {
@@ -46,51 +68,51 @@ export function handleReputationRequest(runtime, url) {
     }
     throw httpError(404, "not_found");
   }
-  const chainParam = url.searchParams.get("chainId");
-  if (chainParam !== null && chainParam !== "") refuseReputationChain(chainParam);
-  let wallet;
-  try {
-    wallet = getAddress(match[1]);
-  } catch {
-    throw httpError(400, "invalid_address");
-  }
-  const ledger = url.searchParams.get("ledger");
-  if (ledger && ledger !== USAGE_LEDGER && ledger !== ARBITRATOR_LEDGER) {
-    throw httpError(400, "invalid_ledger");
-  }
+  const wallet = match[1].toLowerCase();
   const result = runtime.replay();
-  if (match[2] === "/history") return historyBody(runtime, result, wallet, ledger, url);
+  if (match[2] === "/history") return historyBody(runtime, result, wallet, url);
   return balanceBody(runtime, result, wallet);
+}
+
+export function parseReputationChainQuery(raw) {
+  if (raw === null) return 84532;
+  if (raw === "84532") return 84532;
+  if (raw === "1" || raw === "8453") refuseReputationChain(raw);
+  throw httpError(400, "wrong_chain", { chainId: /^-?[0-9]+$/.test(raw) ? Number(raw) : raw });
 }
 
 function balanceBody(runtime, result, wallet) {
   const latest = runtime.latest;
   return {
-    ok: true,
-    chainId: 84532,
-    network: "base-sepolia",
     address: wallet,
-    testnet_only: true,
-    disclaimer: latest.disclaimer,
-    disclaimer_links: latest.disclaimer_links,
-    caps_draft: true,
-    caps_label: latest.caps_label,
+    chainId: 84532,
+    ledgers: {
+      usage: ledgerPoints(result, wallet, USAGE_LEDGER),
+      arbitrator: ledgerPoints(result, wallet, ARBITRATOR_LEDGER),
+    },
+    eligibility: eligibilityView(runtime, result, wallet),
     config_version: latest.config_version,
     rule_version: latest.rule_version,
-    ledgers: {
-      [USAGE_LEDGER]: pointsFor(result, wallet, USAGE_LEDGER),
-      [ARBITRATOR_LEDGER]: pointsFor(result, wallet, ARBITRATOR_LEDGER),
+    indexed_to_block: result.head.indexed_to_block,
+    indexed_to_block_timestamp: result.head.indexed_to_block_timestamp,
+    finalized_block: result.head.finalized_block,
+    disclaimer: {
+      text: latest.disclaimer,
+      links: disclaimerLinks(latest.disclaimer_links),
     },
-    head: result.head,
   };
 }
 
-function historyBody(runtime, result, wallet, ledger, url) {
+function historyBody(runtime, result, wallet, url) {
   const latest = runtime.latest;
+  const ledgerName = url.searchParams.get("ledger");
+  const ledger = LEDGER_QUERY[ledgerName];
+  if (!ledger) throw httpError(400, "invalid_ledger");
   const limit = parseLimit(url.searchParams.get("limit"), latest);
   const cursor = parseCursor(url.searchParams.get("cursor"));
-  let rows = result.entries.filter((entry) => entry.wallet.toLowerCase() === wallet.toLowerCase());
-  if (ledger) rows = rows.filter((entry) => entry.ledger === ledger);
+  let rows = result.entries.filter(
+    (entry) => entry.ledger === ledger && entry.wallet.toLowerCase() === wallet,
+  );
   rows.sort(historyCmp);
   if (cursor) {
     const synthetic = { block_number: cursor.b, log_index: cursor.l, entry_id: cursor.e };
@@ -99,50 +121,107 @@ function historyBody(runtime, result, wallet, ledger, url) {
   const page = rows.slice(0, limit);
   const next = rows.length > limit ? encodeCursor(page[page.length - 1]) : null;
   return {
-    ok: true,
-    chainId: 84532,
-    network: "base-sepolia",
     address: wallet,
-    ledger: ledger || null,
-    testnet_only: true,
-    disclaimer: latest.disclaimer,
-    disclaimer_links: latest.disclaimer_links,
-    caps_draft: true,
-    caps_label: latest.caps_label,
-    entries: page.map(historyRow),
+    chainId: 84532,
+    ledger: ledgerName,
+    items: page.map(historyItem),
     next_cursor: next,
   };
 }
 
-function pointsFor(result, wallet, ledger) {
+function configBody(runtime) {
+  const latest = runtime.latest;
+  const status = /draft/i.test(latest.caps_label) ? "draft" : "locked";
+  const slot = (value) => ({ value, status });
+  return {
+    chainId: 84532,
+    config_version: latest.config_version,
+    rule_version: latest.rule_version,
+    status,
+    caps: {
+      usage_points_per_wallet_per_day: slot(latest.caps.usage_points_per_wallet_per_day),
+      usage_points_per_bot_per_day: slot(latest.caps.usage_points_per_bot_per_day),
+      escrows_per_wallet_per_day: slot(latest.caps.escrows_per_wallet_per_day),
+      o3_per_wallet_per_day: slot(latest.caps.o3_per_wallet_per_day),
+      o4_per_wallet_per_day: slot(latest.caps.o4_per_wallet_per_day),
+      pair_per_day: slot(latest.caps.pair_per_day),
+      pair_lifetime: slot(latest.caps.pair_lifetime),
+      usage_points_per_wallet_per_season: slot(latest.caps.usage_points_per_wallet_per_season),
+      arbitrator_points_per_day: slot(latest.caps.arbitrator_points_per_day),
+    },
+    thresholds: {
+      min_amount_wei: slot(latest.floors.min_amount_wei.toString()),
+      o2_min_create_to_release_seconds: slot(latest.floors.o2_seconds),
+      o3_min_set_duration_seconds: slot(latest.floors.o3_seconds),
+      o5_standalone_disputes_threshold: slot(latest.flags.o5_threshold),
+      o5_window_days: slot(latest.flags.o5_window_days),
+      day_boundary: slot("utc_day_by_block_timestamp"),
+    },
+  };
+}
+
+function ledgerPoints(result, wallet, ledger) {
   let finalPoints = 0;
   let provisionalPoints = 0;
   for (const entry of result.entries) {
     if (entry.ledger !== ledger) continue;
-    if (entry.wallet.toLowerCase() !== wallet.toLowerCase()) continue;
+    if (entry.wallet.toLowerCase() !== wallet) continue;
     const points = contribution(entry);
     if (entry.status === "final") finalPoints += points;
     else if (entry.status === "provisional") provisionalPoints += points;
   }
-  return { final_points: finalPoints, provisional_points: provisionalPoints };
+  return {
+    ledger,
+    final: finalPoints,
+    provisional: provisionalPoints,
+  };
 }
 
-function historyRow(entry) {
+function eligibilityView(runtime, result, wallet) {
+  const screen = runtime.hooks.eligibility({
+    wallet,
+    outcome_code: null,
+    block_number: result.head.indexed_to_block,
+  }) || {};
+  const enforcerWithheld = (result.enforcer_flags || []).some(
+    (flag) => flag.withhold_wallet && String(flag.wallet || "").toLowerCase() === wallet,
+  );
+  const pointsWithheld = screen.points_withheld === true || screen.eligible === false || enforcerWithheld;
+  const status = typeof screen.status === "string" && screen.status
+    ? screen.status
+    : screen.eligible
+      ? "eligible"
+      : "unverified";
+  return { status, points_withheld: pointsWithheld };
+}
+
+function disclaimerLinks(links) {
+  const out = {};
+  for (const key of [
+    "master_disclaimer",
+    "bvt_securities_disclaimer",
+    "as_is",
+    "not_investment",
+    "eligibility_notice",
+    "abuse_policy",
+  ]) {
+    const value = String(links?.[key] || "").trim();
+    out[key] = value ? value : null;
+  }
+  return out;
+}
+
+function historyItem(entry) {
   return {
     entry_id: entry.entry_id,
-    semantic_key: entry.semantic_key,
     ledger: entry.ledger,
     chain_id: entry.chain_id,
-    wallet: entry.wallet,
+    wallet: String(entry.wallet).toLowerCase(),
     bot_id: entry.bot_id,
     outcome_code: entry.outcome_code,
-    outcome_label: OUTCOME_LABELS[entry.outcome_code] || entry.outcome_code,
     points: entry.points,
-    nominal_points: entry.nominal_points,
-    capped: entry.capped,
-    cap_name: entry.cap_name,
     status: entry.status,
-    source_contract: entry.source_contract,
+    source_contract: String(entry.source_contract).toLowerCase(),
     event_names: entry.event_names,
     tx_hash: entry.tx_hash,
     log_index: entry.log_index,
@@ -155,10 +234,6 @@ function historyRow(entry) {
     config_version: entry.config_version,
     cancel_reason: entry.cancel_reason,
     cancelled_by: entry.cancelled_by,
-    eligible: entry.eligible,
-    eligibility_reason: entry.eligibility_reason,
-    enforcer_withheld: entry.enforcer_withheld,
-    role: entry.role,
   };
 }
 

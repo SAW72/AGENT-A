@@ -1,0 +1,77 @@
+{
+  "example": true,
+  "label": "EXAMPLE DATA. Not a live Base Sepolia scan. Caps and thresholds are draft while checklist #12 is open.",
+  "response_is_live_chain_data": false,
+  "method": "GET",
+  "path": "/v1/reputation/config?chainId=84532",
+  "response": {
+    "chainId": 84532,
+    "config_version": "sepolia-draft-0",
+    "rule_version": "design-v2",
+    "status": "draft",
+    "caps": {
+      "usage_points_per_wallet_per_day": {
+        "value": 20,
+        "status": "draft"
+      },
+      "usage_points_per_bot_per_day": {
+        "value": 20,
+        "status": "draft"
+      },
+      "escrows_per_wallet_per_day": {
+        "value": 5,
+        "status": "draft"
+      },
+      "o3_per_wallet_per_day": {
+        "value": 1,
+        "status": "draft"
+      },
+      "o4_per_wallet_per_day": {
+        "value": 1,
+        "status": "draft"
+      },
+      "pair_per_day": {
+        "value": 2,
+        "status": "draft"
+      },
+      "pair_lifetime": {
+        "value": 10,
+        "status": "draft"
+      },
+      "usage_points_per_wallet_per_season": {
+        "value": 500,
+        "status": "draft"
+      },
+      "arbitrator_points_per_day": {
+        "value": 30,
+        "status": "draft"
+      }
+    },
+    "thresholds": {
+      "min_amount_wei": {
+        "value": "100000000000000",
+        "status": "draft"
+      },
+      "o2_min_create_to_release_seconds": {
+        "value": 300,
+        "status": "draft"
+      },
+      "o3_min_set_duration_seconds": {
+        "value": 3600,
+        "status": "draft"
+      },
+      "o5_standalone_disputes_threshold": {
+        "value": 3,
+        "status": "draft"
+      },
+      "o5_window_days": {
+        "value": 7,
+        "status": "draft"
+      },
+      "day_boundary": {
+        "value": "utc_day_by_block_timestamp",
+        "status": "draft"
+      }
+    }
+  }
+}

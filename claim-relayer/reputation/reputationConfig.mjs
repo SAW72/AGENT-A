@@ -110,7 +110,7 @@ export function normalizeVersion(raw) {
     caps_label: String(raw.display?.caps_label || "DRAFT/GUESS"),
     read_api: {
       rate_limit_per_minute: guessInt({ value: raw.read_api?.rate_limit_per_minute ?? 60 }, "rate"),
-      history_page_default: guessInt({ value: raw.read_api?.history_page_default ?? 20 }, "page"),
+      history_page_default: guessInt({ value: raw.read_api?.history_page_default ?? 25 }, "page"),
       history_page_max: guessInt({ value: raw.read_api?.history_page_max ?? 100 }, "page_max"),
     },
     scan_max_block_range: guessInt({ value: raw.scan?.max_block_range ?? 625 }, "scan"),

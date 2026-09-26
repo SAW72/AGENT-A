@@ -6,7 +6,13 @@
 
 export function createDefaultEligibility() {
   return function screen() {
-    return { eligible: false, reason: "ofac_unconfigured", provider: null };
+    return {
+      eligible: false,
+      status: "unverified",
+      points_withheld: true,
+      reason: "ofac_unconfigured",
+      provider: null,
+    };
   };
 }
 
@@ -36,7 +42,7 @@ export function createDefaultHooks() {
 /** Test and staging override. Credits are still cap-limited. */
 export function allowAllEligibility() {
   return function screen() {
-    return { eligible: true, reason: null, provider: "allow_all" };
+    return { eligible: true, status: "eligible", points_withheld: false, reason: null, provider: "allow_all" };
   };
 }
 

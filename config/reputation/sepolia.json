@@ -117,7 +117,7 @@
   },
   "read_api": {
     "rate_limit_per_minute": 60,
-    "history_page_default": 20,
+    "history_page_default": 25,
     "history_page_max": 100
   },
   "adjustments_file": "adjustments.json"

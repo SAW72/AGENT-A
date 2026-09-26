@@ -1,0 +1,68 @@
+{
+  "example": true,
+  "label": "EXAMPLE DATA. Not a live Base Sepolia scan. Fixture logs only. Eligibility is unverified, so points are withheld.",
+  "response_is_live_chain_data": false,
+  "method": "GET",
+  "path": "/v1/reputation/0x1111111111111111111111111111111111111111/history?chainId=84532&ledger=usage&limit=25",
+  "response": {
+    "address": "0x1111111111111111111111111111111111111111",
+    "chainId": 84532,
+    "ledger": "usage",
+    "items": [
+      {
+        "entry_id": "O4:0x0000000000000000000000000000000000000000000000000000000000000007:0x1111111111111111111111111111111111111111",
+        "ledger": "bot-verifier-sepolia-reputation",
+        "chain_id": 84532,
+        "wallet": "0x1111111111111111111111111111111111111111",
+        "bot_id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "outcome_code": "O4",
+        "points": 0,
+        "status": "final",
+        "source_contract": "0x141214f04b0e1d949b6e6bf32d019ad7ab5b284c",
+        "event_names": [
+          "EscrowCreated",
+          "EscrowDisputed",
+          "DisputeResolved",
+          "EscrowReleased"
+        ],
+        "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000007106",
+        "log_index": 0,
+        "block_number": 48000006,
+        "block_hash": "0x000000000000000000000000000000000000000000000000000000002dc72060",
+        "block_timestamp": 1699920005,
+        "escrow_id": "0x0000000000000000000000000000000000000000000000000000000000000007",
+        "dispute_id": "0x0000000000000000000000000000000000000000000000000000000000000008",
+        "rule_version": "design-v2",
+        "config_version": "sepolia-draft-0",
+        "cancel_reason": null,
+        "cancelled_by": null
+      },
+      {
+        "entry_id": "O1:0x0000000000000000000000000000000000000000000000000000000000000001",
+        "ledger": "bot-verifier-sepolia-reputation",
+        "chain_id": 84532,
+        "wallet": "0x1111111111111111111111111111111111111111",
+        "bot_id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "outcome_code": "O1",
+        "points": 0,
+        "status": "final",
+        "source_contract": "0x1463d664fa467fbcda4b05443434494f05e565bc",
+        "event_names": [
+          "OperatorSet"
+        ],
+        "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000007101",
+        "log_index": 0,
+        "block_number": 48000001,
+        "block_hash": "0x000000000000000000000000000000000000000000000000000000002dc72010",
+        "block_timestamp": 1700006401,
+        "escrow_id": null,
+        "dispute_id": null,
+        "rule_version": "design-v2",
+        "config_version": "sepolia-draft-0",
+        "cancel_reason": null,
+        "cancelled_by": null
+      }
+    ],
+    "next_cursor": null
+  }
+}

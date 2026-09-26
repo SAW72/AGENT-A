@@ -23,6 +23,70 @@ export function dayTs(day, offset = 0) {
   return DAY0 + day * 86400 + offset;
 }
 
+/** Stable logs for the Wallet UX example responses. Transaction hashes do not use the shared counter. */
+export function walletUxSampleLogs() {
+  const wallet = addr(0x11);
+  const other = addr(0x22);
+  const voter = addr(0x31);
+  const bot = bytes32(1);
+  const escrowId = bytes32(7);
+  const disputeId = bytes32(8);
+  const createdAt = dayTs(0, 0);
+  const rows = [
+    {
+      event: "OperatorSet",
+      address: VAULT,
+      args: { botId: bot, account: wallet },
+      blockNumber: BLOCK0 + 1,
+      timestamp: dayTs(1, 1),
+    },
+    {
+      event: "EscrowCreated",
+      address: ESCROW,
+      args: {
+        escrowId,
+        payer: wallet,
+        payee: other,
+        payerBotId: bot,
+        payeeBotId: bytes32(2),
+        amount: 1n,
+        expiresAt: BigInt(createdAt + 10),
+      },
+      blockNumber: BLOCK0 + 2,
+      timestamp: createdAt,
+    },
+    {
+      event: "EscrowDisputed",
+      address: ESCROW,
+      args: { escrowId, disputeId },
+      blockNumber: BLOCK0 + 3,
+      timestamp: dayTs(0, 2),
+    },
+    {
+      event: "VoteCast",
+      address: PANEL,
+      args: { disputeId, voter, support: true },
+      blockNumber: BLOCK0 + 4,
+      timestamp: dayTs(0, 3),
+    },
+    {
+      event: "DisputeResolved",
+      address: PANEL,
+      args: { disputeId, upheld: true },
+      blockNumber: BLOCK0 + 5,
+      timestamp: dayTs(0, 4),
+    },
+    {
+      event: "EscrowReleased",
+      address: ESCROW,
+      args: { escrowId, amount: 1n },
+      blockNumber: BLOCK0 + 6,
+      timestamp: dayTs(0, 5),
+    },
+  ];
+  return rows.map((row, index) => businessLog({ ...row, tx: bytes32(0x7101 + index) }));
+}
+
 let seq = 1;
 
 export function businessLog({
