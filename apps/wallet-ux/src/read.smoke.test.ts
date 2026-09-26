@@ -20,11 +20,19 @@ describe.skipIf(!live)("Base Sepolia smoke", () => {
     expect(status.disputePanel.arbitratorCount).toBe(3n)
     expect(panelNotSeated(status.disputePanel.arbitratorCount, status.disputePanel.panelSize)).toBe(false)
     expect(status.escrow).not.toBeNull()
-    expect(sameAddress(status.escrow?.owner ?? "", CORE_TIMELOCK)).toBe(true)
-    expect(sameAddress(status.escrow?.pendingOwner ?? "", ZERO_ADDRESS)).toBe(true)
+    // The wiring snapshot records acceptOwnership as pending (owner is the deployer).
+    // After acceptOwnership, owner is CORE_TIMELOCK. This check allows either read.
+    const owner = status.escrow?.owner ?? ""
+    const pending = status.escrow?.pendingOwner ?? ""
+    const accepted =
+      sameAddress(owner, CORE_TIMELOCK) && sameAddress(pending, ZERO_ADDRESS)
+    const awaitingAccept =
+      sameAddress(owner, "0x5D467FA00eC0E92044f779e495a17db66c5964aa") &&
+      sameAddress(pending, CORE_TIMELOCK)
+    expect(accepted || awaitingAccept).toBe(true)
     expect(sameAddress(status.escrow?.governance ?? "", CORE_TIMELOCK)).toBe(true)
     expect(sameAddress(status.escrow?.disputePanel ?? "", ADDRESSES.disputePanel)).toBe(true)
-    expect(status.escrow?.fundingOpen).toBe(true)
+    expect(status.escrow?.fundingOpen).toBe(accepted)
 
     const empty = `0x${"00".repeat(32)}` as const
     const membership = await readMembership(client, empty)

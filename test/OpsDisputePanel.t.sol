@@ -35,20 +35,36 @@ contract OpsDisputePanelGuardTest is Test {
         assertEq(seatOp.LIVE_DISPUTE_PANEL(), livePanel);
         assertEq(
             book.readAddress(".BotAttestationEscrow.address"),
-            0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c
+            0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d
         );
         assertEq(
             book.readString(".BotAttestationEscrow.deployTx"),
-            "0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e"
+            "0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa"
         );
-        assertEq(book.readString(".BotAttestationEscrow.acceptOwnership"), "complete");
-        assertEq(book.readAddress(".BotAttestationEscrow.owner"), liveTimelock);
-        assertEq(book.readAddress(".BotAttestationEscrow.pendingOwner"), address(0));
+        assertEq(book.readUint(".BotAttestationEscrow.deployBlock"), 47345163);
+        assertEq(book.readUint(".BotAttestationEscrow.startBlock"), 47345163);
+        assertEq(book.readString(".BotAttestationEscrow.commit"), "444c427");
+        assertEq(book.readAddress(".BotAttestationEscrow.deployer"), 0x5D467FA00eC0E92044f779e495a17db66c5964aa);
+        assertEq(book.readString(".BotAttestationEscrow.acceptOwnership"), "pending");
+        assertEq(book.readAddress(".BotAttestationEscrow.owner"), 0x5D467FA00eC0E92044f779e495a17db66c5964aa);
+        assertEq(book.readAddress(".BotAttestationEscrow.pendingOwner"), liveTimelock);
+        assertEq(book.readAddress(".BotAttestationEscrow.ownerAfterAcceptOwnership"), liveTimelock);
         assertEq(
-            book.readString(".BotAttestationEscrow.acceptOwnershipTx"),
+            book.readAddress(".retired.BotAttestationEscrow.address"),
+            0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c
+        );
+        assertEq(
+            book.readString(".retired.BotAttestationEscrow.reason"),
+            "ESC-M-1 redeploy, retired 2026-09-26"
+        );
+        assertEq(book.readString(".retired.BotAttestationEscrow.acceptOwnership"), "complete");
+        assertEq(book.readAddress(".retired.BotAttestationEscrow.owner"), liveTimelock);
+        assertEq(book.readAddress(".retired.BotAttestationEscrow.pendingOwner"), address(0));
+        assertEq(
+            book.readString(".retired.BotAttestationEscrow.acceptOwnershipTx"),
             "0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983"
         );
-        assertEq(book.readUint(".BotAttestationEscrow.acceptOwnershipBlock"), 47300275);
+        assertEq(book.readUint(".retired.BotAttestationEscrow.acceptOwnershipBlock"), 47300275);
         assertTrue(_contains(book, '"BVT": {\n    "address": null,\n    "deployTx": ""'));
     }
 

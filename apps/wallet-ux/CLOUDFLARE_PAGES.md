@@ -56,7 +56,7 @@ The app imports [`src/base-sepolia.json`](src/base-sepolia.json). That file is a
 
 `npm run dev` and `npm run build` run `scripts/sync-book.mjs`. When the repo-root book is visible, the script refreshes `src/base-sepolia.json`. When it is not visible, the script keeps the committed copy. Either way the book must be Base Sepolia (`chainId` 84532, `network` `base-sepolia`). After a book change in the full repo, run `npm run sync-book` and commit `src/base-sepolia.json`. `npm test` fails if the two files differ.
 
-`src/book.ts` `FALLBACK_PIN` matches the live book. The app uses the pin only when the copied JSON fails validation. Superseded Denylist and Vault addresses stay blocked.
+`src/book.ts` `FALLBACK_PIN` matches the live book. The app uses the pin only when the copied JSON fails validation. Superseded Denylist and Vault addresses stay blocked. The retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` (ESC-M-1 redeploy, retired 2026-09-26) stays blocked too.
 
 Live slots:
 
@@ -66,7 +66,7 @@ Live slots:
 | Denylist | `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` |
 | Vault | `0x1463D664fA467FBCDA4B05443434494f05e565bc` |
 | DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` |
-| BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` |
+| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` |
 
 ## Go-live checklist
 

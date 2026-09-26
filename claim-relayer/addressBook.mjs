@@ -21,6 +21,14 @@ function optionalAddress(value) {
   return trimmed;
 }
 
+/** Deploy block used as the indexer/relayer start block. Missing or invalid is null. */
+function optionalStartBlock(slot) {
+  const raw = slot.deployBlock ?? slot.startBlock;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return null;
+  return n;
+}
+
 /**
  * Read the committed Base Sepolia address book.
  * A null Escrow slot is unbooked. A non-address is refused.
@@ -55,6 +63,7 @@ export function loadAddressBook(filePath = DEFAULT_ADDRESS_BOOK) {
     network: "base-sepolia",
     escrowAddress,
     escrowBooked: Boolean(escrowAddress),
+    escrowStartBlock: optionalStartBlock(slot),
     escrowOwner: optionalAddress(slot.owner),
     disputePanelAddress: optionalAddress(raw.DisputePanel?.address),
     coreTimelock: optionalAddress(raw.coreTimelock),

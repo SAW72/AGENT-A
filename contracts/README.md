@@ -124,7 +124,7 @@ forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow 
   --broadcast
 ```
 
-On the live escrow, `CORE_TIMELOCK` has called `acceptOwnership()`. `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
+On the live escrow, `acceptOwnership` is pending. `pendingOwner` is `CORE_TIMELOCK`. After `acceptOwnership`, `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. That accept has not landed. Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`, and they also revert until `owner()` is `governance`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
 
 ## Base Sepolia addresses (84532)
 
@@ -145,7 +145,7 @@ Listing migration replay of `Listed` / `Unlisted` from the previous Denylist was
 | InsuranceFund | `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` | `0xa71db2c304d8e80e4043e4d093a0c102ec619624ab0500d0bc7246dc27d3edd7` |
 | Liability | `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` | `0x99865db9b9f4a6807b085cec8c50d22160025c4df09afc609fb52b9758fe6261` |
 | DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` | `0x9ecd10d67054fbf9e63ad25dd1520ed809fbf94c4ab1f19ad84e81899562b77f` |
-| BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` | `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` |
+| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` | `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` |
 
 `DisputePanel.owner()` is `CORE_TIMELOCK`. Gate B is seated: `arbitratorCount` is 3.
 
@@ -155,11 +155,13 @@ Listing migration replay of `Listed` / `Unlisted` from the previous Denylist was
 | 2 | `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30` | `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6` |
 | 3 | `0xB87Ed5F74276AC6172ef53fE866675093F75936E` | `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3` |
 
-`BotAttestationEscrow` is live and linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) and `pendingOwner` is the zero address.
+`BotAttestationEscrow` is the ESC-M-1 redeploy at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, built from commit `444c427`, and linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block). Deployer `0x5D467FA00eC0E92044f779e495a17db66c5964aa` called `transferOwnership` in `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. `acceptOwnership` is pending. `pendingOwner` is `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`). After `acceptOwnership`, `owner` is `CORE_TIMELOCK`. That accept has not landed. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan verification is not done.
 
-`acceptOwnership` tx (status success): `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` (block 47300275). The `transferOwnership(CORE_TIMELOCK)` tx was `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` (block 47299930), the same block as the create tx.
+Create txs: Denylist block 47294163, Vault block 47294164, BotAttestationEscrow block 47345163. The Tx column is the create transaction.
 
-Create txs: Denylist block 47294163, Vault block 47294164, BotAttestationEscrow block 47299930. The Tx column is the create transaction.
+### Retired escrow
+
+The previous `BotAttestationEscrow` `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26). It stays on chain under `retired` in [`deployments/base-sepolia.json`](../deployments/base-sepolia.json). Its create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. Its `acceptOwnership` `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` (block 47300275) was complete, so on that contract `owner` is `CORE_TIMELOCK` and `pendingOwner` is zero. That record is history. It is not the live slot.
 
 ### Superseded (deprecated, left on chain)
 

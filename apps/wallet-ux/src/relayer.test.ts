@@ -13,7 +13,7 @@ import {
   type LiveClaimBody,
 } from "./relayer"
 
-const escrow = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c" as const
+const escrow = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d" as const
 const panel = "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb" as const
 const id = `0x${"ab".repeat(32)}` as const
 const other = `0x${"cd".repeat(32)}` as const

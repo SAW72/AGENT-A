@@ -31,7 +31,7 @@ describe("claim relayer HTTP", () => {
       assert.equal(health.json.fixture, true);
       assert.equal(health.json.escrowBooked, true);
       assert.equal(health.json.escrowSource, "address_book");
-      assert.equal(health.json.escrowAddress, "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c");
+      assert.equal(health.json.escrowAddress, "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d");
       assert.deepEqual(health.json.liveSubmitBlockers, ["spencer_run_auth_required", "live_submit_off"]);
       assert.equal(health.json.relayerAddress, "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861");
       assert.equal(health.json.liveSubmit, false);
@@ -253,7 +253,7 @@ describe("claim relayer HTTP", () => {
       assert.equal(claim.json.senderConstraint, "permissionless");
       assert.equal(sent.length, 1);
       assert.equal(sent[0].chainId, 84532);
-      assert.equal(sent[0].to, "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c");
+      assert.equal(sent[0].to, "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d");
       assert.equal(sent[0].valueWei, "0");
       assert.equal(JSON.stringify(claim.json).includes(SECRET), false);
 
