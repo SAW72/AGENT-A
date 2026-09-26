@@ -10,6 +10,8 @@ export const TESTNET_LINE = "Base Sepolia testnet only"
 
 export const OPERATOR_LINE = `${DISPLAY_NAME} is a product of Steward of the King LLC, an Ohio (USA) limited liability company.`
 
+export const DISCLAIMER_LINE = "Experimental testnet tool. Not a certification, safety guarantee, or insurance product. Ethereum mainnet and Base mainnet are refused. This page does not sign EIP-712 claims."
+
 export const DESCRIPTION = `${DISPLAY_NAME}: read-only Gate A status and claim tools on Base Sepolia testnet (chain id 84532). Testnet only, no mainnet.`
 
 const HTML_TOKENS: Record<string, string> = {

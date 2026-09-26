@@ -2,7 +2,7 @@ import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi"
 import { ADDRESSES, addressBook, BASE_SEPOLIA_CHAIN_ID } from "./addresses"
-import { DISPLAY_NAME, OPERATOR_LINE, TESTNET_LINE } from "./brand"
+import { DISCLAIMER_LINE, DISPLAY_NAME, OPERATOR_LINE, TESTNET_LINE } from "./brand"
 import { DenylistLookup } from "./DenylistLookup"
 import { EscrowPanel } from "./EscrowPanel"
 import { errorText, formatEth, shortAddress } from "./format"
@@ -310,6 +310,7 @@ export function App() {
       <footer>
         <p>{OPERATOR_LINE}</p>
         <p>{TESTNET_LINE}</p>
+        <p>{DISCLAIMER_LINE}</p>
       </footer>
     </div>
   )

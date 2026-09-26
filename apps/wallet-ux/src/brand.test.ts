@@ -6,6 +6,7 @@ import {
   applyBrandHtml,
   brandManifest,
   DESCRIPTION,
+  DISCLAIMER_LINE,
   DISPLAY_NAME,
   OPERATOR_LINE,
   PRODUCT_NAME,
@@ -24,6 +25,9 @@ describe("brand source", () => {
     expect(DESCRIPTION).toContain("chain id 84532")
     expect(DESCRIPTION).toContain("Testnet only, no mainnet.")
     expect(TESTNET_LINE).toBe("Base Sepolia testnet only")
+    expect(DISCLAIMER_LINE).toBe(
+      "Experimental testnet tool. Not a certification, safety guarantee, or insurance product. Ethereum mainnet and Base mainnet are refused. This page does not sign EIP-712 claims.",
+    )
 
     const rawHtml = readFileSync(join(root, "index.html"), "utf8")
     expect(rawHtml).not.toContain(PRODUCT_NAME)
@@ -49,6 +53,7 @@ describe("brand source", () => {
     expect(app).toContain("{DISPLAY_NAME}")
     expect(app).toContain("{OPERATOR_LINE}")
     expect(app).toContain("{TESTNET_LINE}")
+    expect(app).toContain("{DISCLAIMER_LINE}")
     expect(app).not.toContain(PRODUCT_NAME)
     expect(app).not.toContain(DISPLAY_NAME)
   })

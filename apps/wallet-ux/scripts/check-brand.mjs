@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url"
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 const brand = readFileSync(join(root, "src/brand.ts"), "utf8")
+const app = readFileSync(join(root, "src/App.tsx"), "utf8")
+const disclaimer = "Experimental testnet tool. Not a certification, safety guarantee, or insurance product. Ethereum mainnet and Base mainnet are refused. This page does not sign EIP-712 claims."
+const footer = app.match(/<footer>([\s\S]*?)<\/footer>/)?.[1] ?? ""
 const productName = brand.match(/export const PRODUCT_NAME = "([^"]+)"/)?.[1]
 if (!productName) {
   console.error("Brand check could not read PRODUCT_NAME from src/brand.ts")
@@ -32,6 +35,9 @@ const checks = [
   [js.includes(productName), "bundle product name"],
   [js.includes("(Agent Bot Verifier)"), "bundle display form"],
   [js.includes("is a product of Steward of the King LLC, an Ohio (USA) limited liability company."), "bundle footer"],
+  [brand.includes(`export const DISCLAIMER_LINE = "${disclaimer}"`), "DISCLAIMER_LINE in brand.ts"],
+  [footer.includes("{DISCLAIMER_LINE}"), "DISCLAIMER_LINE rendered in footer"],
+  [js.includes(disclaimer), "bundle disclaimer"],
 ]
 
 const misses = checks.filter(([ok]) => !ok).map(([, label]) => label)
