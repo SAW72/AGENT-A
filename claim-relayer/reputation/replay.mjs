@@ -1,5 +1,6 @@
 import { getAddress } from "viem";
 import { httpError } from "../config.mjs";
+import { denylistBucketName, denylistBucketOrdinal } from "../denylistBucket.mjs";
 import { decodeBusinessLog } from "./codec.mjs";
 import { createDefaultHooks } from "./hooks.mjs";
 import {
@@ -439,6 +440,26 @@ function derive(state, versions, head) {
   for (const log of state.denylist) {
     const id = asBytes32(log.args.id, "id");
     const actor = asAddress(log.args.actor, "actor");
+    const bucketName = denylistBucketName(log.args.bucket);
+    if (!bucketName) {
+      const raw = denylistBucketOrdinal(log.args.bucket);
+      candidates.push({
+        outcome_code: "signal",
+        forceNoWithhold: true,
+        signal: {
+          kind: "DENYLIST_INVALID_BUCKET",
+          wallet: null,
+          bot_id: null,
+          block_number: log.blockNumber,
+          refs: [id],
+          bucket: raw,
+        },
+        completing: log,
+        entry_id: `signal:invalid-bucket:${log.name}:${id}:${raw}:${log.blockHash}`,
+        role: "operator",
+      });
+      continue;
+    }
     candidates.push({
       outcome_code: "signal",
       signal: {
@@ -822,9 +843,10 @@ function materialize(candidates, hooks, head) {
   for (const candidate of candidates) {
     if (candidate.outcome_code === "signal") {
       const decision = hooks.enforcer.flag(candidate.signal) || { withhold_wallet: false };
+      const withhold = candidate.forceNoWithhold ? false : Boolean(decision.withhold_wallet);
       signals.push(candidate.signal);
-      enforcerFlags.push({ ...candidate.signal, withhold_wallet: Boolean(decision.withhold_wallet) });
-      if (decision.withhold_wallet && candidate.signal.wallet) {
+      enforcerFlags.push({ ...candidate.signal, withhold_wallet: withhold });
+      if (withhold && candidate.signal.wallet) {
         noteWithhold(withheldFrom, candidate.signal.wallet, candidate.signal.block_number);
       }
       continue;

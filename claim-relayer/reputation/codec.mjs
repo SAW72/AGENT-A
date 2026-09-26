@@ -1,4 +1,5 @@
 import { decodeEventLog, encodeAbiParameters, encodeEventTopics, keccak256, toBytes } from "viem";
+import { assertDenylistBucket } from "../denylistBucket.mjs";
 
 /**
  * Business and signal events. topic0 is keccak256 of the canonical signature.
@@ -211,6 +212,9 @@ export function topic0Table() {
 export function encodeEventData(eventName, args) {
   const event = BY_NAME.get(eventName);
   if (!event) throw new Error(`unknown_event:${eventName}`);
+  if (event.name === "Listed" || event.name === "Unlisted") {
+    assertDenylistBucket(args?.bucket);
+  }
   const topics = encodeEventTopics({
     abi: [event.item],
     eventName: event.name,

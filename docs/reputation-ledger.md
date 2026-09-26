@@ -61,7 +61,7 @@ Also decoded, never turned into points:
 
 - `Burned(bytes32,uint256)` on Vault. Enforcer signal `BOT_BURNED`. Used by the O1 active check. It does not create points.
 - `Registered(bytes32,uint8,uint256)` on Vault. It does not create a row by itself. O1 reads the `uint8` tier from the latest `Registered` at or before the first `OperatorSet`. `Vault.Tier` is None 0, Chat 1, DataTools 2, Financial 3, Critical 4.
-- `Listed` / `Unlisted` on Denylist. Enforcer signals. `Listed.id` is a fingerprint, not a bot id. This replay does not call `Vault.bots()`, so it does not join a listing to a bot.
+- `Listed` / `Unlisted` on Denylist. Enforcer signals. `Listed.id` is a fingerprint, not a bot id. This replay does not call `Vault.bots()`, so it does not join a listing to a bot. The indexed `bucket` is validated by `claim-relayer/denylistBucket.mjs`: only Exact `0`, Signature `1`, and Prompt `2` are valid. Until L-4 ships, the live Sepolia Denylist maps any other value onto Prompt. This service does not. `encodeEventData` rejects an out-of-range bucket before it writes topics. A decoded out-of-range bucket is the review-only signal `DENYLIST_INVALID_BUCKET` and is not a Prompt listing. Claim calldata does not call `remove`, `listing`, or `everListed`.
 
 Ignored on purpose (unknown topic0 is skipped, not fatal):
 

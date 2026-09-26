@@ -2,7 +2,9 @@
  * Checklist #7 stays fail closed: nothing is silently credited.
  * Checklist #9 is still open. Design note v2.2 says O5_REPEAT and
  * DISPUTE_PREDATES_ESCROW go to the enforcer for review only and do not
- * auto-cancel or withhold points. PR #28's indexer stub returns eligible:true
+ * auto-cancel or withhold points. An out-of-range Denylist bucket is the same:
+ * DENYLIST_INVALID_BUCKET is review only and is not a Prompt listing.
+ * PR #28's indexer stub returns eligible:true
  * for staging. This service does not.
  * See docs/reputation-ledger.md.
  */
@@ -24,7 +26,11 @@ export function createDefaultEnforcer() {
   return {
     flag(signal) {
       flags.push(signal);
-      if (signal.kind === "O5_REPEAT" || signal.kind === "DISPUTE_PREDATES_ESCROW") {
+      if (
+        signal.kind === "O5_REPEAT" ||
+        signal.kind === "DISPUTE_PREDATES_ESCROW" ||
+        signal.kind === "DENYLIST_INVALID_BUCKET"
+      ) {
         return { withhold_wallet: false, reason: "review_only" };
       }
       return { withhold_wallet: false, reason: "enforcer_unconfigured" };
