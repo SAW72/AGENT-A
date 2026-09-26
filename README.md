@@ -1,6 +1,6 @@
 # Agent-BV (Agent Bot Verifier)
 
-**Agent-BV (formerly AGENT-A)** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain screening records.
+**Agent-BV** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain screening records.
 
 ## License
 
