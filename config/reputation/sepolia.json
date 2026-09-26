@@ -2,7 +2,7 @@
   "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2.1 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
   "config_version": "sepolia-draft-0",
   "rule_version": "design-v2.1",
-  "product": "Agent BV",
+  "product": "the product",
   "chain": {
     "name": "Base Sepolia",
     "chain_id": 84532,
