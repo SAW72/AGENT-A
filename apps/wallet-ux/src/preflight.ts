@@ -1,5 +1,9 @@
 import type { Address, Hex } from "viem"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
+import deploymentBook from "./base-sepolia.json"
+
+/** Booked Base Sepolia claim-relayer wallet. Simulations of relayer submits use this as `from`. */
+export const CLAIM_RELAYER_WALLET = deploymentBook.claimRelayerWallet as Address
 
 export type PreflightCall = {
   account?: Address
@@ -27,7 +31,7 @@ export async function submitAfterPreflight<T>(input: {
   send: () => Promise<T>
 }): Promise<T> {
   if (input.chainId !== BASE_SEPOLIA_CHAIN_ID) {
-    throw new Error(`Preflight is Base Sepolia (${BASE_SEPOLIA_CHAIN_ID}) only.`)
+    throw new Error("This check only runs on the Base Sepolia network. Nothing was sent.")
   }
   await input.client.call({
     account: input.account,
@@ -36,4 +40,23 @@ export async function submitAfterPreflight<T>(input: {
     value: input.value,
   })
   return input.send()
+}
+
+/** Simulate the claim as the relayer wallet, then POST only if the call succeeds. */
+export async function submitRelayerAfterPreflight<T>(input: {
+  client: PreflightClient
+  to: Address
+  data: Hex
+  value: bigint
+  post: () => Promise<T>
+}): Promise<T> {
+  return submitAfterPreflight({
+    chainId: BASE_SEPOLIA_CHAIN_ID,
+    client: input.client,
+    account: CLAIM_RELAYER_WALLET,
+    to: input.to,
+    data: input.data,
+    value: input.value,
+    send: input.post,
+  })
 }
