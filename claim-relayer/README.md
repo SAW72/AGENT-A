@@ -143,7 +143,7 @@ When `liveSubmit` is allowed, `POST /v1/claims` that sets `live: true`, `liveSub
 
 `x-admin-secret` does not authorize a live claim. `x-claim-secret` does not authorize pause or unpause.
 
-CORS preflight allows `content-type`, `x-admin-secret`, `authorization`, and `x-claim-secret`. Set `CORS_ORIGINS` to the Wallet UX origin when that app calls this service, for example `https://agent-a-wallet-ux.pages.dev`.
+CORS preflight allows `content-type`, `x-admin-secret`, `authorization`, and `x-claim-secret`. When `CORS_ORIGINS` is unset, the allowlist is the Wallet UX production origin `https://agent-a-wallet-ux.pages.dev` plus `http://localhost:5173` and `http://127.0.0.1:5173`. Other `pages.dev` hosts are not allowed. Set `CORS_ORIGINS` to replace that list.
 
 ## Error codes
 

@@ -208,7 +208,9 @@ export function loadConfig(env = process.env) {
       escrowAddress: escrow.escrowAddress,
       chainId: BASE_SEPOLIA_CHAIN_ID,
     }),
-    corsOrigins: env.CORS_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173",
+    corsOrigins:
+      env.CORS_ORIGINS ||
+      "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
   };
 }
 

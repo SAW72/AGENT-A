@@ -614,6 +614,48 @@ describe("claim relayer HTTP", () => {
     }
   });
 
+  it("allows the Wallet UX Pages origin by default and still requires the claim secret", async () => {
+    const pages = "https://agent-a-wallet-ux.pages.dev";
+    const ctx = await boot({
+      LIVE_SUBMIT: "1",
+      SPENCER_RUN_AUTH: "1",
+      CLAIM_API_SECRET: CLAIM_SECRET,
+    });
+    try {
+      const allowed = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
+        origin: pages,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type,x-claim-secret",
+      });
+      assert.equal(allowed.status, 204);
+      assert.equal(allowed.headers["access-control-allow-origin"], pages);
+
+      const local = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
+        origin: "http://127.0.0.1:5173",
+      });
+      assert.equal(local.headers["access-control-allow-origin"], "http://127.0.0.1:5173");
+
+      const otherPages = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
+        origin: "https://other.pages.dev",
+      });
+      assert.equal(otherPages.status, 204);
+      assert.equal(otherPages.headers["access-control-allow-origin"], undefined);
+
+      const live = await request(
+        ctx.port,
+        "POST",
+        "/v1/claims",
+        { action: "release", claimId: "0x" + "22".repeat(32), live: true },
+        { origin: pages },
+      );
+      assert.equal(live.status, 401);
+      assert.equal(live.json.error, "unauthorized");
+      assert.equal(live.headers["access-control-allow-origin"], pages);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("returns revert_data on a live 502 and omits the rpc url and provider message", async () => {
     const revert = "0x" + "aabbccdd" + "ab".repeat(32);
     const rpcUrl = "https://sepolia.example/v2/secret-rpc-key";
