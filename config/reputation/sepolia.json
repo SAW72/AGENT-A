@@ -1,7 +1,7 @@
 {
-  "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
+  "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2.1 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
   "config_version": "sepolia-draft-0",
-  "rule_version": "design-v2",
+  "rule_version": "design-v2.1",
   "product": "Agent BV",
   "chain": {
     "name": "Base Sepolia",
@@ -9,8 +9,8 @@
     "refused_chain_ids": [1, 8453]
   },
   "ledgers": {
-    "usage": "bot-verifier-sepolia-reputation",
-    "arbitrator": "bot-verifier-sepolia-arbitrator-rep",
+    "usage": "agent-bv-sepolia-reputation",
+    "arbitrator": "agent-bv-sepolia-arbitrator-rep",
     "never_summed": true
   },
   "contracts": {
@@ -74,8 +74,8 @@
     "usage_points_per_wallet_per_season": { "value": 500, "status": "GUESS" },
     "arbitrator_points_per_day": { "value": 30, "status": "GUESS" },
     "decay": { "value": "none", "status": "GUESS" },
-    "day_boundary": { "value": "UTC, by block timestamp", "status": "PROPOSED, not defined in design v2" },
-    "season": { "value": null, "status": "OPEN, not defined in design v2" }
+    "day_boundary": { "value": "UTC, by block timestamp", "status": "PROPOSED, not defined in design v2.1" },
+    "season": { "value": null, "status": "OPEN, not defined in design v2.1" }
   },
   "flags": {
     "_guess": true,

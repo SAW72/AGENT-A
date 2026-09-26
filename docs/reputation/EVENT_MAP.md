@@ -59,7 +59,7 @@ The constructor emits nothing. `outcome(disputeId)` is a view returning `(exists
 |---|---|---|---|---|---|---|
 | `Registered(bytes32 indexed botId, Tier tier, uint256 ts)` | `Registered(bytes32,uint8,uint256)` | `0x2578fc74812af5cd47b15f759eb9c5fc42c617d359b4974992d25e50fba91add` | botId | tier (uint8: None=0, Chat=1, DataTools=2, Financial=3, Critical=4), ts | Both `register` overloads (onlyOwner). Succeeds only if `Denylist.check == None` at that block. No operator and no fingerprint hashes in the event | botId enumeration; O1 precondition |
 | `OperatorSet(bytes32 indexed botId, address indexed account)` | `OperatorSet(bytes32,address)` | `0x9efccfdeeb35d36624f8546b14ab72aa768151985ee15f2f7dfce288348baaa3` | botId, account | none | 6-arg `register` (same tx, after `Registered`) and `setOperator` (bind or rotate; requires the bot to be registered; does not check `active`). `account` is never zero | O1 (first per botId only); operator-at-block history |
-| `Burned(bytes32 indexed botId, uint256 ts)` | `Burned(bytes32,uint256)` | `0x332f25d7d767b49a1126573abecdd03ab5293993961c8c46f81e74c188aba555` | botId | ts | `burn` (onlyOwner, irreversible) | Enforcer signal only; no points in design v2 |
+| `Burned(bytes32 indexed botId, uint256 ts)` | `Burned(bytes32,uint256)` | `0x332f25d7d767b49a1126573abecdd03ab5293993961c8c46f81e74c188aba555` | botId | ts | `burn` (onlyOwner, irreversible) | Enforcer signal only; no points in design v2.1 |
 | `AccessGranted(bytes32 indexed botId, Tier tier, uint256 ts)` | `AccessGranted(bytes32,uint8,uint256)` | `0xf3c3dd4f535e08ca012ad6de26fb12509f2c9111049045d33e3d27adc62c0978` | botId | tier, ts | **Never emitted** (`grantAccess` is a view). Absent from live bytecode | None |
 | `OwnershipTransferred` / `OwnershipTransferStarted` (OpenZeppelin) | as in Escrow | as in Escrow | previousOwner, newOwner | none | constructor / `acceptOwnership` / `transferOwnership` | Governance audit only. Live counts 2 / 1 |
 
@@ -73,7 +73,7 @@ View used by the indexer: `bots(bytes32 botId) -> (bytes32 weightHash, bytes32 b
 | `Unlisted(bytes32 indexed id, Bucket indexed bucket, address indexed actor, uint256 timestamp, uint64 timesListed)` | `Unlisted(bytes32,uint8,address,uint256,uint64)` | `0x2d23df7334e8c5a0e332bab82c73ba47a6a0c6762ce1588267f09c18159bec39` | id, bucket, actor | timestamp, timesListed | `remove(bytes32,uint8)` (onlyOwner) | Enforcer signal only |
 | `OwnershipTransferred` / `OwnershipTransferStarted` (OpenZeppelin) | as in Escrow | as in Escrow | previousOwner, newOwner | none | constructor / 2-step | Governance audit only. Live counts 2 / 1 |
 
-`check()` is a view and emits nothing, so a denylist check earns 0 (design v2, section 3). Mapping a `Listed.id` fingerprint to a botId needs the `Vault.bots(botId)` view (see [INDEXER_SPEC.md](./INDEXER_SPEC.md)).
+`check()` is a view and emits nothing, so a denylist check earns 0 (design v2.1, section 3). Mapping a `Listed.id` fingerprint to a botId needs the `Vault.bots(botId)` view (see [INDEXER_SPEC.md](./INDEXER_SPEC.md)).
 
 ## Notes
 

@@ -1,7 +1,7 @@
 # Agent BV — Bot Verifier: Base Sepolia reputation indexer spec
 
 Status: DRAFT spec, docs only. Build and staging only. No indexer code, no deploy, no transactions.
-Rules follow the Tokenomics design note v2 (2026-09-26). Every point value, floor, and cap is a Tokenomics **GUESS** and is loaded from [config/reputation/sepolia.json](../../config/reputation/sepolia.json), never hard-coded. Event details: [EVENT_MAP.md](./EVENT_MAP.md).
+Rules follow the Tokenomics design note v2.1 (2026-09-26). Every point value, floor, and cap is a Tokenomics **GUESS** and is loaded from [config/reputation/sepolia.json](../../config/reputation/sepolia.json), never hard-coded. Event details: [EVENT_MAP.md](./EVENT_MAP.md).
 
 Gate: do not merge or run against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.
 
@@ -9,8 +9,8 @@ Gate: do not merge or run against live data until Blockchain Verifier APPROVE an
 
 | Ledger | Contents |
 |---|---|
-| `bot-verifier-sepolia-reputation` | Usage outcomes O1 to O5 and ADJ |
-| `bot-verifier-sepolia-arbitrator-rep` | Arbitrator outcomes A1, A2 and ADJ |
+| `agent-bv-sepolia-reputation` | Usage outcomes O1 to O5 and ADJ |
+| `agent-bv-sepolia-arbitrator-rep` | Arbitrator outcomes A1, A2 and ADJ |
 
 The two ledgers are never summed, in storage, API, or UI. Points are off-chain, Steward-operated, non-transferable, and may be adjusted or cancelled.
 
@@ -30,7 +30,7 @@ The two ledgers are never summed, in storage, API, or UI. Points are off-chain, 
 
 ## 4. Finality and reorgs
 
-- An entry is `provisional` when all of its source logs are at or below the `safe` block, and becomes `final` when all of its source logs are at or below the `finalized` block. (Design v2 cites Builder's measurement of about 21 minutes from latest to `finalized`; not independently verified.)
+- An entry is `provisional` when all of its source logs are at or below the `safe` block, and becomes `final` when all of its source logs are at or below the `finalized` block. (Design v2.1 cites Builder's measurement of about 21 minutes from latest to `finalized`; not independently verified.)
 - On each pass, re-read the canonical block hash for every stored block between `final_cursor` and `safe_cursor`. If a stored `block_hash` is no longer canonical: drop that block's raw logs, set every `provisional` entry derived from them to `cancelled` with `cancel_reason = "reorg"`, rewind `safe_cursor` to the fork point, and rescan. Re-derived entries get the same semantic `entry_id` and are re-inserted as `provisional`.
 - `final` entries are never rewritten by the indexer. Only an `ADJ` entry can change them.
 
@@ -51,7 +51,7 @@ The two ledgers are never summed, in storage, API, or UI. Points are off-chain, 
 - **Operator at block**: for each botId, the ordered list of `OperatorSet(botId, account)` events. The operator of botId at block B is the `account` of the last `OperatorSet` at or before B (by block, then logIndex). Every operator write emits `OperatorSet`, so this is complete. An `eth_call Vault.operator(botId)` at block B is a cross-check only.
 - **Fingerprint to botId map** (denylist signals): botIds are enumerable from `Registered`. For each new botId, call `Vault.bots(botId)` once (any block after registration; the hashes are fixed) and index `weightHash`, `behaviorSig`, `promptHash` -> botId. A `Listed(id, bucket, ...)` whose `id` matches maps to that botId, then to its operator via operator-at-block. This is an enforcer signal with 0 points.
 
-## 7. Usage rules (ledger `bot-verifier-sepolia-reputation`)
+## 7. Usage rules (ledger `agent-bv-sepolia-reputation`)
 
 Parties for O2, O3, O4 are always taken from `EscrowCreated.payer` / `.payee`, never from `tx.from` or `msg.sender`, because `release` and `refund` are permissionless.
 
@@ -88,7 +88,7 @@ Implementation: evaluate O4 each time any of the three events for the pair is in
 - A `DisputeOpened` whose `subjectHash` is not an escrow, or whose subject escrow is no longer Open without ever having been linked through `EscrowDisputed`.
 - Track `DisputeOpened.challenger`. If one challenger has `>= flags.o5_standalone_disputes_threshold` (GUESS 3) standalone disputes within `flags.o5_window_days` (GUESS 7), raise a flag to the enforcer hook (section 11). No points change.
 
-## 8. Arbitrator rules (ledger `bot-verifier-sepolia-arbitrator-rep`)
+## 8. Arbitrator rules (ledger `agent-bv-sepolia-arbitrator-rep`)
 
 Only disputes tied to an escrow through `EscrowDisputed` count, in any order. Every resolved dispute has exactly 3 votes.
 
@@ -100,7 +100,7 @@ Only disputes tied to an escrow through `EscrowDisputed` count, in any order. Ev
 
 ## 9. Caps and anti-gaming (checklist #12, all GUESS, config defaults)
 
-Applied in block order (block_number, log_index) at credit time. Proposed (not in design v2): an entry over a cap is stored with `points = 0` and a `capped` note so the history stays explainable.
+Applied in block order (block_number, log_index) at credit time. Proposed (not in design v2.1): an entry over a cap is stored with `points = 0` and a `capped` note so the history stays explainable.
 - Usage points: 20 per wallet per day, 20 per botId per day.
 - At most 5 counted escrows per wallet per day (O2 plus O3).
 - Same payer/payee pair: at most 2 per day, 10 lifetime.
@@ -108,14 +108,14 @@ Applied in block order (block_number, log_index) at credit time. Proposed (not i
 - No decay in v1.
 - Arbitrator ledger: 30 per arbitrator per day.
 - Slashing: the enforcer cancels points with manual ADJ entries until #9 names an owner and a written abuse policy.
-- "Day" and "season" boundaries are config values (`caps.day_boundary`, `caps.season`); design v2 does not define them yet.
+- "Day" and "season" boundaries are config values (`caps.day_boundary`, `caps.season`); design v2.1 does not define them yet.
 
-## 10. Ledger entry schema (matches design v2 section 6)
+## 10. Ledger entry schema (matches design v2.1 section 6)
 
 | Field | Type | Notes |
 |---|---|---|
 | `entry_id` | string | Semantic key: O1 = botId; O2/O3/O4 = escrowId + outcome code; A1/A2 = disputeId + voter (+ code) |
-| `ledger` | enum | `bot-verifier-sepolia-reputation` or `bot-verifier-sepolia-arbitrator-rep` |
+| `ledger` | enum | `agent-bv-sepolia-reputation` or `agent-bv-sepolia-arbitrator-rep` |
 | `chain_id` | int | Always `84532` |
 | `wallet` | address | Credited wallet |
 | `bot_id` | bytes32, nullable | Where one applies |
@@ -171,17 +171,17 @@ interface CapPolicy {
 
 ## 13. Known limits
 
-- **Flagger identity is not derivable.** `EscrowDisputed` does not log `msg.sender`, and `tx.from` is wrong for smart accounts, EIP-7702 accounts, batched calls, and the claim relayer. Not needed, because flagging is not penalized or credited in design v2. Penalizing it later would need `address indexed flaggedBy` on `EscrowDisputed`, which means an Escrow redeploy.
+- **Flagger identity is not derivable.** `EscrowDisputed` does not log `msg.sender`, and `tx.from` is wrong for smart accounts, EIP-7702 accounts, batched calls, and the claim relayer. Not needed, because flagging is not penalized or credited in design v2.1. Penalizing it later would need `address indexed flaggedBy` on `EscrowDisputed`, which means an Escrow redeploy.
 - **No attestation / challenge-window primitive exists on-chain.** "Undisputed completion" is detected positively as `EscrowReleased` with no `EscrowDisputed`, never inferred from elapsed time or silence. An attestation with a challenge window would need a new contract.
 - No business events exist live yet, so event ordering is verified from source and bytecode only.
 
 ## 14. Open questions (not resolved by this spec)
 
 These are flagged for Tokenomics / Spencer, not decided here:
-1. Design v2 section 6 says to read "only from the three contract addresses" (Vault, Escrow, DisputePanel). This spec also reads Denylist logs and calls `Vault.bots()` for enforcer signals only, with 0 points. Confirm that is acceptable.
+1. Design v2.1 section 6 says to read "only from the three contract addresses" (Vault, Escrow, DisputePanel). This spec also reads Denylist logs and calls `Vault.bots()` for enforcer signals only, with 0 points. Confirm that is acceptable.
 2. O5 "subject is not an escrow" is only knowable as of now: escrowIds are caller-chosen, so a dispute can be opened on an escrowId that is created later and then linked. O5 classification (and the repeat-use flag) should stay provisional while the subject could still become an Open escrow.
 3. O4 any-order: a dispute can be resolved before it is linked. An upheld pre-resolved dispute lets a party move Open -> Disputed -> Released immediately (skipping expiry and re-verification); an unwind lets Disputed -> Refunded happen before expiry. Needs 3 arbitrator votes, so it is not free, but it is a collusion path worth a cap review.
 4. O1 credits the first `OperatorSet` even if the bot was `Burned` first (`setOperator` checks registration, not `active`), and regardless of tier. Decide whether to gate on `active` and tier >= Financial.
 5. Relayer-operated bots: if the claim relayer wallet is a bot's Vault operator, `EscrowCreated.payer` is the relayer and it would receive the points. Decide eligibility.
-6. Day boundary (UTC by block timestamp is the proposed default) and season length are not defined in design v2.
+6. Day boundary (UTC by block timestamp is the proposed default) and season length are not defined in design v2.1.
 7. O4 pays both parties regardless of ruling, including the party the panel ruled against; A2 has a herding incentive because votes are public as they land. Both are design choices to confirm when caps lock.
