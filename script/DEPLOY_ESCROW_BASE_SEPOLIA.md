@@ -8,12 +8,13 @@
 
 - Agents do not pass `--broadcast` or `--resume`.
 - Do not touch Ethereum mainnet. Every script here reverts on chainid `1`.
-- Do not redeploy Denylist or Vault. Gate A is done. Use the live addresses below.
-- Do not redeploy `BotAttestationEscrow`. The live address is already in the book.
+- Do not redeploy Denylist, Vault, or DisputePanel. Gate A is done. Gate B is seated. Use the live addresses below.
+- Do not broadcast an escrow redeploy until the Auditor re-audit PASSES and the Verifier APPROVES. Spencer broadcasts. Agents do not.
+- Do not change `BotAttestationEscrow.address` in `deployments/base-sepolia.json` in the prepare PR. Wiring is a separate PR after the human broadcast.
 - Do not deploy BVT in this pack.
 - Do not call `createEscrow` from an agent session.
 
-Escrow bytecode on `main` already includes the H-1 fix (upheld release skips post-ruling attestation). This pack does not change Denylist, Vault, or Escrow bytecode.
+The escrow on this branch includes the H-1 fix and the ESC-M-1 dispute-link checks. The contract already at `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` does not. An escrow-only redeploy is how that bytecode gets on Base Sepolia. This pack does not change Denylist, Vault, or DisputePanel bytecode.
 
 Landed order: Gate B was seated (block 47299643), then escrow was created and `transferOwnership` ran (block 47299930), then `CORE_TIMELOCK` called `acceptOwnership` (block 47300275).
 
@@ -39,54 +40,159 @@ Landed order: Gate B was seated (block 47299643), then escrow was created and `t
 
 Escrow create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` tx `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. `acceptOwnership` tx `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` is block 47300275. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
 
-`CORE_TIMELOCK` is the same account that owns the live Denylist and Vault. On chain its code is an EIP-7702 delegation, not an OpenZeppelin `TimelockController` (`schedule` / `getMinDelay` are absent). `onlyOwner` is `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call. See [`script/OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md).
+`CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA with EIP-7702 delegation to `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b`, not a timelock contract. `getMinDelay` reverts. It is the same account that owns the live Denylist and Vault. `onlyOwner` is `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call. See [`script/OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md).
 
 Liability `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` and InsuranceFund `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` stay as they are. This pack does not call them.
 
 ## Escrow simulate env
 
-`script/DeployBotAttestationEscrow.s.sol` reads these. All addresses are required and non-zero. `CORE_TIMELOCK` must not equal the deployer address derived from `PRIVATE_KEY`. Never commit `PRIVATE_KEY`.
+`script/DeployBotAttestationEscrow.s.sol` reads these. All four addresses are required and must be the live rows above. The script reverts on any other Denylist, Vault, panel, or `CORE_TIMELOCK`. It deploys only `BotAttestationEscrow`. Dry-run does not read a private key. `CORE_TIMELOCK` must not equal the deployer. Never commit `PRIVATE_KEY`.
 
 ```bash
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
-# PRIVATE_KEY is a Base Sepolia deployer key in your shell. It is not CORE_TIMELOCK.
-# Do not paste it into a PR, a log, or this file.
-export PRIVATE_KEY
 export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
 export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
 export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
+# PRIVATE_KEY is Spencer's broadcast only. It is a deployer key, not CORE_TIMELOCK.
+# Do not paste it into a PR, a log, or this file. Omit it for simulate.
 ```
 
 | Variable | Meaning |
 | --- | --- |
-| `PRIVATE_KEY` | Deployer key for the escrow **create**. Required for simulate and for Spencer's broadcast. Must not be `CORE_TIMELOCK`. |
+| `PRIVATE_KEY` | Deployer key for Spencer's **broadcast** only. Omit it for simulate. Must not be `CORE_TIMELOCK`. |
 | `DENYLIST` | Live Denylist above. The script does not redeploy it. |
 | `VAULT` | Live Vault above. The script does not redeploy it. |
-| `DISPUTE_PANEL` | Live DisputePanel above. |
-| `CORE_TIMELOCK` | Immutable escrow `governance`. On the live escrow it is `owner()`; `pendingOwner` is zero. |
-| `BASE_SEPOLIA_RPC_URL` | Base Sepolia RPC. Chainid must be `84532`. |
+| `DISPUTE_PANEL` | Live DisputePanel above. The script does not redeploy it. |
+| `CORE_TIMELOCK` | Immutable escrow `governance` and Ownable2Step pending owner. EOA with EIP-7702 delegation, not a timelock contract. |
+| `BASE_SEPOLIA_RPC_URL` | Base Sepolia RPC. Chainid must be `84532`. Any other chain reverts. |
 
 ## Escrow simulate (not live)
 
+Dry-run sender is `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` (`SIMULATE_SENDER`), the public burn EOA. No private key. No `--broadcast`. Forge checks that sender's real balance while estimating gas, and this address already holds dust on Base Sepolia. It is not the deployer Spencer will use, and it is not `CORE_TIMELOCK`.
+
 ```bash
+unset PRIVATE_KEY
 forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
+  --rpc-url https://sepolia.base.org \
+  --sender 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
+```
+
+The log line `SIMULATE; no transaction will be sent` is the dry run. The address printed for `BotAttestationEscrow` exists only inside that process. Do not paste it into the address book.
+
+Chain guard: chainid `1` reverts `DeployEscrow: mainnet forbidden`. Any chain other than `84532` reverts. There is no Ethereum Sepolia switch unless someone edits `ALLOWED_CHAIN_ID` on purpose. Do not.
+
+## ESC-M-1 escrow-only redeploy (conditional GO)
+
+Spencer gave a conditional GO for an **escrow-only** redeploy on Base Sepolia (chainid `84532`) once the Auditor re-audit PASSES and the Verifier APPROVES. This section is the runbook. It does not broadcast. A human broadcasts. Do not update `deployments/base-sepolia.json` until a follow-up wiring PR after that broadcast.
+
+The script deploys one `BotAttestationEscrow` and calls `transferOwnership(CORE_TIMELOCK)`. Constructor arguments are the live Denylist, Vault, DisputePanel, and `CORE_TIMELOCK`. It does not deploy a new Denylist, Vault, or panel. `acceptOwnership` is a second transaction from `CORE_TIMELOCK`, not from the deployer, and not inside the deploy script.
+
+### Broadcast (human only, after Auditor PASS and Verifier APPROVE)
+
+Signer placeholder. Never put a real key in this file, a PR, or a log. The key's address must not be `CORE_TIMELOCK`.
+
+```bash
+export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
+export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
+export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
+export PRIVATE_KEY="<DEPLOYER_PRIVATE_KEY>"
+
+forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --broadcast \
+  --private-key "$PRIVATE_KEY"
+```
+
+Record the new address as `NEW_ESCROW` and the create transaction as `DEPLOY_TX` from the broadcast receipt. Leave the book address `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` in place until the wiring PR.
+
+### acceptOwnership (CORE_TIMELOCK, not the deployer)
+
+`CORE_TIMELOCK` is the pending owner. The signer placeholder is that account's key, not the deployer key.
+
+```bash
+export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
+export PRIVATE_KEY="<CORE_TIMELOCK_PRIVATE_KEY>"
+
+cast send "$NEW_ESCROW" "acceptOwnership()" \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --private-key "$PRIVATE_KEY"
+```
+
+Before this call, `owner()` is the deployer and `pendingOwner()` is `CORE_TIMELOCK`. After it, `owner()` is `0x10CC9474b45625ADfd05C209f2518023484878D9` and `pendingOwner()` is the zero address.
+
+### Verify (Sourcify, then Basescan via Etherscan v2)
+
+Compiler settings match `foundry.toml`: solc `0.8.20`, optimizer on, 200 runs, `cancun`. `ETHERSCAN_API_KEY` is a placeholder. Never commit it.
+
+```bash
+export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
+export DEPLOY_TX="<DEPLOY_TX_HASH>"
+export ETHERSCAN_API_KEY="<ETHERSCAN_API_KEY>"
+CTOR_ARGS="$(cast abi-encode "constructor(address,address,address,address)" \
+  0xeE76876bECcFc1B58fC06fF4E654a517d784B224 \
+  0x1463D664fA467FBCDA4B05443434494f05e565bc \
+  0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb \
+  0x10CC9474b45625ADfd05C209f2518023484878D9)"
+
+forge verify-contract \
+  --chain 84532 \
+  --verifier sourcify \
+  --compiler-version 0.8.20 \
+  --num-of-optimizations 200 \
+  --evm-version cancun \
+  --creation-transaction-hash "$DEPLOY_TX" \
+  "$NEW_ESCROW" \
+  contracts/BotAttestationEscrow.sol:BotAttestationEscrow
+
+forge verify-contract \
+  --chain 84532 \
+  --verifier etherscan \
+  --verifier-url "https://api.etherscan.io/v2/api?chainid=84532" \
+  --etherscan-api-key "$ETHERSCAN_API_KEY" \
+  --compiler-version 0.8.20 \
+  --num-of-optimizations 200 \
+  --evm-version cancun \
+  --constructor-args "$CTOR_ARGS" \
+  "$NEW_ESCROW" \
+  contracts/BotAttestationEscrow.sol:BotAttestationEscrow
+```
+
+### Read-only smoke checks
+
+```bash
+export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
+export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
+
+cast call "$NEW_ESCROW" "owner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "pendingOwner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "vault()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "disputePanel()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "denylist()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "lockedValue()(uint256)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast balance "$NEW_ESCROW" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
+
+Expected after `acceptOwnership`: `owner` is `0x10CC9474b45625ADfd05C209f2518023484878D9`, `pendingOwner` is `0x0000000000000000000000000000000000000000`, `vault` is `0x1463D664fA467FBCDA4B05443434494f05e565bc`, `disputePanel` is `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, `denylist` is `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, `lockedValue` is `0`, and the contract balance is `0`.
+
+`dispute` on an escrow id that was never created reverts `not a party` when the caller is a nonzero address. The zero escrow has payer and payee `address(0)`, and the default state is `Open`, so the party check is the revert. `--from` keeps the caller off `address(0)`.
+
+```bash
+cast call "$NEW_ESCROW" \
+  "dispute(bytes32,bytes32)" \
+  0x0000000000000000000000000000000000000000000000000000000000000001 \
+  0x0000000000000000000000000000000000000000000000000000000000000002 \
+  --from 0x0000000000000000000000000000000000000001 \
   --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-There is no `--broadcast` on that command. The log line is a dry run. The address printed for `BotAttestationEscrow` exists only inside that process. Do not paste it into the address book.
+Expected revert data is `Error(string)` with `"not a party"`.
 
-## Escrow broadcast (already landed; Spencer only)
+## Escrow broadcast that already landed
 
-This broadcast already landed. Agents must not run it again. A second broadcast deploys a second escrow. Do not replace the live address.
-
-```bash
-forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
-  --broadcast
-```
-
-Chain guard: chainid `1` reverts `DeployEscrow: mainnet forbidden`. Any chain other than `84532` reverts. There is no Ethereum Sepolia switch unless someone edits `ALLOWED_CHAIN_ID` on purpose. Do not.
+The broadcast that created `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` already landed. That address stays the book address until the wiring PR. Do not treat a simulation address as a replacement. The conditional redeploy above is a later human broadcast of the ESC-M-1 bytecode, not a rerun of this historical deploy.
 
 ## Escrow ownership (complete)
 
@@ -196,6 +302,10 @@ Repeat for the second and third seats (`true`). A removal passes `false`. After 
 | `DeployEscrow: Base Sepolia (84532) only; ...` | Escrow deploy on any other chain |
 | `DeployEscrow: CORE_TIMELOCK unset` / `must not be deployer` | Escrow env |
 | `DeployEscrow: DENYLIST unset` / `VAULT unset` / `DISPUTE_PANEL unset` | Escrow env missing or zero |
+| `DeployEscrow: DENYLIST is not the live Base Sepolia Denylist` | Env denylist is not `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` |
+| `DeployEscrow: VAULT is not the live Base Sepolia Vault` | Env vault is not `0x1463D664fA467FBCDA4B05443434494f05e565bc` |
+| `DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel` | Env panel is not `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` |
+| `DeployEscrow: CORE_TIMELOCK is not the live owner` | Env timelock is not `0x10CC9474b45625ADfd05C209f2518023484878D9` |
 | `OpsPanel: DISPUTE_PANEL unset` / `ARBITRATOR unset` / `ARBITRATOR_1 unset` (and `_2`, `_3`) | Missing or zero panel-op env |
 | `OpsLive: CORE_TIMELOCK unset` | Panel op missing the timelock env |
 | `OpsPanel: DISPUTE_PANEL is not the live Base Sepolia DisputePanel` | Env panel is not the live address |
@@ -216,3 +326,5 @@ Repeat for the second and third seats (`true`). A removal passes `false`. After 
 - [x] `CORE_TIMELOCK` `acceptOwnership` on the escrow (block 47300275; `pendingOwner` is zero)
 - [x] Real escrow address and txs are in `deployments/base-sepolia.json` and `contracts/README.md`
 - [x] Agents do not `--broadcast` and do not touch mainnet
+- [ ] ESC-M-1 escrow-only redeploy, only after the Auditor re-audit PASSES and the Verifier APPROVES, then Spencer broadcasts
+- [ ] Wiring PR updates `deployments/base-sepolia.json` after that broadcast. This PR does not.

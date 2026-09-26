@@ -1136,6 +1136,25 @@ contract DeployEscrowGuardTest is Test {
         deploy.readAddress("DENYLIST", "DeployEscrow: DENYLIST unset");
     }
 
+    function test_liveStackOnly() public {
+        address denylist = deploy.LIVE_DENYLIST();
+        address vault = deploy.LIVE_VAULT();
+        address panel = deploy.LIVE_DISPUTE_PANEL();
+        address timelock = deploy.LIVE_TIMELOCK();
+        address other = address(0x1234);
+        deploy.requireLiveStack(denylist, vault, panel, timelock);
+        vm.expectRevert(bytes("DeployEscrow: DENYLIST is not the live Base Sepolia Denylist"));
+        deploy.requireLiveStack(other, vault, panel, timelock);
+        vm.expectRevert(bytes("DeployEscrow: VAULT is not the live Base Sepolia Vault"));
+        deploy.requireLiveStack(denylist, other, panel, timelock);
+        vm.expectRevert(bytes("DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel"));
+        deploy.requireLiveStack(denylist, vault, other, timelock);
+        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK is not the live owner"));
+        deploy.requireLiveStack(denylist, vault, panel, other);
+        assertEq(deploy.SIMULATE_SENDER(), 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001);
+        assertTrue(deploy.SIMULATE_SENDER() != timelock);
+    }
+
     function test_deployWiresDepsAndHandsOffToTimelock() public {
         Denylist denylist = new Denylist();
         Vault vault = new Vault(address(denylist));
