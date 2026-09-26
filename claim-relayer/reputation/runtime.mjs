@@ -156,6 +156,9 @@ function configBody(runtime) {
       o5_standalone_disputes_threshold: slot(latest.flags.o5_threshold),
       o5_window_days: slot(latest.flags.o5_window_days),
       day_boundary: slot("utc_day_by_block_timestamp"),
+      season_length_days: slot(latest.season.length_days),
+      season_start_block: slot(latest.season.start_block),
+      season_start_timestamp: slot(latest.season.start_timestamp),
     },
   };
 }

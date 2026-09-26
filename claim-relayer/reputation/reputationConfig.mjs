@@ -93,11 +93,9 @@ export function normalizeVersion(raw) {
       o5_threshold: guessInt(raw.flags.o5_standalone_disputes_threshold, "o5_threshold"),
       o5_window_days: guessInt(raw.flags.o5_window_days, "o5_window"),
     },
-    season: {
-      id: String(raw.season_implementation?.id || raw.config_version),
-      start_timestamp: guessInt({ value: raw.season_implementation?.start_timestamp ?? 0 }, "season_start"),
-      end_timestamp: raw.season_implementation?.end_timestamp ?? null,
-    },
+    gates: normalizeGates(raw.gates),
+    excluded: excludedAddresses(raw.excluded_addresses),
+    season: normalizeSeason(raw),
     disclaimer: String(raw.display?.disclaimer || ""),
     disclaimer_links: {
       master_disclaimer: String(raw.disclaimer_links?.master_disclaimer || ""),
@@ -114,6 +112,46 @@ export function normalizeVersion(raw) {
       history_page_max: guessInt({ value: raw.read_api?.history_page_max ?? 100 }, "page_max"),
     },
     scan_max_block_range: guessInt({ value: raw.scan?.max_block_range ?? 625 }, "scan"),
+  };
+}
+
+function normalizeGates(gates) {
+  const gate = gates?.o1_tier_gate;
+  if (!gate || typeof gate.enabled !== "boolean") {
+    throw httpError(500, "reputation_config_invalid", { field: "o1_tier_gate" });
+  }
+  return {
+    o1_tier_enabled: gate.enabled,
+    o1_min_tier: guessInt(gate.min_tier, "o1_min_tier"),
+  };
+}
+
+function excludedAddresses(raw) {
+  if (!raw || !Array.isArray(raw.entries)) {
+    throw httpError(500, "reputation_config_invalid", { field: "excluded_addresses" });
+  }
+  const set = new Set();
+  for (const entry of raw.entries) {
+    if (!entry || entry.address == null || entry.address === "") continue;
+    if (typeof entry.address !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(entry.address)) {
+      throw httpError(500, "reputation_config_invalid", { field: "excluded_address" });
+    }
+    set.add(entry.address.toLowerCase());
+  }
+  return set;
+}
+
+function nullableInt(node, label) {
+  const value = node && typeof node === "object" && "value" in node ? node.value : node;
+  if (value === null || value === undefined) return null;
+  return guessInt({ value }, label);
+}
+
+function normalizeSeason(raw) {
+  return {
+    length_days: guessInt(raw.caps?.season_length_days, "season_length_days"),
+    start_block: nullableInt(raw.caps?.season_start_block, "season_start_block"),
+    start_timestamp: nullableInt(raw.caps?.season_start_timestamp, "season_start_timestamp"),
   };
 }
 

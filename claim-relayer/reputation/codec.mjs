@@ -8,6 +8,20 @@ import { decodeEventLog, encodeAbiParameters, encodeEventTopics, keccak256, toBy
  */
 export const BUSINESS_EVENTS = [
   {
+    name: "Registered",
+    contract: "vault",
+    signature: "Registered(bytes32,uint8,uint256)",
+    item: {
+      type: "event",
+      name: "Registered",
+      inputs: [
+        { name: "botId", type: "bytes32", indexed: true },
+        { name: "tier", type: "uint8", indexed: false },
+        { name: "ts", type: "uint256", indexed: false },
+      ],
+    },
+  },
+  {
     name: "OperatorSet",
     contract: "vault",
     signature: "OperatorSet(bytes32,address)",

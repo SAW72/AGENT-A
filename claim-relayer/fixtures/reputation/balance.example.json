@@ -23,8 +23,8 @@
       "status": "unverified",
       "points_withheld": true
     },
-    "config_version": "sepolia-draft-0",
-    "rule_version": "design-v2",
+    "config_version": "sepolia-draft-1",
+    "rule_version": "design-v2.2",
     "indexed_to_block": 48000100,
     "indexed_to_block_timestamp": 1699920005,
     "finalized_block": 48000100,

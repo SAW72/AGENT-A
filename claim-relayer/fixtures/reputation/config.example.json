@@ -6,8 +6,8 @@
   "path": "/v1/reputation/config?chainId=84532",
   "response": {
     "chainId": 84532,
-    "config_version": "sepolia-draft-0",
-    "rule_version": "design-v2",
+    "config_version": "sepolia-draft-1",
+    "rule_version": "design-v2.2",
     "status": "draft",
     "caps": {
       "usage_points_per_wallet_per_day": {
@@ -70,6 +70,18 @@
       },
       "day_boundary": {
         "value": "utc_day_by_block_timestamp",
+        "status": "draft"
+      },
+      "season_length_days": {
+        "value": 90,
+        "status": "draft"
+      },
+      "season_start_block": {
+        "value": null,
+        "status": "draft"
+      },
+      "season_start_timestamp": {
+        "value": null,
         "status": "draft"
       }
     }

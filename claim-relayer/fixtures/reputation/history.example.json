@@ -21,19 +21,20 @@
         "source_contract": "0x141214f04b0e1d949b6e6bf32d019ad7ab5b284c",
         "event_names": [
           "EscrowCreated",
+          "DisputeOpened",
           "EscrowDisputed",
           "DisputeResolved",
           "EscrowReleased"
         ],
-        "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000007106",
+        "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000007108",
         "log_index": 0,
-        "block_number": 48000006,
-        "block_hash": "0x000000000000000000000000000000000000000000000000000000002dc72060",
+        "block_number": 48000007,
+        "block_hash": "0x000000000000000000000000000000000000000000000000000000002dc72070",
         "block_timestamp": 1699920005,
         "escrow_id": "0x0000000000000000000000000000000000000000000000000000000000000007",
         "dispute_id": "0x0000000000000000000000000000000000000000000000000000000000000008",
-        "rule_version": "design-v2",
-        "config_version": "sepolia-draft-0",
+        "rule_version": "design-v2.2",
+        "config_version": "sepolia-draft-1",
         "cancel_reason": null,
         "cancelled_by": null
       },
@@ -50,15 +51,15 @@
         "event_names": [
           "OperatorSet"
         ],
-        "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000007101",
-        "log_index": 0,
+        "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000007102",
+        "log_index": 1,
         "block_number": 48000001,
-        "block_hash": "0x000000000000000000000000000000000000000000000000000000002dc72010",
+        "block_hash": "0x000000000000000000000000000000000000000000000000000000002dc72011",
         "block_timestamp": 1700006401,
         "escrow_id": null,
         "dispute_id": null,
-        "rule_version": "design-v2",
-        "config_version": "sepolia-draft-0",
+        "rule_version": "design-v2.2",
+        "config_version": "sepolia-draft-1",
         "cancel_reason": null,
         "cancelled_by": null
       }

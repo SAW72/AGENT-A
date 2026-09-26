@@ -126,7 +126,7 @@ describe("reputation read API", () => {
       assert.equal(omitted.json.address, WALLET.toLowerCase());
 
       const voter = await request(ctx.port, "GET", `/v1/reputation/${VOTER}`);
-      assert.equal(voter.json.ledgers.arbitrator.final, 5);
+      assert.equal(voter.json.ledgers.arbitrator.final, 3);
       assert.equal(voter.json.ledgers.usage.final, 0);
       assert.equal("total" in voter.json, false);
       assert.equal("total" in voter.json.ledgers, false);
@@ -196,8 +196,11 @@ describe("reputation read API", () => {
       assert.equal(config.status, 200);
       assert.equal(config.json.chainId, 84532);
       assert.equal(config.json.status, "draft");
-      assert.equal(config.json.config_version, "sepolia-draft-0");
-      assert.equal(config.json.rule_version, "design-v2");
+      assert.equal(config.json.config_version, "sepolia-draft-1");
+      assert.equal(config.json.rule_version, "design-v2.2");
+      assert.equal(config.json.thresholds.season_length_days.value, 90);
+      assert.equal(config.json.thresholds.season_start_block.value, null);
+      assert.equal(config.json.thresholds.season_start_timestamp.value, null);
       assert.equal(config.json.caps.usage_points_per_wallet_per_day.value, 20);
       assert.equal(config.json.caps.usage_points_per_wallet_per_day.status, "draft");
       assert.equal(config.json.caps.arbitrator_points_per_day.status, "draft");

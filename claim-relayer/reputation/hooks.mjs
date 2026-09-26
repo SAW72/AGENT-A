@@ -1,6 +1,9 @@
 /**
- * Checklist #7 and #9. Defaults fail closed: nothing is silently credited.
- * PR #28's indexer stub returns eligible:true for staging. This service does not.
+ * Checklist #7 stays fail closed: nothing is silently credited.
+ * Checklist #9 is still open. Design note v2.2 says O5_REPEAT and
+ * DISPUTE_PREDATES_ESCROW go to the enforcer for review only and do not
+ * auto-cancel or withhold points. PR #28's indexer stub returns eligible:true
+ * for staging. This service does not.
  * See docs/reputation-ledger.md.
  */
 
@@ -21,8 +24,8 @@ export function createDefaultEnforcer() {
   return {
     flag(signal) {
       flags.push(signal);
-      if (signal.kind === "O5_REPEAT") {
-        return { withhold_wallet: true, reason: "abuse_policy_unconfigured" };
+      if (signal.kind === "O5_REPEAT" || signal.kind === "DISPUTE_PREDATES_ESCROW") {
+        return { withhold_wallet: false, reason: "review_only" };
       }
       return { withhold_wallet: false, reason: "enforcer_unconfigured" };
     },

@@ -1,10 +1,12 @@
-# Agent BV — Bot Verifier reputation ledger (Base Sepolia)
+# Reputation ledger (Base Sepolia)
 
-Status: **draft for build and staging**. Spencer has not approved design note v2.1. This pull request stays a draft and must not be merged. Nothing here is a token, a claim, or a mainnet path.
+Status: **draft for build and staging**. Spencer has not approved design note v2.2. This pull request stays a draft and must not be merged. Nothing here is a token, a claim, or a mainnet path.
 
-The rules are design note **v2.1** (Tokenomics, 26 Sep 2026, 3:42 PM ET), sections 3, 4, 6, 7, and 9. v2.1 is a naming-only change from v2: the product is Agent BV, and the ledgers are `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`. No rule, weight, or cap changed, so `rule_version` stays `design-v2`. Event layouts and start blocks follow Blockchain Builder's draft [PR #28](https://github.com/SAW72/AGENT-B.V./pull/28) (`docs/reputation/EVENT_MAP.md`, `docs/reputation/INDEXER_SPEC.md`, `config/reputation/sepolia.json`). That PR is docs only and is not on `main`. This service recomputes topic0 locally; the scored topics match that map. Where this document disagrees with PR #28, the difference is called out below and flagged for Tokenomics.
+The rules are design note **v2.2** (Tokenomics, 26 Sep 2026, 3:47 PM ET). v2.2 supersedes v2.1. Section 12 wins wherever it conflicts with sections 1 to 11. `rule_version` is `design-v2.2`. `config_version` is `sepolia-draft-1`. The ledger ids stay `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`.
 
-Product name: **Agent BV**. Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited.
+Event layouts, start blocks, and the draft numbers follow Blockchain Builder's draft [PR #28](https://github.com/SAW72/AGENT-B.V./pull/28) (`docs/reputation/EVENT_MAP.md`, `docs/reputation/INDEXER_SPEC.md`, `config/reputation/sepolia.json`). That PR is not modified by this change and is not on `main`. This service recomputes topic0 locally. Differences from that config are listed under "Differences from PR #28".
+
+Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited. The config `product` field is the placeholder `the product` so a later display-name change stays in one place.
 
 ## Architecture
 
@@ -57,12 +59,13 @@ Scored signatures and topic0 (keccak256 of the canonical signature, recomputed i
 
 Also decoded, never turned into points:
 
-- `Burned(bytes32,uint256)` on Vault. Enforcer signal `BOT_BURNED`.
+- `Burned(bytes32,uint256)` on Vault. Enforcer signal `BOT_BURNED`. Used by the O1 active check. It does not create points.
+- `Registered(bytes32,uint8,uint256)` on Vault. It does not create a row by itself. O1 reads the `uint8` tier from the latest `Registered` at or before the first `OperatorSet`. `Vault.Tier` is None 0, Chat 1, DataTools 2, Financial 3, Critical 4.
 - `Listed` / `Unlisted` on Denylist. Enforcer signals. `Listed.id` is a fingerprint, not a bot id. This replay does not call `Vault.bots()`, so it does not join a listing to a bot.
 
 Ignored on purpose (unknown topic0 is skipped, not fatal):
 
-- `Registered`, `AccessGranted` (the latter is a view and is absent from live bytecode, per PR #28).
+- `AccessGranted` (a view, absent from live bytecode, per PR #28).
 - Ownership events.
 - Live Escrow `VaultUpdated(address)` topic `0x161584aed96e7f34998117c9ad67e2d21ff46d2a42775c22b11ed282f3c7b2cd` and `DisputePanelUpdated(address)` topic `0x9d75f31e9d9860ecb2dbb146498bd73b67bd0a905f7670417df7b935a6ce3998`. The live escrow was deployed before PR #23 and emits these 1-field shapes. `main` has the 4-field shapes. Neither shape is a reputation rule. A fixture with the live topic does not throw.
 - `Denylist.check` is a view and has no log. It credits nothing.
@@ -76,7 +79,7 @@ The resolving vote's transaction emits `DisputeResolved` and then `VoteCast` (lo
 - PR #28 measured the DisputePanel deploy block as **47253020**. It is not in `deployments/base-sepolia.json`. This service uses 47253020 because that map is the indexer spec we were asked to follow. If Builder revises it, change `contracts.dispute_panel.start_block` only.
 - Finality lag of about 21 minutes is Builder's measurement, quoted by Tokenomics as unverified. This code does not assume a duration. The caller passes `safeBlock` and `finalizedBlock`.
 - No business logs exist yet (PR #28 scanned through block 47341332 and found only deploy, ownership, wiring, and seat logs). Ordering is from source, not from live transactions.
-- `CORE_TIMELOCK` being an EOA with an EIP-7702 delegation is out of scope. Scoring does not read that account.
+- `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9` is on the usage exclusion list. Whether the EIP-7702 delegation is intended governance is still for Spencer and BOB. This replay only excludes the address.
 
 ## Scoring
 
@@ -86,18 +89,20 @@ Weights, floors, and caps are read from the config version active at the **compl
 
 | Code | Ledger | Nominal points (GUESS) | When |
 | --- | --- | --- | --- |
-| O1 | usage | 10 to the operator | First `OperatorSet` for a botId. Later sets for that botId credit 0 and write no row. The 5-argument `register` emits `Registered` only, so the credit waits for `OperatorSet`. |
+| O1 | usage | 10 to the operator | First `OperatorSet` for a botId. Later sets for that botId credit 0 and write no row. The 5-argument `register` emits `Registered` only, so the credit waits for `OperatorSet`. The tier gate is on by default: the `Registered` tier must be at least Financial (3). A missing registration scores 0. Turning `gates.o1_tier_gate.enabled` off skips that check. A `Burned` log at or before that `OperatorSet` block scores 0 once the O1 row is final. While the row is still provisional the burn does not zero it. A burn in a later block does not claw a final O1 back. |
 | O2 | usage | 5 payer and 5 payee | `EscrowReleased`, no `EscrowDisputed` anywhere in the log set for that escrowId, amount at least the floor, release timestamp at least 300 seconds after create. |
 | O3 | usage | 1 payer, 0 payee | `EscrowRefunded`, never disputed, set duration at least 3600 seconds, same amount floor. The 0 payee weight writes no row. |
-| O4 | usage | 2 payer and 2 payee | All three exist, in any order: `EscrowDisputed` for the escrowId, `DisputeResolved` for that disputeId, and `EscrowReleased` or `EscrowRefunded`. A disputed refund with no resolution credits 0. No flagger field is read. The amount floor and the 300 second gap do not apply. |
-| O5 | usage | 0 | `DisputeOpened` whose subject is not an escrow in this log set, or whose subject escrow is terminal and was never linked by `EscrowDisputed`. A dispute on an escrow that is still open is not O5 yet, because a later log in a future replay can still link it. |
-| A1 | arbitrator | 3 per vote | `VoteCast` on a dispute that is both resolved and linked through `EscrowDisputed`, any order. |
-| A2 | arbitrator | 2 more | Same vote when `support == upheld`. |
+| O4 | usage | 2 payer and 2 payee | `EscrowDisputed`, `DisputeResolved`, and `EscrowReleased` or `EscrowRefunded` all exist. Those three may arrive in any order. `EscrowCreated` must be in a strictly earlier block than `DisputeOpened`. The same block, a later create, or a missing `DisputeOpened` scores 0 for both parties and flags `DISPUTE_PREDATES_ESCROW`. The amount floor and the 300 second gap do not apply. Both parties are credited, including the side the panel ruled against. |
+| O5 | usage | 0 | `DisputeOpened` whose subject is not an escrow in this log set, or whose subject escrow is terminal and was never linked by `EscrowDisputed`. Status stays `provisional`, because a later escrow can still be created. If a later `EscrowDisputed` links it, the O5 row drops and the escrow is scored under O4, including the block-order rule. |
+| A1 | arbitrator | 3 per vote | `VoteCast` on a dispute that is both resolved and linked through `EscrowDisputed`. The same block-order rule as O4 applies. A voter who is that escrow's payer or payee scores 0. |
+| A2 | arbitrator | 0 by default | Same vote when `support == upheld` and the config weight is above 0. The checked-in weight is 0, so no A2 row is written until the weight is raised. The block-order rule and the party rule apply when the weight is above 0. |
 | ADJ | either | negative or zero | Manual file only. |
 
 An escrow that is both released and refunded in a fixture keeps the earlier terminal log. One escrow id produces one outcome. O2 and O3 are impossible once `EscrowDisputed` is present, even if that log is ordered after release. On the real contract a release leaves the escrow unable to be disputed; the stricter "ever" check is what the tests lock.
 
-O1 is not suppressed by a later `Burned`. Burn is a signal only (PR #28 open question 4, left open).
+Parties for O2, O3, and O4 are the `EscrowCreated` payer and payee. Replay never reads `tx.from`. Addresses on `excluded_addresses` score 0 on the usage ledger, including when one of them is the operator, payer, or payee. The arbitrator ledger is not zeroed by that list, except that a voter who is a party to the escrow scores 0 A1 and 0 A2 on that dispute.
+
+`DISPUTE_PREDATES_ESCROW` and `O5_REPEAT` are review flags. They do not cancel other rows and they do not withhold later points.
 
 ### Entry fields
 
@@ -107,7 +112,7 @@ Section 6 fields are on every row: `entry_id`, `ledger`, `chain_id` (always 8453
 
 `entry_id` vs `semantic_key` (flagged for Tokenomics and Builder): section 6 and PR #28 key O2/O3/O4 as escrowId plus outcome code, and the row has a single `wallet`. O2 and O4 credit two wallets, so those rows cannot share one id. `semantic_key` is the spec key (`O2:<escrowId>`). `entry_id` appends the lowercase wallet (`O2:<escrowId>:<wallet>`). Dedup and the once-per-escrow rule use the semantic key. O1 is `O1:<botId>`. O5 is `O5:<disputeId>`. A1/A2 are `<code>:<disputeId>:<voter>`. ADJ is `ADJ:<adjustment_id>`.
 
-`status` is `provisional` when every source log is at or below `safe` and at least one is above `finalized`. It is `final` when every source log is at or below `finalized`. It is `cancelled` only when an ADJ names that `entry_id`. A `final` row is not rewritten except by that ADJ.
+`status` is `provisional` when every source log is at or below `safe` and at least one is above `finalized`. It is `final` when every source log is at or below `finalized`. O5 stays `provisional` even after its open log is finalized. It is `cancelled` only when an ADJ names that `entry_id`. A `final` row is not rewritten except by that ADJ.
 
 Off-chain ADJ rows use the zero address and the zero hash, `log_index: null`, and `event_names: ["ADJ"]`. They are not chain logs.
 
@@ -129,7 +134,7 @@ All of these live in `config/reputation/sepolia.json` under `points`, `floors`, 
 
 **Day** (decided by Tokenomics): a day is the UTC day of `block_timestamp`, index `floor(block_timestamp / 86400)`, resetting at 00:00:00 UTC. The timestamp is the completing log's `block_timestamp`, including when a later log is what makes the outcome true. Wall-clock time is not used.
 
-**Season** (draft): `caps.season.value` is null in the Builder file. Until Spencer defines one, `season_implementation` uses a single open-ended season `sepolia-draft-0` from timestamp 0 with the 500 point ceiling. A later timeline row can start a new season id. Cancelling a row does not refund cap headroom.
+**Season** (v2.2 Q6, still a GUESS): 90 UTC days (`caps.season_length_days`). Season 1 starts at `caps.season_start_block` and `caps.season_start_timestamp`, both null until go-live after Spencer's GO. If either is null, or the completing block is before the start block, or the timestamp is before the start timestamp, the 500 point season cap does not apply. When both are set, `season_index = floor((block_timestamp - start_timestamp) / (length_days * 86400))` and the cap key is `season-${index + 1}`. A new season gets a fresh 500. Cancelling a row does not refund cap headroom.
 
 An over-cap candidate is stored with `points: 0`, `capped: true`, and `cap_name` set to the config key that bound (PR #28 section 9). The full nominal amount must fit. Remainders are not clipped. Caps are applied in canonical `(block_number, log_index)` order (decided by Tokenomics), then outcome (A1 before A2 on the same vote), then role (payer before payee).
 
@@ -151,7 +156,9 @@ These five are decided. They are not open questions. Checklist items 7, 9, 11, a
 
 **(a) Adjustments file.** Manual ADJ and cancel rows are not chain logs, so replay cannot invent them. They live in `config/reputation/adjustments.json`, changed only by pull request, and are applied during replay. There is no admin write endpoint. A cancel names `cancels_entry_id`, has `points: 0`, and sets that row to `cancelled`. A slash has negative `points` and no cancel target, and those points count in the balance. Positive ADJ points are rejected. A negative amount combined with a cancel target is rejected as ambiguous. An unknown target fails closed.
 
-**(b) Config timeline.** `config/reputation/timeline.json` lists versions with `effective_from_block`. Replay stamps the version active at the completing block. A later edit does not rescore earlier blocks. The checked-in timeline has one version, `sepolia-draft-0` / `design-v2`, from block 0. v2.1 did not add a timeline row.
+**(b) Config timeline.** `config/reputation/timeline.json` lists versions with `effective_from_block`. Replay stamps the version active at the completing block. A later edit does not rescore earlier blocks. The checked-in timeline has one version, `sepolia-draft-1` / `design-v2.2`, from block 0.
+
+**(f) Section 12 scoring.** A2 defaults to 0 and stays configurable. O4, A1, and A2 require `EscrowCreated` in an earlier block than `DisputeOpened`. Pair caps include O4. Protocol addresses on the exclusion list score 0 usage points. An arbitrator who is a party scores 0 A1 and 0 A2 on that dispute. O1 requires the bot still active at finality and, by default, tier at least Financial. Seasons are 90 days from the go-live block, and the 500 cap is per season. O5 stays provisional. The 3-in-7-days flag is review only.
 
 **(c) Day.** A day is the UTC day of `block_timestamp`, as in the caps section above.
 
@@ -165,8 +172,9 @@ Tokenomics confirmed that the #7 and #9 hooks fail closed. PR #28's stub returns
 
 The enforcer hook receives:
 
-- `O5_REPEAT` when one challenger has at least 3 O5 rows whose UTC days fall in `[D - 6, D]` (7 days inclusive). The default returns `withhold_wallet: true` with reason `abuse_policy_unconfigured`. Later usage rows for that wallet, from that block onward, are stored with `enforcer_withheld: true` and `points: 0`. Earlier rows stay. Arbitrator rows are not auto-withheld; collusion cancels are ADJ entries.
-- `BOT_BURNED`, `DENYLIST_LISTED`, `DENYLIST_UNLISTED`, and `PAIR_CAP`. The default records them and does not withhold. Listings are not joined to bots without `Vault.bots()`.
+- `O5_REPEAT` when one challenger has at least 3 O5 rows whose UTC days fall in `[D - 6, D]` (7 days inclusive). v2.2 Q2: the default returns `withhold_wallet: false` with reason `review_only`. It does not zero later rows.
+- `DISPUTE_PREDATES_ESCROW` when O4, A1, or A2 fail the block-order rule. One flag per dispute. `withhold_wallet` is forced false. Other rows are left alone.
+- `BOT_BURNED`, `DENYLIST_LISTED`, `DENYLIST_UNLISTED`, and `PAIR_CAP`. The default records them and does not withhold. Listings are not joined to bots. This replay does not call `Vault.bots()`.
 
 ADJ rows bypass both masks so a cancel still applies while #7 and #9 are open.
 
@@ -192,7 +200,7 @@ Balance `ledgers.usage` and `ledgers.arbitrator` each carry `ledger`, `final`, a
 
 History requires `ledger=usage` or `ledger=arbitrator`. `limit` defaults to 25 and caps at 100. `cursor` is opaque. Items are section 6 fields only, sorted by `block_number` descending, then `log_index` descending. An unknown address returns `items: []`.
 
-`GET /v1/reputation/config` returns the active caps and thresholds. While checklist #12 is open each value has `status: "draft"`, and the body has `status: "draft"`, `config_version`, and `rule_version`.
+`GET /v1/reputation/config` returns the active caps and thresholds, including `season_length_days`, `season_start_block`, and `season_start_timestamp`. While checklist #12 is open each value has `status: "draft"`, and the body has `status: "draft"`, `config_version`, and `rule_version`. `day_boundary` is the machine value `utc_day_by_block_timestamp`.
 
 Example responses, labeled as example data and not a live scan, are in `claim-relayer/fixtures/reputation/`.
 
@@ -210,23 +218,35 @@ Copy does not use "reward" or "earn". Any method other than GET or OPTIONS on th
 | 6 | Non-transferable and cancellable. No property right. | No transfer surface. ADJ file can cancel. Disclaimer states it. |
 | 7 | OFAC / sanctions before soft launch. **Open.** | `eligibility` hook. Fail closed, as Tokenomics decided: every row is not eligible and `points` is 0 until a real screen is plugged in. |
 | 8 | A later claim needs its own terms. Points are not a claim. | No reputation claim or redeem route. The existing `POST /v1/claims` path is the escrow relayer and is unchanged. |
-| 9 | Name the sybil / abuse enforcer and write the policy. **Open.** | `enforcer` hook. Fail closed, as Tokenomics decided. O5 bursts withhold later usage credits. Burns and listings are signals. Cancels are ADJ. Owner is not named. |
+| 9 | Name the sybil / abuse enforcer and write the policy. **Open.** | `enforcer` hook. Owner is not named, so flags do not auto-cancel. `O5_REPEAT` and `DISPUTE_PREDATES_ESCROW` are review only. Burns and listings are signals. Cancels are ADJ. Checklist #7 stays fail closed. |
 | 10 | No cross-product dashboard and no summed ledgers. | Two objects. Tests reject a combined key. |
 | 11 | Securities, master, AS IS, and not-investment links. **Open.** | `disclaimer.links` from config. Empty slots are `null` until the links exist. |
 | 12 | Lock caps before soft launch. **Open.** | Section 7 numbers in `config/reputation/sepolia.json`, labeled `DRAFT/GUESS`. `GET /v1/reputation/config` returns `status: "draft"` on the body and on each cap and threshold. |
 
-## Open questions for Tokenomics
+## Differences from PR #28
 
-Decided, and not listed here: the adjustments file, the config timeline, UTC day by `block_timestamp`, canonical cap order, and fail-closed #7 and #9 hooks.
+PR #28 was read and not modified. Keys and defaults match that file except:
 
-1. PR #28 also ingests Denylist for signals. Design note v2.1 section 6 says the three contracts only. This code gives Denylist zero points and does not map listings to bots. Confirm that split.
-2. O5 on a subject that is not an escrow yet can change if a later `EscrowCreated` uses that id. Replay recomputes from the full log set, so the old O5 disappears in the next replay. PR #28 asked for that classification to stay provisional while the subject could still be created. Confirm replay-replacement is enough.
-3. Pair cap includes O4, and the pair is ordered payer then payee. Confirm.
-4. Cap overflow is all-or-nothing (`points: 0` plus `cap_name`), not a clipped remainder.
-5. O2/O4 `entry_id` appends the wallet; `semantic_key` is the spec key. Confirm.
-6. Season id `sepolia-draft-0` is a stand-in while `caps.season` is null.
-7. O1 still credits a bot that is later burned, and it does not check tier. PR #28 question 4.
-8. If the claim-relayer wallet is the Vault operator, `EscrowCreated.payer` is that wallet and it would be the credited payer once eligibility is opened. PR #28 question 5.
+| Topic | PR #28 | This service |
+| --- | --- | --- |
+| `excluded_addresses.entries` role `claim_relayer` | `address: null` until pinned | `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` from `deployments/base-sepolia.json` `claimRelayerWallet`, so that wallet scores 0 usage points now |
+| Season start | `caps.season_start_block` only, null until go-live | Also `caps.season_start_timestamp`, null until go-live. A 90-day season needs a timestamp. If either is null the season cap does not apply |
+| `caps._label`, `display`, `disclaimer_links`, `read_api`, `day_implementation`, `effective_from_block`, `adjustments_file` | Absent | Kept. The read API and the timeline depend on them |
+| `product` | `"the product"` | Same placeholder |
+| `Vault.bots()` | INDEXER_SPEC allows the call as a 0-point fingerprint signal | Not called. Replay stays a pure function of logs. Denylist listings are not joined to bots |
+| Cap overflow | Section 9 stores `points: 0` and a capped note as a spec proposal | All-or-nothing, already implemented: `points: 0`, `capped: true`, `cap_name` set |
+| Day string | `caps.day_boundary.value` is `UTC day by block_timestamp` | The file matches that string. `GET /v1/reputation/config` still returns the machine value `utc_day_by_block_timestamp` |
+| O1 burn | INDEXER_SPEC: no `Burned` at or before the first `OperatorSet` block, checked once final | Same. A later burn does not claw back. The ~21 minute lag is not assumed; the caller passes `finalizedBlock` |
+
+## Open questions
+
+Decided, and not listed here: the adjustments file, the config timeline, UTC day by `block_timestamp`, canonical cap order, fail-closed checklist #7, and design note v2.2 section 12 (A2 default, block order, pair caps on O4, the exclusion list, the party-arbitrator rule, the O1 tier and active checks, 90-day seasons, O5 staying provisional, and review-only flags).
+
+1. Cap overflow stays all-or-nothing. PR #28 section 9 calls `points: 0` plus a capped note a spec proposal. Confirm Spencer wants no clipped remainder.
+2. O2/O4 `entry_id` appends the wallet; `semantic_key` is the spec key. Confirm.
+3. The claim-relayer exclusion address is filled from the address book. PR #28 and INDEXER_SPEC still say null until pinned. Confirm that wallet is the one to exclude.
+4. `season_start_timestamp` is extra. Go-live still needs Spencer to set both the block and the timestamp.
+5. No `Vault.bots()` call, so a Denylist fingerprint is not joined to a bot.
 
 ## Verification
 

@@ -29,6 +29,18 @@ export function utcDay(timestamp) {
   return Math.floor(timestamp / 86400);
 }
 
+/** Season id for a completing log. Null means the season cap does not apply. */
+export function seasonKey(version, log) {
+  const season = version?.season;
+  if (!season || season.start_block === null || season.start_timestamp === null) return null;
+  if (!Number.isSafeInteger(season.length_days) || season.length_days < 1) return null;
+  if (log.blockNumber < season.start_block) return null;
+  const span = season.length_days * 86400;
+  const delta = log.blockTimestamp - season.start_timestamp;
+  if (delta < 0) return null;
+  return `season-${Math.floor(delta / span) + 1}`;
+}
+
 function asInt(value, field) {
   if (typeof value === "number" && Number.isSafeInteger(value)) return value;
   if (typeof value === "bigint") {
@@ -194,7 +206,8 @@ function fold(logs) {
     denylist: [],
   };
   for (const log of logs) {
-    if (log.name === "OperatorSet") addOperator(state, log);
+    if (log.name === "Registered") addRegistered(state, log);
+    else if (log.name === "OperatorSet") addOperator(state, log);
     else if (log.name === "Burned") state.burns.push({ botId: asBytes32(log.args.botId, "botId"), log });
     else if (log.name === "EscrowCreated") addCreated(state, log);
     else if (log.name === "EscrowReleased" || log.name === "EscrowRefunded") addTerminal(state, log);
@@ -207,11 +220,34 @@ function fold(logs) {
   return state;
 }
 
+function botRecord(state, botId) {
+  const bot = state.bots.get(botId) || { sets: [], registrations: [] };
+  bot.sets = bot.sets || [];
+  bot.registrations = bot.registrations || [];
+  return bot;
+}
+
+function addRegistered(state, log) {
+  const botId = asBytes32(log.args.botId, "botId");
+  const tier = asInt(log.args.tier, "tier");
+  const bot = botRecord(state, botId);
+  const idx = bot.registrations.findIndex((row) => row.log.txHash === log.txHash);
+  if (idx >= 0) {
+    if (bot.registrations[idx].log.blockHash !== log.blockHash && cmpLog(log, bot.registrations[idx].log) > 0) {
+      bot.registrations[idx] = { tier, log };
+    }
+  } else {
+    bot.registrations.push({ tier, log });
+  }
+  bot.registrations.sort((a, b) => cmpLog(a.log, b.log));
+  state.bots.set(botId, bot);
+}
+
 function addOperator(state, log) {
   const botId = asBytes32(log.args.botId, "botId");
   const account = asAddress(log.args.account, "account");
   if (account.toLowerCase() === ZERO) return;
-  const bot = state.bots.get(botId) || { sets: [] };
+  const bot = botRecord(state, botId);
   const idx = bot.sets.findIndex((row) => row.log.txHash === log.txHash);
   if (idx >= 0) {
     if (bot.sets[idx].log.blockHash !== log.blockHash && cmpLog(log, bot.sets[idx].log) > 0) {
@@ -340,7 +376,7 @@ function baseEntry(fields) {
     event_names: named(fields.parts),
     rule_version: fields.version.rule_version,
     config_version: fields.version.config_version,
-    season_id: fields.version.season.id,
+    season_id: seasonKey(fields.version, fields.completing),
     day: utcDay(fields.completing.blockTimestamp),
     pairKey: fields.pairKey || null,
     version: fields.version,
@@ -356,6 +392,11 @@ function derive(state, versions, head) {
     const status = statusFor([first.log], head);
     if (!status) continue;
     const wallet = first.account;
+    const tier = tierAt(bot, first.log);
+    const tierOk = !version.gates.o1_tier_enabled || (tier !== null && tier >= version.gates.o1_min_tier);
+    const burnedBefore = state.burns.some(
+      (burn) => burn.botId === botId && burn.log.blockNumber <= first.log.blockNumber,
+    );
     candidates.push({
       ...baseEntry({
         outcome: "O1",
@@ -374,6 +415,8 @@ function derive(state, versions, head) {
         version,
       }),
       status,
+      o1TierOk: tierOk,
+      o1BurnedBefore: burnedBefore,
     });
   }
 
@@ -529,7 +572,9 @@ function pushO3(candidates, escrow, versions, head) {
 function pushO4(candidates, escrow, state, versions, head) {
   const dispute = state.disputes.get(escrow.disputeId);
   if (!dispute?.resolvedLog) return;
+  const opened = dispute.openedLog || null;
   const logs = [escrow.createdLog, escrow.disputedLog, dispute.resolvedLog, escrow.terminal.log];
+  if (opened) logs.push(opened);
   const completing = later(logs);
   const version = requireVersion(versions, completing.blockNumber);
   const status = statusFor(logs, head);
@@ -540,7 +585,9 @@ function pushO4(candidates, escrow, state, versions, head) {
     { name: "DisputeResolved", log: dispute.resolvedLog },
     { name: escrow.terminal.kind, log: escrow.terminal.log },
   ];
+  if (opened) parts.push({ name: "DisputeOpened", log: opened });
   const pairKey = pairOf(escrow);
+  const orderBlocked = !disputeFollowsEscrow(escrow, opened);
   for (const role of ["payer", "payee"]) {
     const wallet = escrow[role];
     const botId = role === "payer" ? escrow.payerBotId : escrow.payeeBotId;
@@ -565,6 +612,7 @@ function pushO4(candidates, escrow, state, versions, head) {
         pairKey,
       }),
       status,
+      orderBlocked,
     });
   }
 }
@@ -597,12 +645,15 @@ function pushO5(candidates, dispute, subject, versions, head) {
       parts,
       version,
     }),
-    status,
+    status: "provisional",
   });
 }
 
 function pushVote(candidates, dispute, escrow, vote, versions, head) {
+  const opened = dispute.openedLog || null;
   const logs = [vote.log, dispute.resolvedLog, escrow.disputedLog];
+  if (escrow.createdLog) logs.push(escrow.createdLog);
+  if (opened) logs.push(opened);
   const completing = later(logs);
   const version = requireVersion(versions, completing.blockNumber);
   const status = statusFor(logs, head);
@@ -612,6 +663,10 @@ function pushVote(candidates, dispute, escrow, vote, versions, head) {
     { name: "DisputeResolved", log: dispute.resolvedLog },
     { name: "EscrowDisputed", log: escrow.disputedLog },
   ];
+  if (escrow.createdLog) parts.push({ name: "EscrowCreated", log: escrow.createdLog });
+  if (opened) parts.push({ name: "DisputeOpened", log: opened });
+  const orderBlocked = !disputeFollowsEscrow(escrow, opened);
+  const partyBlocked = isParty(vote.voter, escrow);
   const shared = {
     ledger: ARBITRATOR_LEDGER,
     wallet: vote.voter,
@@ -624,17 +679,21 @@ function pushVote(candidates, dispute, escrow, vote, versions, head) {
     parts,
     version,
   };
-  candidates.push({
-    ...baseEntry({
-      ...shared,
-      outcome: "A1",
-      nominal: version.points.A1,
-      semanticKey: `A1:${dispute.disputeId}:${vote.voter.toLowerCase()}`,
-      entryId: `A1:${dispute.disputeId}:${vote.voter.toLowerCase()}`,
-    }),
-    status,
-  });
-  if (vote.support === dispute.upheld) {
+  if (version.points.A1 !== 0) {
+    candidates.push({
+      ...baseEntry({
+        ...shared,
+        outcome: "A1",
+        nominal: version.points.A1,
+        semanticKey: `A1:${dispute.disputeId}:${vote.voter.toLowerCase()}`,
+        entryId: `A1:${dispute.disputeId}:${vote.voter.toLowerCase()}`,
+      }),
+      status,
+      orderBlocked,
+      partyBlocked,
+    });
+  }
+  if (version.points.A2 !== 0 && vote.support === dispute.upheld) {
     candidates.push({
       ...baseEntry({
         ...shared,
@@ -644,8 +703,29 @@ function pushVote(candidates, dispute, escrow, vote, versions, head) {
         entryId: `A2:${dispute.disputeId}:${vote.voter.toLowerCase()}`,
       }),
       status,
+      orderBlocked,
+      partyBlocked,
     });
   }
+}
+
+function disputeFollowsEscrow(escrow, openedLog) {
+  if (!escrow?.createdLog || !openedLog) return false;
+  return escrow.createdLog.blockNumber < openedLog.blockNumber;
+}
+
+function isParty(voter, escrow) {
+  if (!voter || !escrow?.payer || !escrow?.payee) return false;
+  const key = voter.toLowerCase();
+  return key === escrow.payer.toLowerCase() || key === escrow.payee.toLowerCase();
+}
+
+function tierAt(bot, operatorLog) {
+  let tier = null;
+  for (const reg of bot.registrations || []) {
+    if (cmpLog(reg.log, operatorLog) <= 0) tier = reg.tier;
+  }
+  return tier;
 }
 
 function requireVersion(versions, blockNumber) {
@@ -689,7 +769,7 @@ function adjustmentCandidate(row, versions, head) {
     event_names: ["ADJ"],
     rule_version: version.rule_version,
     config_version: version.config_version,
-    season_id: version.season.id,
+    season_id: seasonKey(version, completing),
     day: utcDay(row.block_timestamp),
     pairKey: null,
     version,
@@ -733,6 +813,7 @@ function materialize(candidates, hooks, head) {
   const pairDecision = new Map();
   const withheldFrom = new Map();
   const o5ByWallet = new Map();
+  const flaggedDisputes = new Set();
   const entries = [];
   const signals = [];
   const enforcerFlags = [];
@@ -804,10 +885,14 @@ function materialize(candidates, hooks, head) {
 
     const walletKey = candidate.wallet.toLowerCase();
     const withheld = isWithheld(withheldFrom, walletKey, candidate.completing.blockNumber);
-    let points = candidate.nominal_points;
+    const gated = gatePoints(candidate);
+    if (candidate.orderBlocked) noteOrderFlag(candidate, hooks, signals, enforcerFlags, flaggedDisputes);
+    let points = gated.points;
     let capped = false;
     let capName = null;
-    if (withheld) {
+    if (gated.blocked) {
+      points = 0;
+    } else if (withheld) {
       points = 0;
     } else {
       const pair = pairGate(candidate, pairDecision, counters);
@@ -843,7 +928,7 @@ function materialize(candidates, hooks, head) {
     });
     const eligible = Boolean(screen.eligible);
     if (!eligible) points = 0;
-    if (points > 0) {
+    if (!gated.blocked && points > 0) {
       increment(candidate, counters, points);
       const pair = pairDecision.get(candidate.semantic_key);
       if (pair && !pair.counted) {
@@ -863,6 +948,45 @@ function materialize(candidates, hooks, head) {
     byId.set(entry.entry_id, entry);
   }
   return { entries, signals, enforcerFlags };
+}
+
+function gatePoints(candidate) {
+  let points = candidate.nominal_points;
+  let blocked = false;
+  if (candidate.outcome_code === "O1") {
+    if (!candidate.o1TierOk) {
+      points = 0;
+      blocked = true;
+    } else if (candidate.status === "final" && candidate.o1BurnedBefore) {
+      points = 0;
+      blocked = true;
+    }
+  }
+  if (candidate.ledger === USAGE_LEDGER && candidate.version?.excluded?.has(candidate.wallet.toLowerCase())) {
+    points = 0;
+    blocked = true;
+  }
+  if (candidate.orderBlocked || candidate.partyBlocked) {
+    points = 0;
+    blocked = true;
+  }
+  return { points, blocked };
+}
+
+function noteOrderFlag(candidate, hooks, signals, enforcerFlags, flagged) {
+  const disputeId = candidate.dispute_id;
+  if (!disputeId || flagged.has(disputeId)) return;
+  flagged.add(disputeId);
+  const signal = {
+    kind: "DISPUTE_PREDATES_ESCROW",
+    wallet: null,
+    bot_id: null,
+    block_number: candidate.completing.blockNumber,
+    refs: [disputeId],
+  };
+  hooks.enforcer.flag(signal);
+  signals.push(signal);
+  enforcerFlags.push({ ...signal, withhold_wallet: false });
 }
 
 function noteWithhold(map, wallet, blockNumber) {
@@ -915,7 +1039,10 @@ function overCap(candidate, counters) {
     if (candidate.bot_id && (counters.bot.get(`${candidate.bot_id}:${day}`) || 0) + points > caps.usage_points_per_bot_per_day) {
       return "usage_points_per_bot_per_day";
     }
-    if ((counters.season.get(`${candidate.season_id}:${wallet}`) || 0) + points > caps.usage_points_per_wallet_per_season) {
+    if (
+      candidate.season_id &&
+      (counters.season.get(`${candidate.season_id}:${wallet}`) || 0) + points > caps.usage_points_per_wallet_per_season
+    ) {
       return "usage_points_per_wallet_per_season";
     }
   }
@@ -936,7 +1063,7 @@ function increment(candidate, counters, points) {
   if (candidate.ledger === USAGE_LEDGER) {
     bump(counters.wallet, `${wallet}:${day}`, points);
     if (candidate.bot_id) bump(counters.bot, `${candidate.bot_id}:${day}`, points);
-    bump(counters.season, `${candidate.season_id}:${wallet}`, points);
+    if (candidate.season_id) bump(counters.season, `${candidate.season_id}:${wallet}`, points);
   }
   if (candidate.ledger === ARBITRATOR_LEDGER) bump(counters.arb, `${wallet}:${day}`, points);
 }
