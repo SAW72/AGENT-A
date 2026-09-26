@@ -1,6 +1,6 @@
 import { httpError } from "../config.mjs";
 import { createDefaultHooks } from "./hooks.mjs";
-import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig, productTitle } from "./reputationConfig.mjs";
+import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig } from "./reputationConfig.mjs";
 import { contribution, refuseReputationChain, replayLedger } from "./replay.mjs";
 
 const BANNED_COPY = /\b(reward|earn|earnings|apy|yield|allocation)\b/i;
@@ -138,7 +138,7 @@ function configBody(runtime) {
     config_version: latest.config_version,
     rule_version: latest.rule_version,
     product: latest.product,
-    product_title: productTitle(latest.product),
+    product_title: latest.product_title,
     status,
     caps: {
       usage_points_per_wallet_per_day: slot(latest.caps.usage_points_per_wallet_per_day),

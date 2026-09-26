@@ -5,11 +5,6 @@ import { BASE_SEPOLIA_CHAIN_ID, httpError } from "../config.mjs";
 
 export const USAGE_LEDGER = "agent-bv-sepolia-reputation";
 export const ARBITRATOR_LEDGER = "agent-bv-sepolia-arbitrator-rep";
-
-/** First-use label. The switchable name is `product` in config/reputation/sepolia.json. */
-export function productTitle(product) {
-  return `${product} — Bot Verifier`;
-}
 export const CONFIG_DIR = fileURLToPath(new URL("../../config/reputation/", import.meta.url));
 
 const REFUSED = new Set([1, 8453]);
@@ -55,8 +50,10 @@ export function normalizeVersion(raw) {
   if (day !== "utc_day_by_block_timestamp") {
     throw httpError(500, "reputation_config_invalid", { field: "day_implementation" });
   }
+  const names = productNames(raw.product);
   return {
-    product: productName(raw.product),
+    product: names.name,
+    product_title: names.title,
     config_version: String(raw.config_version),
     rule_version: String(raw.rule_version),
     effective_from_block: guessInt({ value: raw.effective_from_block ?? 0 }, "effective_from_block"),
@@ -121,11 +118,19 @@ export function normalizeVersion(raw) {
   };
 }
 
-function productName(value) {
-  if (typeof value !== "string" || value.trim() === "" || value !== value.trim()) {
+function productNames(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw httpError(500, "reputation_config_invalid", { field: "product" });
   }
-  return value;
+  const out = {};
+  for (const field of ["name", "title"]) {
+    const text = value[field];
+    if (typeof text !== "string" || text.trim() === "" || text !== text.trim()) {
+      throw httpError(500, "reputation_config_invalid", { field: `product.${field}` });
+    }
+    out[field] = text;
+  }
+  return out;
 }
 
 function normalizeGates(gates) {

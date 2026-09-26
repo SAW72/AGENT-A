@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { topic0Table } from "../reputation/codec.mjs";
 import { allowAllEligibility, createDefaultEnforcer, createDefaultHooks, recordingEnforcer } from "../reputation/hooks.mjs";
-import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig, productTitle } from "../reputation/reputationConfig.mjs";
+import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig } from "../reputation/reputationConfig.mjs";
 import { canonicalJson, contribution, replayLedger } from "../reputation/replay.mjs";
 import {
   BLOCK0,
@@ -185,19 +185,21 @@ describe("reputation config", () => {
     assert.equal(raw.gates.o1_tier_gate.min_tier.name, "Financial");
     assert.equal(raw.config_version, "sepolia-draft-1");
     assert.equal(raw.rule_version, "design-v2.2");
-    assert.equal(typeof raw.product, "string");
-    assert.equal(raw.product.trim(), raw.product);
-    assert.ok(raw.product.length > 0);
-    assert.equal(loaded.latest.product, raw.product);
-    assert.equal(productTitle(raw.product), `${raw.product} — Bot Verifier`);
+    assert.equal(typeof raw.product.name, "string");
+    assert.equal(typeof raw.product.title, "string");
+    assert.equal(raw.product.name.trim(), raw.product.name);
+    assert.equal(raw.product.title.trim(), raw.product.title);
+    assert.equal(loaded.latest.product, raw.product.name);
+    assert.equal(loaded.latest.product_title, raw.product.title);
     const allowed = new Set([
       fileURLToPath(new URL("../../config/reputation/sepolia.json", import.meta.url)),
       fileURLToPath(new URL("../fixtures/reputation/config.example.json", import.meta.url)),
     ]);
-    const hits = filesContaining(fileURLToPath(new URL("../../", import.meta.url)), raw.product).filter(
-      (file) => !allowed.has(file),
-    );
-    assert.deepEqual(hits, []);
+    const root = fileURLToPath(new URL("../../", import.meta.url));
+    for (const label of [raw.product.name, raw.product.title]) {
+      const hits = filesContaining(root, label).filter((file) => !allowed.has(file));
+      assert.deepEqual(hits, []);
+    }
     assert.equal(raw.floors.min_amount_wei.value, "100000000000000");
     assert.equal(raw.floors.o2_min_create_to_release_seconds.value, 300);
     assert.equal(raw.floors.o3_min_set_duration_seconds.value, 3600);

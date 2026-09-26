@@ -6,7 +6,7 @@ The rules are design note **v2.2** (Tokenomics, 26 Sep 2026, 3:47 PM ET). v2.2 s
 
 Event layouts, start blocks, and the draft numbers follow Blockchain Builder's draft [PR #28](https://github.com/SAW72/AGENT-B.V./pull/28) (`docs/reputation/EVENT_MAP.md`, `docs/reputation/INDEXER_SPEC.md`, `config/reputation/sepolia.json`). That PR is not modified by this change and is not on `main`. This service recomputes topic0 locally. Differences from that config are listed under "Differences from PR #28".
 
-Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited. The display name is the single `product` field in `config/reputation/sepolia.json`. With the descriptor, first use is `productTitle` in `claim-relayer/reputation/reputationConfig.mjs`: that field, then ` — Bot Verifier`. Do not copy the name into other files. Ledger ids are separate and do not change with the display name.
+Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited. The display name and the first-mention title are `product.name` and `product.title` in `config/reputation/sepolia.json`, the only authored copy. After the first mention, use `product.name`. Ledger ids are separate and do not change with the display name.
 
 ## Architecture
 
@@ -232,7 +232,7 @@ PR #28 was read and not modified. Keys and defaults match that file except:
 | `excluded_addresses.entries` role `claim_relayer` | `address: null` until pinned | `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` from `deployments/base-sepolia.json` `claimRelayerWallet`, so that wallet scores 0 usage points now |
 | Season start | `caps.season_start_block` only, null until go-live | Also `caps.season_start_timestamp`, null until go-live. A 90-day season needs a timestamp. If either is null the season cap does not apply |
 | `caps._label`, `display`, `disclaimer_links`, `read_api`, `day_implementation`, `effective_from_block`, `adjustments_file` | Absent | Kept. The read API and the timeline depend on them |
-| `product` | `"the product"` | The confirmed display name, stored only in this field. `productTitle` appends ` — Bot Verifier`. |
+| `product` | `"the product"` | Object with `name` and `title`. `name` is the display name. `title` is the first-mention form. Both live only in this object. |
 | `Vault.bots()` | INDEXER_SPEC allows the call as a 0-point fingerprint signal | Not called. Replay stays a pure function of logs. Denylist listings are not joined to bots |
 | Cap overflow | Section 9 stores `points: 0` and a capped note as a spec proposal | All-or-nothing, already implemented: `points: 0`, `capped: true`, `cap_name` set |
 | Day string | `caps.day_boundary.value` is `UTC day by block_timestamp` | The file matches that string. `GET /v1/reputation/config` still returns the machine value `utc_day_by_block_timestamp` |

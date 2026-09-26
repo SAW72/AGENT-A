@@ -3,7 +3,10 @@
   "config_version": "sepolia-draft-1",
   "rule_version": "design-v2.2",
   "effective_from_block": 0,
-  "product": "agent_b_v",
+  "product": {
+    "name": "Agent-BV",
+    "title": "Agent-BV (Agent Bot Verifier)"
+  },
   "chain": {
     "name": "Base Sepolia",
     "chain_id": 84532,
