@@ -1,4 +1,4 @@
-# Bot Verifier: Base Sepolia reputation indexer spec
+# Agent BV — Bot Verifier: Base Sepolia reputation indexer spec
 
 Status: DRAFT spec, docs only. Build and staging only. No indexer code, no deploy, no transactions.
 Rules follow the Tokenomics design note v2 (2026-09-26). Every point value, floor, and cap is a Tokenomics **GUESS** and is loaded from [config/reputation/sepolia.json](../../config/reputation/sepolia.json), never hard-coded. Event details: [EVENT_MAP.md](./EVENT_MAP.md).

@@ -1,4 +1,4 @@
-# Bot Verifier: Base Sepolia reputation event map
+# Agent BV — Bot Verifier: Base Sepolia reputation event map
 
 Status: DRAFT, docs only. Build and staging only. Nothing here is deployed, merged, or live.
 Companion docs: [INDEXER_SPEC.md](./INDEXER_SPEC.md) and [config/reputation/sepolia.json](../../config/reputation/sepolia.json).
