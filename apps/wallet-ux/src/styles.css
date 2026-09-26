@@ -197,7 +197,36 @@ label { display: block; margin-bottom: 4px; }
 
 footer { color: var(--muted); font-size: 0.92rem; }
 
+.rep-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.chain-badge {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 700;
+  flex: none;
+}
+
+.pill.info { background: var(--info-bg); color: var(--info); }
+.pill.draft { background: var(--warn-bg); color: var(--warn); margin: 0 0 0 6px; }
+
+.history { list-style: none; margin: 0; padding: 0; }
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 8px 12px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+
 @media (max-width: 640px) {
   .kv-row { grid-template-columns: 1fr; gap: 2px; }
   .status-list div { align-items: flex-start; }
+  .rep-head { flex-direction: column; }
+  .history-row { grid-template-columns: 1fr; }
 }
