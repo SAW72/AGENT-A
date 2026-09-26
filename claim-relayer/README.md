@@ -203,6 +203,17 @@ The public funding wallet is not assumed to be a Vault operator. A live `createE
 
 `npm run readonly` performs `eth_chainId`, `eth_getCode`, and `eth_call` only (`owner`, `governance`, `disputePanel`, `arbitratorCount`). It is not part of `npm test`. It refuses every chain other than 84532.
 
+## Reputation read API (draft)
+
+Off-chain Base Sepolia reputation for Bot Verifier. Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth.
+
+- `GET /v1/reputation/:address` returns the usage ledger and the arbitrator ledger as separate objects. There is no combined total.
+- `GET /v1/reputation/:address/history` pages the same rows. `limit` defaults to 20 and caps at 100.
+- Reads are unauthenticated and rate limited. There is no write or admin route. `chainId` other than 84532 is refused, including 1 and 8453.
+- Caps are loaded from [`config/reputation/sepolia.json`](../config/reputation/sepolia.json) and labeled `DRAFT/GUESS`. The response always includes the testnet disclaimer and empty disclaimer-link slots.
+
+The in-memory ledger is rebuilt by replaying logs. A cold start on Render wipes it. Nothing here is live chain data.
+
 ## Render
 
 See `render.yaml` in this directory. It is a reference Blueprint, not registered at the repo root, so merging it does not create a Render service. Do not apply it until Spencer says GO.
