@@ -61,8 +61,9 @@
     "acceptOwnershipBlock": 47345442,
     "sourcify": "https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
     "blockscout": "https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
-    "basescan": "pending",
-    "notes": "acceptOwnership is complete. owner is CORE_TIMELOCK and pendingOwner is the zero address. accept tx 0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9, block 47345442, status 1, from CORE_TIMELOCK. Basescan verification is pending."
+    "basescan": "verified",
+    "basescanUrl": "https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code",
+    "notes": "acceptOwnership is complete. owner is CORE_TIMELOCK and pendingOwner is the zero address. accept tx 0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9, block 47345442, status 1, from CORE_TIMELOCK. Basescan is verified (Pass - Verified) via Etherscan v2, solc v0.8.20+commit.a1b79de6, standard JSON, shanghai: https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code."
   },
   "BVT": {
     "address": null,

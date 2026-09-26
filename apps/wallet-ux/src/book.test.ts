@@ -50,6 +50,10 @@ describe("deployment book", () => {
       "0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9",
     )
     expect(deploymentBook.BotAttestationEscrow.acceptOwnershipBlock).toBe(47345442)
+    expect(deploymentBook.BotAttestationEscrow.basescan).toBe("verified")
+    expect(deploymentBook.BotAttestationEscrow.basescanUrl).toBe(
+      "https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code",
+    )
     expect(deploymentBook.claimRelayerWallet).toBe("0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861")
     expect(ADDRESSES.bvt).toBeNull()
     expect(JSON.stringify(ADDRESSES).toLowerCase()).not.toContain(SUPERSEDED.denylist.toLowerCase())
