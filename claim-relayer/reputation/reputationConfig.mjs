@@ -5,6 +5,11 @@ import { BASE_SEPOLIA_CHAIN_ID, httpError } from "../config.mjs";
 
 export const USAGE_LEDGER = "agent-bv-sepolia-reputation";
 export const ARBITRATOR_LEDGER = "agent-bv-sepolia-arbitrator-rep";
+
+/** First-use label. The switchable name is `product` in config/reputation/sepolia.json. */
+export function productTitle(product) {
+  return `${product} — Bot Verifier`;
+}
 export const CONFIG_DIR = fileURLToPath(new URL("../../config/reputation/", import.meta.url));
 
 const REFUSED = new Set([1, 8453]);
@@ -51,6 +56,7 @@ export function normalizeVersion(raw) {
     throw httpError(500, "reputation_config_invalid", { field: "day_implementation" });
   }
   return {
+    product: productName(raw.product),
     config_version: String(raw.config_version),
     rule_version: String(raw.rule_version),
     effective_from_block: guessInt({ value: raw.effective_from_block ?? 0 }, "effective_from_block"),
@@ -113,6 +119,13 @@ export function normalizeVersion(raw) {
     },
     scan_max_block_range: guessInt({ value: raw.scan?.max_block_range ?? 625 }, "scan"),
   };
+}
+
+function productName(value) {
+  if (typeof value !== "string" || value.trim() === "" || value !== value.trim()) {
+    throw httpError(500, "reputation_config_invalid", { field: "product" });
+  }
+  return value;
 }
 
 function normalizeGates(gates) {

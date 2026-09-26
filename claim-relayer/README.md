@@ -205,7 +205,7 @@ The public funding wallet is not assumed to be a Vault operator. A live `createE
 
 ## Reputation read API (draft)
 
-Off-chain Base Sepolia reputation per design note v2.2 (section 12 scoring). Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth or the claim-route CORS list. The ledger ids stay `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`.
+Off-chain Base Sepolia reputation per design note v2.2 (section 12 scoring). Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth or the claim-route CORS list. The display name is `product` in [`config/reputation/sepolia.json`](../config/reputation/sepolia.json). `GET /v1/reputation/config` returns that field and `product_title` (`product` plus ` — Bot Verifier`). The ledger ids stay `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`.
 
 - `GET /v1/reputation/config?chainId=84532` returns caps and thresholds with `status: "draft"` while checklist #12 is open. This path is matched before `/{address}`.
 - `GET /v1/reputation/{address}?chainId=84532` returns `ledgers.usage` and `ledgers.arbitrator` as separate objects (`final` and `provisional`). There is no combined total. Omitted `chainId` defaults to 84532. Any other chain is 400, including 1 and 8453, and the body has no ledger data. An unknown address is 200 with zeros.
@@ -225,7 +225,7 @@ See `render.yaml` in this directory. It is a reference Blueprint, not registered
 1. Move or copy this file to the repo root as `render.yaml` and set `rootDir: claim-relayer` on the service.
 2. Create the service from this Blueprint in the Render dashboard.
 
-This copy stays under `claim-relayer/` until Spencer asks to move it. Product name is Agent A. The Render service slug stays `bot-verifier-claim-relayer` unless Spencer renames it in the dashboard.
+This copy stays under `claim-relayer/` until Spencer asks to move it. The display name is `product` in `config/reputation/sepolia.json`. The Render service slug stays `bot-verifier-claim-relayer` unless Spencer renames it in the dashboard.
 
 Free plan, one web instance (`numInstances: 1`), no disk, no autoscaling. Render Free spins down after about 15 minutes idle, which is fine for Base Sepolia. Before mainnet, upgrade the plan to Starter (about $7/month) so the relayer stays warm. The app still refuses mainnet; do not set a mainnet chain id in the Blueprint.
 

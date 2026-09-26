@@ -198,6 +198,7 @@ describe("reputation read API", () => {
       assert.equal(config.json.status, "draft");
       assert.equal(config.json.config_version, "sepolia-draft-1");
       assert.equal(config.json.rule_version, "design-v2.2");
+      assert.equal(config.json.product_title, `${config.json.product} — Bot Verifier`);
       assert.equal(config.json.thresholds.season_length_days.value, 90);
       assert.equal(config.json.thresholds.season_start_block.value, null);
       assert.equal(config.json.thresholds.season_start_timestamp.value, null);

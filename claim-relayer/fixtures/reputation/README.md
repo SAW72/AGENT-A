@@ -1,6 +1,6 @@
 # Example reputation responses
 
-These files are **example data** for the reputation read API. They are fixture output, not a live Base Sepolia scan, and the contracts have not emitted these logs. The usage ledger id is `agent-bv-sepolia-reputation`. The arbitrator ledger id is `agent-bv-sepolia-arbitrator-rep`.
+These files are **example data** for the reputation read API. They are fixture output, not a live Base Sepolia scan, and the contracts have not emitted these logs. The usage ledger id is `agent-bv-sepolia-reputation`. The arbitrator ledger id is `agent-bv-sepolia-arbitrator-rep`. The config example's `product` and `product_title` are copied from `config/reputation/sepolia.json` through the handler. That config field is the only authored display name.
 
 | File | Request |
 | --- | --- |

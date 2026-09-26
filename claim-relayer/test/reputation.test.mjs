@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { topic0Table } from "../reputation/codec.mjs";
 import { allowAllEligibility, createDefaultEnforcer, createDefaultHooks, recordingEnforcer } from "../reputation/hooks.mjs";
-import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig } from "../reputation/reputationConfig.mjs";
+import { ARBITRATOR_LEDGER, USAGE_LEDGER, loadReputationConfig, productTitle } from "../reputation/reputationConfig.mjs";
 import { canonicalJson, contribution, replayLedger } from "../reputation/replay.mjs";
 import {
   BLOCK0,
@@ -183,7 +185,19 @@ describe("reputation config", () => {
     assert.equal(raw.gates.o1_tier_gate.min_tier.name, "Financial");
     assert.equal(raw.config_version, "sepolia-draft-1");
     assert.equal(raw.rule_version, "design-v2.2");
-    assert.equal(raw.product, "the product");
+    assert.equal(typeof raw.product, "string");
+    assert.equal(raw.product.trim(), raw.product);
+    assert.ok(raw.product.length > 0);
+    assert.equal(loaded.latest.product, raw.product);
+    assert.equal(productTitle(raw.product), `${raw.product} — Bot Verifier`);
+    const allowed = new Set([
+      fileURLToPath(new URL("../../config/reputation/sepolia.json", import.meta.url)),
+      fileURLToPath(new URL("../fixtures/reputation/config.example.json", import.meta.url)),
+    ]);
+    const hits = filesContaining(fileURLToPath(new URL("../../", import.meta.url)), raw.product).filter(
+      (file) => !allowed.has(file),
+    );
+    assert.deepEqual(hits, []);
     assert.equal(raw.floors.min_amount_wei.value, "100000000000000");
     assert.equal(raw.floors.o2_min_create_to_release_seconds.value, 300);
     assert.equal(raw.floors.o3_min_set_duration_seconds.value, 3600);
@@ -978,6 +992,23 @@ describe("design v2.2 gates", () => {
     assert.equal(ofCode(financial, "O1")[0].points, 10);
   });
 });
+
+function filesContaining(root, needle) {
+  const hits = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === ".git") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (/\.(mjs|js|md|json|yml|yaml|sol)$/.test(entry.name)) {
+        if (readFileSync(full, "utf8").includes(needle)) hits.push(full);
+      }
+    }
+  };
+  walk(root);
+  return hits;
+}
 
 function permutations(items) {
   if (items.length <= 1) return [items];

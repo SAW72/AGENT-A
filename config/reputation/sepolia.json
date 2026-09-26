@@ -3,7 +3,7 @@
   "config_version": "sepolia-draft-1",
   "rule_version": "design-v2.2",
   "effective_from_block": 0,
-  "product": "the product",
+  "product": "agent_b_v",
   "chain": {
     "name": "Base Sepolia",
     "chain_id": 84532,
