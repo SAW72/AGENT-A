@@ -1,5 +1,5 @@
 /** Product name. Change this line to swap the working name. */
-export const PRODUCT_NAME = "Agent-BV"
+export const PRODUCT_NAME = "agent_b_v"
 
 export const DESCRIPTOR = "Bot Verifier"
 
