@@ -4,7 +4,7 @@
  * Escrow defaults from deployments/base-sepolia.json when ESCROW_ADDRESS is unset.
  */
 
-import { loadAddressBook, DEFAULT_ADDRESS_BOOK } from "./addressBook.mjs";
+import { loadAddressBook, DEFAULT_ADDRESS_BOOK, parseStartBlock, rejectRetiredAddress } from "./addressBook.mjs";
 
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
 export const DEFAULT_RELAYER_ADDRESS = "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861";
@@ -72,30 +72,81 @@ export function liveSubmitStatus(env, escrow = {}) {
   };
 }
 
+function isMissingStartBlock(raw) {
+  if (raw === null || raw === undefined) return true;
+  if (typeof raw === "string" && raw.trim() === "") return true;
+  return false;
+}
+
+/**
+ * The booked start block belongs to the booked escrow only.
+ * When the configured escrow is that contract, use the address-book block, or the
+ * constant when the book omits one. A different contract never inherits that block:
+ * ESCROW_START_BLOCK supplies it, or the value stays null (source "unset").
+ * Null is not block 0. Callers must not coalesce null to 0 or to BOOKED_SEPOLIA_ESCROW_START_BLOCK.
+ */
+function resolveEscrowStartBlock(env, escrowAddress, book) {
+  if (!escrowAddress) {
+    return { escrowStartBlock: null, escrowStartBlockSource: "unbooked" };
+  }
+  const matchesBookSlot = book.escrowAddress && sameAddress(escrowAddress, book.escrowAddress);
+  if (matchesBookSlot && book.escrowStartBlock != null) {
+    return { escrowStartBlock: book.escrowStartBlock, escrowStartBlockSource: "address_book" };
+  }
+  if (sameAddress(escrowAddress, BOOKED_SEPOLIA_ESCROW)) {
+    return { escrowStartBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK, escrowStartBlockSource: "booked_constant" };
+  }
+  const raw = env.ESCROW_START_BLOCK;
+  if (isMissingStartBlock(raw)) {
+    return { escrowStartBlock: null, escrowStartBlockSource: "unset" };
+  }
+  const parsed = parseStartBlock(raw);
+  if (parsed == null) {
+    throw Object.assign(
+      new Error(
+        "ESCROW_START_BLOCK must be a non-negative integer. The booked start block is not used when ESCROW_ADDRESS is a different contract.",
+      ),
+      { status: 400, error: "invalid_escrow_start_block" },
+    );
+  }
+  return { escrowStartBlock: parsed, escrowStartBlockSource: "env" };
+}
+
 function resolveEscrow(env) {
   const book = loadAddressBook(env.ADDRESS_BOOK_PATH || DEFAULT_ADDRESS_BOOK);
-  const base = {
+  const guard = { forbidden: book.forbidden, replacements: book.replacements };
+  rejectRetiredAddress(book.disputePanelAddress, guard);
+  rejectRetiredAddress(book.denylistAddress, guard);
+  rejectRetiredAddress(book.vaultAddress, guard);
+
+  const explicit = env.ESCROW_ADDRESS === undefined ? "" : String(env.ESCROW_ADDRESS).trim();
+  let escrowAddress = book.escrowAddress;
+  let escrowBooked = book.escrowBooked;
+  let escrowSource = "address_book";
+  if (explicit) {
+    const parsed = checkedAddress(explicit);
+    if (!parsed) throw httpError(400, "invalid_escrow_address");
+    if (parsed.toLowerCase() === ZERO_ADDRESS) {
+      escrowAddress = null;
+      escrowBooked = false;
+      escrowSource = "env_cleared";
+    } else {
+      escrowAddress = parsed;
+      escrowBooked = true;
+      escrowSource = "env";
+    }
+  }
+  rejectRetiredAddress(escrowAddress, guard);
+  return {
     disputePanelAddress: book.disputePanelAddress,
     coreTimelock: book.coreTimelock,
     escrowOwner: book.escrowOwner,
     bvtAddress: book.bvtAddress,
-    escrowStartBlock: book.escrowStartBlock ?? BOOKED_SEPOLIA_ESCROW_START_BLOCK,
+    escrowAddress,
+    escrowBooked,
+    escrowSource,
+    ...resolveEscrowStartBlock(env, escrowAddress, book),
   };
-  const explicit = env.ESCROW_ADDRESS === undefined ? "" : String(env.ESCROW_ADDRESS).trim();
-  if (!explicit) {
-    return {
-      ...base,
-      escrowAddress: book.escrowAddress,
-      escrowBooked: book.escrowBooked,
-      escrowSource: "address_book",
-    };
-  }
-  const parsed = checkedAddress(explicit);
-  if (!parsed) throw httpError(400, "invalid_escrow_address");
-  if (parsed.toLowerCase() === ZERO_ADDRESS) {
-    return { ...base, escrowAddress: null, escrowBooked: false, escrowSource: "env_cleared" };
-  }
-  return { ...base, escrowAddress: parsed, escrowBooked: true, escrowSource: "env" };
 }
 
 export function loadConfig(env = process.env) {
@@ -140,6 +191,7 @@ export function loadConfig(env = process.env) {
     relayerAddress,
     escrowAddress: escrow.escrowAddress,
     escrowStartBlock: escrow.escrowStartBlock,
+    escrowStartBlockSource: escrow.escrowStartBlockSource,
     escrowBooked: escrow.escrowBooked,
     escrowSource: escrow.escrowSource,
     disputePanelAddress: escrow.disputePanelAddress,
@@ -173,6 +225,8 @@ export function healthPayload(config, killSwitchOn) {
     escrowBooked: config.escrowBooked,
     escrowAddress: config.escrowAddress,
     escrowSource: config.escrowSource,
+    escrowStartBlock: config.escrowStartBlock ?? null,
+    escrowStartBlockSource: config.escrowStartBlockSource ?? null,
     relayerAddress: config.relayerAddress,
     liveSubmit: live,
     liveSubmitRequested: Boolean(config.liveSubmit?.requested),
