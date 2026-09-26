@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react"
 import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem"
-import { useAccount, useSendTransaction } from "wagmi"
+import { useAccount, usePublicClient, useSendTransaction } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import { parseBytes32 } from "./bytes32"
-import { errorText } from "./format"
+import { ErrorNotice } from "./ErrorNotice"
+import { presentError, type ErrorPresentation } from "./format"
 import { resolveWalletChainId } from "./guard"
 import {
   ERROR_GLOSSARY,
@@ -18,21 +19,27 @@ import {
 import {
   claimBodyFromPreview,
   postLiveClaim,
+  presentRelayerError,
   relayerConfigFromEnv,
-  relayerErrorText,
   relayerSubmitAllowed,
 } from "./relayer"
+import { submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
 import { assertSubmitTarget, evaluateEscrowSubmit, submitControl, submitSenderNote } from "./submit"
 import { useConnectorChainId } from "./useWalletChain"
+
+function notice(main: string): ErrorPresentation {
+  return { main, detail: null }
+}
 
 function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escrow: Address; panel: Address }) {
   const account = useAccount()
   const connectorChainId = useConnectorChainId(account.connector, account.isConnected)
   const walletChainId = account.isConnected ? resolveWalletChainId(account.chainId, connectorChainId) : null
   const decision = evaluateEscrowSubmit({ walletConnected: account.isConnected, walletChainId })
+  const publicClient = usePublicClient({ chainId: BASE_SEPOLIA_CHAIN_ID })
   const { sendTransactionAsync, isPending } = useSendTransaction()
   const [txHash, setTxHash] = useState<Hex | null>(null)
-  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<ErrorPresentation | null>(null)
   const [relayerPending, setRelayerPending] = useState(false)
   const relayer = relayerConfigFromEnv({
     VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL,
@@ -49,21 +56,35 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
     })
     if (!current.ok) {
       setTxHash(null)
-      setSubmitError(current.reason)
+      setSubmitError(notice(current.reason))
       return
     }
     try {
       assertSubmitTarget(preview.to, [escrow, panel])
-      const hash = await sendTransactionAsync({
+      if (!publicClient) {
+        setTxHash(null)
+        setSubmitError(notice("Base Sepolia client is unavailable. The wallet was not opened."))
+        return
+      }
+      const hash = await submitAfterPreflight({
+        chainId: BASE_SEPOLIA_CHAIN_ID,
+        client: publicClient,
+        account: account.address,
         to: preview.to,
         data: preview.calldata,
         value: preview.valueWei,
-        chainId: BASE_SEPOLIA_CHAIN_ID,
+        send: () =>
+          sendTransactionAsync({
+            to: preview.to,
+            data: preview.calldata,
+            value: preview.valueWei,
+            chainId: BASE_SEPOLIA_CHAIN_ID,
+          }),
       })
       setTxHash(hash)
     } catch (cause) {
       setTxHash(null)
-      setSubmitError(errorText(cause))
+      setSubmitError(presentError(cause))
     }
   }
 
@@ -75,21 +96,36 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
     })
     if (!gate.ok) {
       setTxHash(null)
-      setSubmitError(gate.reason)
+      setSubmitError(notice(gate.reason))
       return
     }
     if (!relayer.url) return
+    if (!publicClient) {
+      setTxHash(null)
+      setSubmitError(notice("The network client isn't ready, so nothing was sent."))
+      return
+    }
     setRelayerPending(true)
     try {
-      const result = await postLiveClaim({
-        url: relayer.url,
-        secret: relayer.secret,
-        body: claimBodyFromPreview(preview),
+      assertSubmitTarget(preview.to, [escrow, panel])
+      const url = relayer.url
+      const secret = relayer.secret
+      const result = await submitRelayerAfterPreflight({
+        client: publicClient,
+        to: preview.to,
+        data: preview.calldata,
+        value: preview.valueWei,
+        post: () =>
+          postLiveClaim({
+            url,
+            secret,
+            body: claimBodyFromPreview(preview),
+          }),
       })
       setTxHash(result.txHash)
     } catch (cause) {
       setTxHash(null)
-      setSubmitError(relayerErrorText(cause))
+      setSubmitError(presentRelayerError(cause))
     } finally {
       setRelayerPending(false)
     }
@@ -117,11 +153,7 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
           </button>
         </div>
       ) : null}
-      {submitError ? (
-        <p className="bad" role="alert">
-          {submitError}
-        </p>
-      ) : null}
+      {submitError ? <ErrorNotice main={submitError.main} detail={submitError.detail} /> : null}
       {txHash ? (
         <p className="mono" data-testid="submit-tx">
           Submitted {txHash}
