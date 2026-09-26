@@ -7,9 +7,11 @@ import { previewCreateEscrow, previewOpenDispute, previewRelease } from "./previ
 import {
   claimBodyFromPreview,
   postLiveClaim,
+  presentRelayerError,
   relayerConfigFromEnv,
   relayerErrorText,
   relayerSubmitAllowed,
+  RELAYER_COULD_NOT_SUBMIT,
   type LiveClaimBody,
 } from "./relayer"
 
@@ -195,6 +197,54 @@ describe("postLiveClaim", () => {
   })
 })
 
+describe("relayer broadcast failures", () => {
+  it("shows plain English for 502 broadcast_failed and keeps the raw status in the details", async () => {
+    const body = claimBodyFromPreview(previewRelease(escrow, id))
+    const failed = postLiveClaim({
+      url: relayerUrl,
+      body,
+      fetchImpl: async () =>
+        jsonResponse(502, { error: "broadcast_failed", reason: "Execution reverted for an unknown reason." }),
+    })
+    await expect(failed).rejects.toThrow(/502 broadcast_failed/)
+    const error = await postLiveClaim({
+      url: relayerUrl,
+      body,
+      fetchImpl: async () =>
+        jsonResponse(502, { error: "broadcast_failed", reason: "Execution reverted for an unknown reason." }),
+    }).catch((cause: unknown) => cause)
+    const presented = presentRelayerError(error)
+    expect(presented.main).toBe(RELAYER_COULD_NOT_SUBMIT)
+    expect(presented.main).not.toMatch(/502|broadcast_failed|Execution reverted|unknown reason/)
+    expect(presented.detail).toBe("Details: 502 broadcast_failed")
+  })
+
+  it("decodes revert_data on a 502 and still works when that field is absent", async () => {
+    const body = claimBodyFromPreview(previewRelease(escrow, id))
+    const withData = await postLiveClaim({
+      url: relayerUrl,
+      body,
+      fetchImpl: async () =>
+        jsonResponse(502, { error: "broadcast_failed", reason: "Execution reverted", revert_data: "0xf10068b5" }),
+    }).catch((cause: unknown) => cause)
+    const decoded = presentRelayerError(withData)
+    expect(decoded.main).toBe("This dispute is already resolved, so it can't be linked to this claim.")
+    expect(decoded.detail).toContain("DisputeAlreadyResolved")
+    expect(decoded.detail).toContain("0xf10068b5")
+    expect(decoded.detail).toContain("502 broadcast_failed")
+    expect(decoded.main).not.toContain("0xf10068b5")
+
+    const absent = await postLiveClaim({
+      url: relayerUrl,
+      body,
+      fetchImpl: async () => jsonResponse(502, { error: "broadcast_failed" }),
+    }).catch((cause: unknown) => cause)
+    const plain = presentRelayerError(absent)
+    expect(plain.main).toBe(RELAYER_COULD_NOT_SUBMIT)
+    expect(plain.detail).toBe("Details: 502 broadcast_failed")
+  })
+})
+
 describe("wallet submit stays direct unless the UI opts in", () => {
   it("keeps submit.ts free of the relayer and wires errors in FlowPreview", () => {
     const dir = dirname(fileURLToPath(import.meta.url))
@@ -204,7 +254,8 @@ describe("wallet submit stays direct unless the UI opts in", () => {
     expect(submit).not.toContain("postLiveClaim")
     expect(flow).toContain("sendTransactionAsync")
     expect(flow).toContain("postLiveClaim")
-    expect(flow).toContain("relayerErrorText")
+    expect(flow).toContain("presentRelayerError")
+    expect(flow).toContain("submitRelayerAfterPreflight")
     expect(flow).toContain('data-testid="relayer-submit"')
     expect(flow).toContain("relayer.url")
   })

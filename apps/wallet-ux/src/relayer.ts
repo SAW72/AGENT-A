@@ -1,6 +1,7 @@
 import { decodeFunctionData, type Address, type Hex } from "viem"
 import { escrowAbi } from "./abi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
+import { presentError, presentRevertHex, type ErrorPresentation } from "./format"
 import { BASE_MAINNET_CHAIN_ID, ETHEREUM_MAINNET_CHAIN_ID, type WalletChainId } from "./guard"
 import type { CallPreview } from "./preview"
 import { evaluateEscrowSubmit } from "./submit"
@@ -35,14 +36,41 @@ export type LiveClaimResult = {
 export class RelayerRequestError extends Error {
   readonly status: number | null
   readonly code: string
+  readonly body: Record<string, unknown> | null
 
-  constructor(message: string, status: number | null, code: string) {
+  constructor(message: string, status: number | null, code: string, body: Record<string, unknown> | null = null) {
     super(message)
     this.name = "RelayerRequestError"
     this.status = status
     this.code = code
+    this.body = body
   }
 }
+
+export const RELAYER_COULD_NOT_SUBMIT =
+  "The claim relayer couldn't submit this transaction. Nothing was sent from your wallet."
+
+export const RELAYER_UNAVAILABLE_TEXT = "The claim relayer is unavailable. Nothing was sent."
+
+const RELAYER_PLAIN: Record<string, string> = {
+  unauthorized: "The claim relayer refused this request. Nothing was sent.",
+  claim_api_secret_required: "The claim relayer is not ready to submit claims yet. Nothing was sent.",
+  kill_switch: "The claim relayer is paused. Nothing was sent.",
+  cors_or_network: "The claim relayer could not be reached. Nothing was sent.",
+  mainnet_refused: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
+  wrong_chain: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
+  action_not_claim: "This step has to be sent from your wallet, not the claim relayer.",
+  invalid_relayer_url: "The claim relayer address is not valid. Nothing was sent.",
+  invalid_bytes32: "A required identifier is missing or not the right length. Nothing was sent.",
+  invalid_address: "A required wallet address is missing. Nothing was sent.",
+  invalid_duration: "The time window for this claim is missing. Nothing was sent.",
+  invalid_amount: "This claim needs an amount greater than zero. Nothing was sent.",
+  calldata_mismatch: "The prepared transaction doesn't match this action. Nothing was sent.",
+  live_required: "The claim relayer only accepts a live submission. Nothing was sent.",
+  missing_tx_hash: "The claim relayer did not confirm a transaction. Nothing was shown as sent.",
+}
+
+export const RELAYER_PLAIN_TEXT = [RELAYER_COULD_NOT_SUBMIT, RELAYER_UNAVAILABLE_TEXT, ...Object.values(RELAYER_PLAIN)]
 
 export function relayerConfigFromEnv(env: {
   VITE_CLAIM_RELAYER_URL?: string
@@ -197,6 +225,7 @@ function errorFromResponse(status: number, body: Record<string, unknown> | null)
       "Claim relayer refused the live claim (401 unauthorized). Check VITE_CLAIM_API_SECRET against CLAIM_API_SECRET on the relayer.",
       401,
       "unauthorized",
+      body,
     )
   }
   if (status === 503 && error === "claim_api_secret_required") {
@@ -204,20 +233,55 @@ function errorFromResponse(status: number, body: Record<string, unknown> | null)
       "Claim relayer live submit is allowed but CLAIM_API_SECRET is unset (503 claim_api_secret_required). The claim was not broadcast.",
       503,
       "claim_api_secret_required",
+      body,
     )
   }
   if (status === 503 && error === "kill_switch") {
-    return new RelayerRequestError("Claim relayer kill switch is on (503). The live claim was not broadcast.", 503, "kill_switch")
+    return new RelayerRequestError(
+      "Claim relayer kill switch is on (503). The live claim was not broadcast.",
+      503,
+      "kill_switch",
+      body,
+    )
   }
   if (status === 503) {
     return new RelayerRequestError(
       `Claim relayer is unavailable (503 ${error}). The live claim was not broadcast.`,
       503,
       error,
+      body,
     )
   }
   const detail = reason ? `${error} (${reason})` : error
-  return new RelayerRequestError(`Claim relayer rejected the live claim (${status} ${detail}).`, status, error)
+  return new RelayerRequestError(`Claim relayer rejected the live claim (${status} ${detail}).`, status, error, body)
+}
+
+function bodyRevertHex(body: Record<string, unknown> | null): unknown {
+  if (!body) return null
+  if ("revert_data" in body) return body.revert_data
+  if ("revertData" in body) return body.revertData
+  if ("data" in body) return body.data
+  return null
+}
+
+function withStatus(detail: string | null, status: number | null, code: string): string {
+  const statusText = [status, code].filter((part) => part !== null && part !== "").join(" ")
+  if (!detail) return `Details: ${statusText}`
+  return `${detail} · ${statusText}`
+}
+
+/** User-facing relayer failure. Raw status and codes stay in the details line. */
+export function presentRelayerError(error: unknown): ErrorPresentation {
+  if (!(error instanceof RelayerRequestError)) return presentError(error)
+  if (error.code === "broadcast_failed") {
+    const decoded = presentRevertHex(bodyRevertHex(error.body))
+    if (decoded) return { main: decoded.main, detail: withStatus(decoded.detail, error.status, error.code) }
+    return { main: RELAYER_COULD_NOT_SUBMIT, detail: withStatus(null, error.status, error.code) }
+  }
+  const plain =
+    RELAYER_PLAIN[error.code] ??
+    (error.status === 503 ? RELAYER_UNAVAILABLE_TEXT : RELAYER_COULD_NOT_SUBMIT)
+  return { main: plain, detail: withStatus(null, error.status, error.code) }
 }
 
 export function relayerErrorText(error: unknown): string {
