@@ -19,11 +19,11 @@ import {
 import {
   claimBodyFromPreview,
   postLiveClaim,
+  presentRelayerError,
   relayerConfigFromEnv,
-  relayerErrorText,
   relayerSubmitAllowed,
 } from "./relayer"
-import { submitAfterPreflight } from "./preflight"
+import { submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
 import { assertSubmitTarget, evaluateEscrowSubmit, submitControl, submitSenderNote } from "./submit"
 import { useConnectorChainId } from "./useWalletChain"
 
@@ -100,17 +100,32 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       return
     }
     if (!relayer.url) return
+    if (!publicClient) {
+      setTxHash(null)
+      setSubmitError(notice("The network client isn't ready, so nothing was sent."))
+      return
+    }
     setRelayerPending(true)
     try {
-      const result = await postLiveClaim({
-        url: relayer.url,
-        secret: relayer.secret,
-        body: claimBodyFromPreview(preview),
+      assertSubmitTarget(preview.to, [escrow, panel])
+      const url = relayer.url
+      const secret = relayer.secret
+      const result = await submitRelayerAfterPreflight({
+        client: publicClient,
+        to: preview.to,
+        data: preview.calldata,
+        value: preview.valueWei,
+        post: () =>
+          postLiveClaim({
+            url,
+            secret,
+            body: claimBodyFromPreview(preview),
+          }),
       })
       setTxHash(result.txHash)
     } catch (cause) {
       setTxHash(null)
-      setSubmitError(notice(relayerErrorText(cause)))
+      setSubmitError(presentRelayerError(cause))
     } finally {
       setRelayerPending(false)
     }
