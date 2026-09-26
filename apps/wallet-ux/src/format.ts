@@ -1,5 +1,8 @@
 import { formatEther } from "viem"
 import { ZERO_ADDRESS } from "./addresses"
+import { presentError } from "./revert"
+
+export { decodeRevert, presentError, type DecodedRevert, type ErrorPresentation } from "./revert"
 
 export function sameAddress(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase()
@@ -19,10 +22,7 @@ export function isZeroAddress(address: string): boolean {
 }
 
 export function errorText(error: unknown): string {
-  if (typeof error === "object" && error !== null && "shortMessage" in error) {
-    const short = error.shortMessage
-    if (typeof short === "string" && short.length > 0) return short
-  }
-  if (error instanceof Error && error.message.length > 0) return error.message
-  return "Request failed"
+  const presented = presentError(error)
+  if (!presented.detail) return presented.main
+  return `${presented.main}\n${presented.detail}`
 }
