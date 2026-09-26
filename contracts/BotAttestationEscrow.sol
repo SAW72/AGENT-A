@@ -43,6 +43,25 @@ interface IDisputePanel {
     function outcome(
         bytes32 disputeId
     ) external view returns (bool exists, bool resolved, bool upheld, bytes32 subjectHash);
+
+    /// @dev Public getter for `DisputePanel.disputes`. Tuple order is the `Dispute` struct:
+    ///      subjectHash, challenger, reason, votesFor, votesAgainst, resolved, upheld, createdAt.
+    ///      A dispute exists iff `createdAt != 0`, the same rule `outcome` uses.
+    function disputes(
+        bytes32 disputeId
+    )
+        external
+        view
+        returns (
+            bytes32 subjectHash,
+            address challenger,
+            string memory reason,
+            uint256 votesFor,
+            uint256 votesAgainst,
+            bool resolved,
+            bool upheld,
+            uint256 createdAt
+        );
 }
 
 /// @title BotAttestationEscrow
@@ -121,6 +140,11 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     error InvalidParties();
     error Replay();
     error InvalidDispute();
+    error DisputeAlreadyResolved();
+    error DisputeVotesCast();
+    error DisputePredatesEscrow();
+    error DisputeChallengerNotParty();
+    error DisputeAfterExpiry();
     error DisputePending();
     error ZeroAddress();
     error InvalidGovernance();
@@ -342,7 +366,10 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Flag an escrow for dispute. Does not authorize a refund.
-    /// @dev `disputeId` must already exist on the DisputePanel with subjectHash == escrowId.
+    /// @dev Links a panel case only when it is a fresh challenge of this escrow.
+    ///      `e.createdAt` is the timestamp stored by `createEscrow`. Same-block open
+    ///      (`dispute.createdAt >= e.createdAt`) is allowed. A case opened earlier, already
+    ///      voted, already resolved, opened by a non-party, or linked after `expiresAt` is not.
     function dispute(
         bytes32 escrowId,
         bytes32 disputeId
@@ -351,8 +378,29 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         if (e.state != EscrowState.Open) revert EscrowNotOpen();
         require(msg.sender == e.payer || msg.sender == e.payee, "not a party");
         if (disputeId == bytes32(0)) revert InvalidDispute();
-        (bool exists,,, bytes32 subject) = disputePanel.outcome(disputeId);
-        if (!exists || subject != escrowId) revert InvalidDispute();
+
+        (
+            bytes32 subject,
+            address challenger,,
+            uint256 votesFor,
+            uint256 votesAgainst,
+            bool resolved,,
+            uint256 disputeCreatedAt
+        ) = disputePanel.disputes(disputeId);
+
+        // 1. Exists (createdAt != 0, same as outcome) and the subject is this escrow.
+        if (disputeCreatedAt == 0 || subject != escrowId) revert InvalidDispute();
+        // 2. Still open on the panel. A resolved ruling cannot be attached later.
+        if (resolved) revert DisputeAlreadyResolved();
+        // 3. No votes yet. Two uphold votes before the third locks upheld without resolving.
+        if (votesFor + votesAgainst != 0) revert DisputeVotesCast();
+        // 4. The case must not predate this escrow. Equal timestamps (same block) pass.
+        if (disputeCreatedAt < e.createdAt) revert DisputePredatesEscrow();
+        // 5. The challenger recorded on the panel is the payer or the payee.
+        if (challenger != e.payer && challenger != e.payee) revert DisputeChallengerNotParty();
+        // 6. The escrow window is still open, including the exact expiry timestamp.
+        if (block.timestamp > e.expiresAt) revert DisputeAfterExpiry();
+
         e.state = EscrowState.Disputed;
         e.disputeId = disputeId;
         emit EscrowDisputed(escrowId, disputeId);
