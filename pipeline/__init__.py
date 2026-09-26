@@ -1,1 +1,1 @@
-"""agent_b_v — Bot Verifier audit pipeline."""
+"""Agent-BV (Agent Bot Verifier) audit pipeline."""

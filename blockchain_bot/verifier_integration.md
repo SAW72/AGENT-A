@@ -1,6 +1,6 @@
 # Verifier Integration with On-Chain Action Logs
 
-How `agent_b_v` — Bot Verifier reads and scores the perfect history a policy-enforced bot produces.
+How Agent-BV (Agent Bot Verifier) reads and scores the perfect history a policy-enforced bot produces.
 
 ## What changes
 For a normal bot, the verifier reconstructs history from behavior (behavioral archaeology). For a policy-enforced bot, the history is already on-chain — complete, timestamped, tamper-evident. The verifier's job shifts from *finding* the history to *scoring* it.

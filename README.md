@@ -1,6 +1,6 @@
-# `agent_b_v` — Bot Verifier
+# Agent-BV (Agent Bot Verifier)
 
-**`agent_b_v` (formerly AGENT-A)** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain screening records.
+**Agent-BV (formerly AGENT-A)** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain screening records.
 
 ## License
 
@@ -15,7 +15,7 @@
 
 ## Disclaimer
 
-**Experimental informational tool only.** `agent_b_v` is **not** a certification, safety guarantee, or insurance product. Scores, stamps, and denylists are point-in-time heuristics that may be wrong, gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. Any fee-funded pool is an **experimental claims backstop — not insurance**.
+**Experimental informational tool only.** Agent-BV is **not** a certification, safety guarantee, or insurance product. Scores, stamps, and denylists are point-in-time heuristics that may be wrong, gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. Any fee-funded pool is an **experimental claims backstop — not insurance**.
 
 Read before using or relying on any stamp:
 
