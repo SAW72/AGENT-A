@@ -12,8 +12,8 @@ import vaultAbi from "./abi/Vault.json"
 
 type AbiItem = { type?: string; name?: string; stateMutability?: string }
 
-function names(abi: AbiItem[]): Set<string> {
-  return new Set(abi.filter((item) => item.type === "function").map((item) => item.name ?? ""))
+function names(abi: AbiItem[], type = "function"): Set<string> {
+  return new Set(abi.filter((item) => item.type === type).map((item) => item.name ?? ""))
 }
 
 describe("forge ABIs", () => {
@@ -30,6 +30,15 @@ describe("forge ABIs", () => {
     }
     for (const name of ["owner", "pendingOwner", "governance", "disputePanel", "lockedValue", "escrows", "createEscrow", "release", "refund", "dispute"]) {
       expect(names(escrowAbi).has(name)).toBe(true)
+    }
+    for (const name of [
+      "DisputeAlreadyResolved",
+      "DisputeVotesCast",
+      "DisputePredatesEscrow",
+      "DisputeChallengerNotParty",
+      "DisputeAfterExpiry",
+    ]) {
+      expect(names(escrowAbi, "error").has(name)).toBe(true)
     }
     for (const name of ["owner", "insurance"]) expect(names(liabilityAbi).has(name)).toBe(true)
     for (const name of ["owner", "liability", "balance"]) expect(names(insuranceFundAbi).has(name)).toBe(true)

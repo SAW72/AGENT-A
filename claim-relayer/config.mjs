@@ -10,7 +10,9 @@ export const BASE_SEPOLIA_CHAIN_ID = 84532;
 export const DEFAULT_RELAYER_ADDRESS = "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861";
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 /** Booked BotAttestationEscrow on Base Sepolia. Live submit refuses every other target. */
-export const BOOKED_SEPOLIA_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c";
+export const BOOKED_SEPOLIA_ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
+/** ESC-M-1 deploy block. Indexer and relayer log scans start here. */
+export const BOOKED_SEPOLIA_ESCROW_START_BLOCK = 47345163;
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAINNET_CHAIN_IDS = new Set([1, 8453]);
@@ -77,6 +79,7 @@ function resolveEscrow(env) {
     coreTimelock: book.coreTimelock,
     escrowOwner: book.escrowOwner,
     bvtAddress: book.bvtAddress,
+    escrowStartBlock: book.escrowStartBlock ?? BOOKED_SEPOLIA_ESCROW_START_BLOCK,
   };
   const explicit = env.ESCROW_ADDRESS === undefined ? "" : String(env.ESCROW_ADDRESS).trim();
   if (!explicit) {
@@ -136,6 +139,7 @@ export function loadConfig(env = process.env) {
     host: env.HOST || (env.RENDER ? "0.0.0.0" : "127.0.0.1"),
     relayerAddress,
     escrowAddress: escrow.escrowAddress,
+    escrowStartBlock: escrow.escrowStartBlock,
     escrowBooked: escrow.escrowBooked,
     escrowSource: escrow.escrowSource,
     disputePanelAddress: escrow.disputePanelAddress,

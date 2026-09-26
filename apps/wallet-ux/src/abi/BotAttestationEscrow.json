@@ -603,12 +603,37 @@
   },
   {
     "type": "error",
+    "name": "DisputeAfterExpiry",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DisputeAlreadyResolved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DisputeChallengerNotParty",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DisputePanelUnchanged",
     "inputs": []
   },
   {
     "type": "error",
     "name": "DisputePending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DisputePredatesEscrow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DisputeVotesCast",
     "inputs": []
   },
   {

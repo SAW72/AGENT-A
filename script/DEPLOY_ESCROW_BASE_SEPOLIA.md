@@ -10,13 +10,13 @@
 - Do not touch Ethereum mainnet. Every script here reverts on chainid `1`.
 - Do not redeploy Denylist, Vault, or DisputePanel. Gate A is done. Gate B is seated. Use the live addresses below.
 - Do not broadcast an escrow redeploy until the Auditor re-audit PASSES and the Verifier APPROVES. Spencer broadcasts. Agents do not.
-- Do not change `BotAttestationEscrow.address` in `deployments/base-sepolia.json` in the prepare PR. Wiring is a separate PR after the human broadcast.
+- Do not overwrite `BotAttestationEscrow.address` in `deployments/base-sepolia.json` with a simulation address. The live slot is the ESC-M-1 redeploy. The previous escrow is under `retired`.
 - Do not deploy BVT in this pack.
 - Do not call `createEscrow` from an agent session.
 
-The escrow on this branch includes the H-1 fix and the ESC-M-1 dispute-link checks. The contract already at `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` does not. An escrow-only redeploy is how that bytecode gets on Base Sepolia. This pack does not change Denylist, Vault, or DisputePanel bytecode.
+The live escrow includes the H-1 fix and the ESC-M-1 dispute-link checks. It is `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, built from commit `444c427`. The retired contract at `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` does not include those checks (ESC-M-1 redeploy, retired 2026-09-26). This pack does not change Denylist, Vault, or DisputePanel bytecode.
 
-Landed order: Gate B was seated (block 47299643), then escrow was created and `transferOwnership` ran (block 47299930), then `CORE_TIMELOCK` called `acceptOwnership` (block 47300275).
+Retired history, not the live escrow: Gate B was seated (block 47299643), then the retired escrow was created and `transferOwnership` ran (block 47299930), then `CORE_TIMELOCK` called `acceptOwnership` on that retired escrow (block 47300275).
 
 ## Live addresses (chainid 84532)
 
@@ -25,10 +25,10 @@ Landed order: Gate B was seated (block 47299643), then escrow was created and `t
 | Denylist | `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` |
 | Vault | `0x1463D664fA467FBCDA4B05443434494f05e565bc` |
 | DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` |
-| BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` |
+| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` |
 | CORE_TIMELOCK | `0x10CC9474b45625ADfd05C209f2518023484878D9` |
 
-`BotAttestationEscrow.owner()` is `CORE_TIMELOCK`. `pendingOwner` is the zero address. `acceptOwnership` is complete.
+`acceptOwnership` on the live escrow is complete. `owner()` is `CORE_TIMELOCK`. `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9`). The deployer `0x5D467FA00eC0E92044f779e495a17db66c5964aa` is no longer owner.
 
 `DisputePanel.owner()` is `CORE_TIMELOCK`. Gate B is seated: `arbitratorCount` is **3**. `openDispute` reverts `panel not seated` only if that count later drops below 3.
 
@@ -38,7 +38,9 @@ Landed order: Gate B was seated (block 47299643), then escrow was created and `t
 | 2 | `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30` | `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6` |
 | 3 | `0xB87Ed5F74276AC6172ef53fE866675093F75936E` | `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3` |
 
-Escrow create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` tx `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. `acceptOwnership` tx `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` is block 47300275. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
+Live escrow create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block), from commit `444c427`. `transferOwnership` tx `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. Constructor args: denylist `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, vault `0x1463D664fA467FBCDA4B05443434494f05e565bc`, panel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, governance `0x10CC9474b45625ADfd05C209f2518023484878D9`. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON, shanghai): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
+
+Retired escrow (ESC-M-1 redeploy, retired 2026-09-26): create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` tx `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. Its `acceptOwnership` tx `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` is block 47300275. That contract is `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. It is history, not the book address.
 
 `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA with EIP-7702 delegation to `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b`, not a timelock contract. `getMinDelay` reverts. It is the same account that owns the live Denylist and Vault. `onlyOwner` is `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call. See [`script/OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md).
 
@@ -61,7 +63,7 @@ export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 | `DENYLIST` | Live Denylist above. The script does not redeploy it. |
 | `VAULT` | Live Vault above. The script does not redeploy it. |
 | `DISPUTE_PANEL` | Live DisputePanel above. The script does not redeploy it. |
-| `CORE_TIMELOCK` | Immutable escrow `governance` and Ownable2Step pending owner. EOA with EIP-7702 delegation, not a timelock contract. |
+| `CORE_TIMELOCK` | Immutable escrow `governance` and Ownable2Step owner after `acceptOwnership`. EOA with EIP-7702 delegation, not a timelock contract. |
 | `BASE_SEPOLIA_RPC_URL` | Base Sepolia RPC. Chainid must be `84532`. Any other chain reverts. |
 
 ## Escrow simulate (not live)
@@ -80,7 +82,7 @@ Chain guard: chainid `1` reverts `DeployEscrow: mainnet forbidden`. Any chain ot
 
 ## ESC-M-1 escrow-only redeploy (conditional GO)
 
-Spencer gave a conditional GO for an **escrow-only** redeploy on Base Sepolia (chainid `84532`) once the Auditor re-audit PASSES and the Verifier APPROVES. This section is the runbook. It does not broadcast. A human broadcasts. Do not update `deployments/base-sepolia.json` until a follow-up wiring PR after that broadcast.
+Spencer gave a conditional GO for an **escrow-only** redeploy on Base Sepolia (chainid `84532`) once the Auditor re-audit PASSES and the Verifier APPROVES. This section is the runbook that produced the live escrow. It does not broadcast. A human broadcasts. The book now records that broadcast. Do not replace `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` with a simulation address.
 
 The script deploys one `BotAttestationEscrow` and calls `transferOwnership(CORE_TIMELOCK)`. Constructor arguments are the live Denylist, Vault, DisputePanel, and `CORE_TIMELOCK`. It does not deploy a new Denylist, Vault, or panel. `acceptOwnership` is a second transaction from `CORE_TIMELOCK`, not from the deployer, and not inside the deploy script.
 
@@ -105,10 +107,10 @@ If that account lives in a browser wallet, skip the `core-timelock` import. Afte
 
 ### Broadcast (human only, after Auditor PASS and Verifier APPROVE)
 
-Check out main at the squash-merge commit of PR #30 so the on-chain code matches main:
+The broadcast that landed used main at the squash-merge commit of PR #30 (`444c427`). The runbook checkout was:
 
 ```bash
-git checkout <MAIN_MERGE_SHA>
+git checkout 444c427
 ```
 
 ```bash
@@ -125,11 +127,11 @@ forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow 
   --broadcast
 ```
 
-Record the new address as `NEW_ESCROW` and the create transaction as `DEPLOY_TX` from the broadcast receipt. Leave the book address `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` in place until the wiring PR. Broadcast from Foundry's default sender `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38` or from the simulate burn address reverts `DeployEscrow: pass --account and --sender`.
+Recorded `NEW_ESCROW` is `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Recorded `DEPLOY_TX` is `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` (block 47345163). The previous book address `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26). Broadcast from Foundry's default sender `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38` or from the simulate burn address reverts `DeployEscrow: pass --account and --sender`.
 
 ### acceptOwnership (CORE_TIMELOCK, not the deployer)
 
-`CORE_TIMELOCK` is the pending owner.
+`CORE_TIMELOCK` was the pending owner. On `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` this call has landed: tx `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442, status 1, from `CORE_TIMELOCK`.
 
 ```bash
 export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
@@ -178,6 +180,8 @@ forge verify-contract \
   contracts/BotAttestationEscrow.sol:BotAttestationEscrow
 ```
 
+The live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` is already verified on Basescan (Pass - Verified) via Etherscan v2: solc `v0.8.20+commit.a1b79de6`, standard JSON, shanghai. Link: `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. solc 0.8.20 compiles shanghai when the flag says cancun.
+
 ### Read-only smoke checks
 
 ```bash
@@ -208,17 +212,17 @@ cast call "$NEW_ESCROW" \
 
 Expected revert data is `Error(string)` with `"not a party"`.
 
-## Escrow broadcast that already landed
+## Retired escrow broadcast (history)
 
-The broadcast that created `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` already landed. That address stays the book address until the wiring PR. Do not treat a simulation address as a replacement. The conditional redeploy above is a later human broadcast of the ESC-M-1 bytecode, not a rerun of this historical deploy.
+The broadcast that created `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` already landed. That address is retired (ESC-M-1 redeploy, retired 2026-09-26). It is not the book address. Do not treat a simulation address as a replacement. The ESC-M-1 broadcast above is a later human broadcast, not a rerun of this historical deploy.
 
-## Escrow ownership (complete)
+## Retired escrow ownership (history)
 
-1. `CORE_TIMELOCK` has called `acceptOwnership()` on `BotAttestationEscrow` `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. `owner` is `CORE_TIMELOCK`. `pendingOwner` is the zero address. The accept tx is `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` (block 47300275).
-2. The address and create-tx hash are in `BotAttestationEscrow.address` and `BotAttestationEscrow.deployTx` in [`deployments/base-sepolia.json`](../deployments/base-sepolia.json) and in the table in [`contracts/README.md`](../contracts/README.md).
-3. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they revert while `lockedValue != 0`.
+1. `CORE_TIMELOCK` called `acceptOwnership()` on the retired `BotAttestationEscrow` `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. On that contract, `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. The accept tx is `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` (block 47300275).
+2. That retired address and its create-tx hash are under `retired.BotAttestationEscrow` in [`deployments/base-sepolia.json`](../deployments/base-sepolia.json). The live slot is `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`.
+3. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they revert while `lockedValue != 0`. On the live escrow, `acceptOwnership` is complete, so `owner()` is `governance`.
 
-`acceptOwnership` was an owner-to-be call from `CORE_TIMELOCK`, same as Gate A on Denylist and Vault. It is not part of the deploy script. Agents do not send it again.
+`acceptOwnership` on the retired escrow was an owner-to-be call from `CORE_TIMELOCK`, same as Gate A on Denylist and Vault. It is not part of the deploy script. Agents do not send it again. The same call on the live escrow has landed (tx `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442).
 
 ## Gate B — seated
 
@@ -332,9 +336,9 @@ A direct `cast send` of `setArbitrator` is not part of this escrow redeploy. Age
 ## Checklist
 
 - [x] Gate B seated (`arbitratorCount` is 3; seat txs in block 47299643)
-- [x] Escrow deployed (`0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`, block 47299930)
-- [x] `CORE_TIMELOCK` `acceptOwnership` on the escrow (block 47300275; `pendingOwner` is zero)
-- [x] Real escrow address and txs are in `deployments/base-sepolia.json` and `contracts/README.md`
+- [x] Retired escrow deployed (`0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`, block 47299930). ESC-M-1 redeploy, retired 2026-09-26.
+- [x] `CORE_TIMELOCK` `acceptOwnership` on that retired escrow (block 47300275; `pendingOwner` is zero).
+- [x] Live escrow address and txs are in `deployments/base-sepolia.json` and `contracts/README.md` (`0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, block 47345163, commit `444c427`)
 - [x] Agents do not `--broadcast` and do not touch mainnet
-- [ ] ESC-M-1 escrow-only redeploy, only after the Auditor re-audit PASSES and the Verifier APPROVES, then Spencer broadcasts
-- [ ] Wiring PR updates `deployments/base-sepolia.json` after that broadcast. This PR does not.
+- [x] ESC-M-1 escrow-only redeploy landed (deploy tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa`)
+- [x] Wiring records the live escrow and retires the previous one. `acceptOwnership` on the live escrow is complete (`0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442). Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON, shanghai): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`.

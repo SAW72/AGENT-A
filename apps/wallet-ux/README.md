@@ -59,9 +59,9 @@ The current book matches:
 | DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` |
 | Liability | `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` |
 | InsuranceFund | `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` |
-| BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` |
+| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` |
 
-The superseded Denylist `0xF0f260967D377E07Bdd7840862508ddB23C012b8` and Vault `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7` are recorded only so the UI cannot treat them as live. BVT stays `null`.
+The superseded Denylist `0xF0f260967D377E07Bdd7840862508ddB23C012b8` and Vault `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7` are recorded only so the UI cannot treat them as live. The previous BotAttestationEscrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26) and is not a read target. BVT stays `null`.
 
 Liability and InsuranceFund are included because `deployments/base-sepolia.json` still lists them and the live `owner` / `insurance()` / `liability()` links agree with that book. Rows are owner, balance, and the cross-link.
 

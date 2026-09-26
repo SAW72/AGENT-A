@@ -4,12 +4,12 @@ Gas and ops service for the Agent A (Agent Auditor) claim flow. Default mode is 
 
 Public funding wallet (address only): `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` (`…31861`). The same EOA is booked as `claimRelayerWallet` in `deployments/base-sepolia.json`. It is not a contract. The hosted service derives it from `RELAYER_PRIVATE_KEY`. Never commit the private key.
 
-`BotAttestationEscrow` is booked in `deployments/base-sepolia.json` at `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. When `ESCROW_ADDRESS` is unset, health reports `escrowBooked: true` and that address (`escrowSource: "address_book"`). BVT is still null. Set `ESCROW_ADDRESS` to the zero address to force `escrowBooked: false`.
+`BotAttestationEscrow` is booked in `deployments/base-sepolia.json` at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. The indexer and relayer start block is the deploy block `47345163` (`BOOKED_SEPOLIA_ESCROW_START_BLOCK`, also `BotAttestationEscrow.startBlock` in the address book). When `ESCROW_ADDRESS` is unset, health reports `escrowBooked: true` and that address (`escrowSource: "address_book"`). BVT is still null. Set `ESCROW_ADDRESS` to the zero address to force `escrowBooked: false`. The previous escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26) and is not a live submit target.
 
 ## HARD STOP
 
 - **Base Sepolia only** (chain id **84532**). Ethereum mainnet (`1`), Base mainnet (`8453`), and every other chain are refused at boot and on every request. There is no mainnet send path.
-- **Live submit is off unless every gate passes:** `CHAIN_ID=84532`, `LIVE_SUBMIT=1`, `SPENCER_RUN_AUTH=1`, and the escrow is the booked Sepolia contract `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. Health then reports `liveSubmit: true`, `mode: "live"`, and `liveSubmitBlockers: []`. Any missing gate keeps `liveSubmit: false`.
+- **Live submit is off unless every gate passes:** `CHAIN_ID=84532`, `LIVE_SUBMIT=1`, `SPENCER_RUN_AUTH=1`, and the escrow is the booked Sepolia contract `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Health then reports `liveSubmit: true`, `mode: "live"`, and `liveSubmitBlockers: []`. Any missing gate keeps `liveSubmit: false`.
 - **Agents do not `--broadcast`.** Do not add forge broadcast scripts. Do not deploy Escrow or BVT from here. Live submit sends one escrow transaction through the relayer key. It does not deploy contracts.
 - **Never invent balances.** Quote amounts are echoed from the client. This service does not read wallet balances.
 - **Never commit secrets or private keys.** `RELAYER_PRIVATE_KEY` is a runtime environment variable only. It is read only when live submit is allowed, it is not written to disk or to the JSONL log, and it is stripped from errors.
@@ -50,7 +50,7 @@ Tests use Node's built-in runner. They do not touch the network.
   "stub": true,
   "fixture": true,
   "escrowBooked": true,
-  "escrowAddress": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c",
+  "escrowAddress": "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
   "escrowSource": "address_book",
   "relayerAddress": "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
   "liveSubmit": false,
@@ -89,7 +89,7 @@ Response:
   "mode": "fixture",
   "dryRun": true,
   "escrowBooked": true,
-  "escrowAddress": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c",
+  "escrowAddress": "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
   "relayerAddress": "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
   "relayerNonce": "0",
   "calldata": null,
@@ -114,7 +114,7 @@ Fixture response while Escrow is booked and Spencer has not authorized a run:
   "reason": "escrow_booked_spencer_run_auth_required",
   "dryRun": true,
   "escrowBooked": true,
-  "escrowAddress": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c",
+  "escrowAddress": "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
   "calldata": null,
   "calldataStatus": "action_required"
 }

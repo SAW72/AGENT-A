@@ -39,12 +39,29 @@ describe("deployment book", () => {
     expect(ADDRESSES.disputePanel).toBe(CANONICAL.disputePanel)
     expect(ADDRESSES.liability).toBe(CANONICAL.liability)
     expect(ADDRESSES.insuranceFund).toBe(CANONICAL.insuranceFund)
-    expect(ADDRESSES.botAttestationEscrow).toBe("0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c")
+    expect(ADDRESSES.botAttestationEscrow).toBe("0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d")
+    expect(ADDRESSES.botAttestationEscrow).not.toBe(SUPERSEDED.botAttestationEscrow)
+    expect(deploymentBook.BotAttestationEscrow.startBlock).toBe(47345163)
+    expect(deploymentBook.BotAttestationEscrow.commit).toBe("444c427")
+    expect(deploymentBook.BotAttestationEscrow.acceptOwnership).toBe("complete")
+    expect(deploymentBook.BotAttestationEscrow.owner).toBe("0x10CC9474b45625ADfd05C209f2518023484878D9")
+    expect(deploymentBook.BotAttestationEscrow.pendingOwner).toBe("0x0000000000000000000000000000000000000000")
+    expect(deploymentBook.BotAttestationEscrow.acceptOwnershipTx).toBe(
+      "0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9",
+    )
+    expect(deploymentBook.BotAttestationEscrow.acceptOwnershipBlock).toBe(47345442)
+    expect(deploymentBook.BotAttestationEscrow.basescan).toBe("verified")
+    expect(deploymentBook.BotAttestationEscrow.basescanUrl).toBe(
+      "https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code",
+    )
     expect(deploymentBook.claimRelayerWallet).toBe("0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861")
     expect(ADDRESSES.bvt).toBeNull()
     expect(JSON.stringify(ADDRESSES).toLowerCase()).not.toContain(SUPERSEDED.denylist.toLowerCase())
     expect(JSON.stringify(ADDRESSES).toLowerCase()).not.toContain(SUPERSEDED.vault.toLowerCase())
+    expect(JSON.stringify(ADDRESSES).toLowerCase()).not.toContain(SUPERSEDED.botAttestationEscrow.toLowerCase())
     expect(deploymentBook.superseded.Denylist.address).toBe(SUPERSEDED.denylist)
+    expect(deploymentBook.retired.BotAttestationEscrow.address).toBe(SUPERSEDED.botAttestationEscrow)
+    expect(deploymentBook.retired.BotAttestationEscrow.reason).toBe("ESC-M-1 redeploy, retired 2026-09-26")
   })
 
   it("falls back to the corrected pin when the book is not Base Sepolia", () => {
@@ -53,6 +70,14 @@ describe("deployment book", () => {
     expect(book.denylist).toBe(FALLBACK_PIN.denylist)
     expect(book.vault).toBe(FALLBACK_PIN.vault)
     expect(book).toEqual(fallbackBook())
+  })
+
+  it("falls back when the live escrow is the retired address", () => {
+    const poisoned = structuredClone(deploymentBook)
+    poisoned.BotAttestationEscrow.address = SUPERSEDED.botAttestationEscrow
+    const book = resolveAddressBook(poisoned)
+    expect(book.source).toBe("fallback-pin")
+    expect(book.botAttestationEscrow).toBe(FALLBACK_PIN.botAttestationEscrow)
   })
 
   it("falls back when a live slot is a superseded address", () => {

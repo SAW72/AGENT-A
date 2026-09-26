@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BOOKED_SEPOLIA_ESCROW, DEFAULT_RELAYER_ADDRESS, healthPayload, liveSubmitStatus, loadConfig } from "../config.mjs";
+import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, DEFAULT_RELAYER_ADDRESS, healthPayload, liveSubmitStatus, loadConfig } from "../config.mjs";
 
 const SECRET = "0x" + "ab".repeat(32);
 
@@ -15,7 +15,9 @@ describe("config gates", () => {
     assert.equal(config.relayerAddress, DEFAULT_RELAYER_ADDRESS);
     assert.equal(config.escrowBooked, true);
     assert.equal(config.escrowSource, "address_book");
-    assert.equal(config.escrowAddress, "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c");
+    assert.equal(config.escrowAddress, "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d");
+    assert.equal(config.escrowStartBlock, 47345163);
+    assert.equal(config.escrowStartBlock, BOOKED_SEPOLIA_ESCROW_START_BLOCK);
     assert.equal(config.disputePanelAddress, "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb");
     assert.equal(config.coreTimelock, "0x10CC9474b45625ADfd05C209f2518023484878D9");
     assert.equal(config.bvtAddress, null);
@@ -67,6 +69,8 @@ describe("config gates", () => {
     const book = JSON.parse(await readFile(new URL("../../deployments/base-sepolia.json", import.meta.url), "utf8"));
     assert.equal(book.chainId, 84532);
     assert.equal(book.BotAttestationEscrow.address, BOOKED_SEPOLIA_ESCROW);
+    assert.equal(book.BotAttestationEscrow.startBlock, BOOKED_SEPOLIA_ESCROW_START_BLOCK);
+    assert.equal(book.retired.BotAttestationEscrow.reason, "ESC-M-1 redeploy, retired 2026-09-26");
     assert.equal(book.claimRelayerWallet, DEFAULT_RELAYER_ADDRESS);
 
     const explicit = liveSubmitStatus(
