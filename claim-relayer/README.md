@@ -152,7 +152,7 @@ CORS preflight allows `content-type`, `x-admin-secret`, `authorization`, and `x-
 | 503 | `kill_switch` | Kill switch is on. Quote and claim are refused. Health stays 200. |
 | 503 | `claim_api_secret_required` | Live submit is allowed and `CLAIM_API_SECRET` is unset. The live claim is refused before broadcast. |
 | 503 | `relayer_key_missing` | Live submit is allowed, the claim secret matched, but `RELAYER_PRIVATE_KEY` is unset. Nothing is signed. |
-| 502 | `broadcast_failed` | The Sepolia RPC rejected the send, or gas estimation reverted. `txHash` is null. `senderConstraint` says who the contract requires. |
+| 502 | `broadcast_failed` | The Sepolia RPC rejected the send, or gas estimation reverted. `txHash` is null. `senderConstraint` says who the contract requires. `revert_data` is the raw revert bytes as a `0x` lowercase hex string, or `null` when the RPC error has no revert bytes. |
 | 409 | `live_submit_blocked` | Client asked for a live transaction and the gate is closed, or asked a quote to broadcast. `reason` is `escrow_not_booked`, `escrow_not_booked_sepolia`, `escrow_booked_spencer_run_auth_required`, `live_submit_off`, or `quote_does_not_broadcast`. |
 | 400 | `action_not_claim` | `action` is not `createEscrow`, `release`, `refund`, or `dispute`. Governance setters are refused. |
 | 400 | `invalid_bytes32` | `escrowId` / bot id / `disputeId` is not a non-zero bytes32. |
@@ -167,6 +167,21 @@ CORS preflight allows `content-type`, `x-admin-secret`, `authorization`, and `x-
 | 400 | `invalid_json` | Body is not a JSON object. |
 | 401 | `unauthorized` | Admin route called with the wrong `ADMIN_SECRET`, or a live claim (gate open) without a matching `CLAIM_API_SECRET`. |
 | 404 | `not_found` | Unknown path. |
+
+A live claim that fails while sending returns this body. `revert_data` is always present: a `0x` lowercase hex string of the raw revert bytes, or `null`. Empty `0x`, odd length, non-hex, and payloads larger than 4096 bytes are `null` (they are not truncated). The body does not include the RPC URL, the provider error text, the request body, or the signer key.
+
+```json
+{
+  "ok": false,
+  "error": "broadcast_failed",
+  "txHash": null,
+  "dryRun": false,
+  "action": "release",
+  "senderConstraint": "permissionless",
+  "senderNote": "release and refund are permissionless. The relayer signer sends this transaction.",
+  "revert_data": null
+}
+```
 
 Startup with `CHAIN_ID` other than `84532` refuses to boot (`mainnet_refused` or `wrong_chain`). `RELAYER_KEY_FILE` / `RELAYER_PRIVATE_KEY_FILE` refuse to boot. A retired or superseded escrow, denylist, vault, or dispute panel refuses to boot (`retired_or_superseded_address`). A non-integer or negative `ESCROW_START_BLOCK` on a non-booked escrow refuses to boot (`invalid_escrow_start_block`). Keys stay in the environment.
 

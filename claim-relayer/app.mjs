@@ -124,6 +124,7 @@ function errorBody(err) {
     "senderConstraint",
     "senderNote",
     "fixture",
+    "revert_data",
   ]) {
     if (err[key] !== undefined) body[key] = err[key];
   }

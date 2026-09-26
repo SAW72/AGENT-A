@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { RpcRequestError } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { assertSepoliaRawTx, createSepoliaBroadcaster } from "../broadcast.mjs";
 import { BOOKED_SEPOLIA_ESCROW } from "../config.mjs";
+import { MAX_REVERT_DATA_BYTES } from "../revertData.mjs";
 
 const KEY = "0x" + "11".repeat(32);
 const ESCROW_ID = "0x" + "ab".repeat(32);
@@ -142,9 +144,125 @@ describe("sepolia broadcaster", () => {
       () => broadcaster.send({ chainId: 84532, to: BOOKED_SEPOLIA_ESCROW, data: "0x", valueWei: "0" }),
       (err) => {
         const blob = JSON.stringify(err);
-        return err.error === "broadcast_failed" && !blob.includes(KEY.slice(2)) && !blob.includes(KEY);
+        return (
+          err.error === "broadcast_failed" &&
+          err.revert_data === null &&
+          err.reason === undefined &&
+          !blob.includes(KEY.slice(2)) &&
+          !blob.includes(KEY) &&
+          !blob.includes("rpc failed")
+        );
       },
     );
+  });
+
+  it("surfaces estimateGas custom-error bytes and leaves the rpc url and message off the error", async () => {
+    const revert = "0x" + "AABBCCDD" + "ab".repeat(32);
+    const rpcUrl = "https://sepolia.example/v2/secret-rpc-key";
+    const rawMessage = "execution reverted: NotAParty raw-provider-message";
+    let estimates = 0;
+    const broadcaster = createSepoliaBroadcaster({
+      privateKey: KEY,
+      request: async ({ method }) => {
+        if (method === "eth_chainId") return "0x14a34";
+        if (method === "eth_fillTransaction") throw new Error("eth_fillTransaction is not available");
+        if (method === "eth_getTransactionCount") return "0x0";
+        if (method === "eth_getBlockByNumber") return sepoliaBlock();
+        if (method === "eth_maxPriorityFeePerGas") return "0x59682f00";
+        if (method === "eth_gasPrice") return "0x3b9aca00";
+        if (method === "eth_estimateGas") {
+          estimates += 1;
+          throw new RpcRequestError({
+            body: { method, params: [{ data: "0xdeadbeef", url: rpcUrl }] },
+            error: { code: 3, message: rawMessage, data: revert },
+            url: rpcUrl,
+          });
+        }
+        throw new Error(`unexpected ${method}`);
+      },
+    });
+    await assert.rejects(
+      () => broadcaster.send({ chainId: 84532, to: BOOKED_SEPOLIA_ESCROW, data: "0x1234", valueWei: "0" }),
+      (err) => {
+        const blob = JSON.stringify(err);
+        return (
+          err.status === 502 &&
+          err.error === "broadcast_failed" &&
+          err.revert_data === revert.toLowerCase() &&
+          err.reason === undefined &&
+          err.txHash === null &&
+          err.dryRun === false &&
+          !blob.includes(rpcUrl) &&
+          !blob.includes("raw-provider-message") &&
+          !blob.includes("NotAParty") &&
+          !blob.includes("secret-rpc-key") &&
+          !blob.includes(KEY.slice(2)) &&
+          !blob.includes("0xdeadbeef")
+        );
+      },
+    );
+    assert.equal(estimates, 1);
+  });
+
+  it("reads nested revert data from a geth-style error and rejects junk, odd, and oversized payloads", async () => {
+    const revert = "0x" + "ccdd" + "ee".repeat(32);
+    const rpcUrl = "https://user:secret-rpc-key@sepolia.example/v2/key";
+    const rawMessage = "execution reverted: keep-this-message-out";
+
+    async function fail(data) {
+      const broadcaster = createSepoliaBroadcaster({
+        privateKey: KEY,
+        request: async ({ method }) => {
+          if (method === "eth_chainId") return "0x14a34";
+          if (method === "eth_fillTransaction") throw new Error("eth_fillTransaction is not available");
+          if (method === "eth_getTransactionCount") return "0x0";
+          if (method === "eth_getBlockByNumber") return sepoliaBlock();
+          if (method === "eth_maxPriorityFeePerGas") return "0x59682f00";
+          if (method === "eth_gasPrice") return "0x3b9aca00";
+          if (method === "eth_estimateGas") {
+            throw new RpcRequestError({
+              body: { method, params: [] },
+              error: { code: -32000, message: rawMessage, data },
+              url: rpcUrl,
+            });
+          }
+          throw new Error(`unexpected ${method}`);
+        },
+      });
+      try {
+        await broadcaster.send({ chainId: 84532, to: BOOKED_SEPOLIA_ESCROW, data: "0x1234", valueWei: "0" });
+        return null;
+      } catch (err) {
+        return err;
+      }
+    }
+
+    const nested = await fail({ data: revert, message: rawMessage, url: rpcUrl });
+    assert.equal(nested.revert_data, revert.toLowerCase());
+    const nestedBlob = JSON.stringify(nested);
+    assert.equal(nestedBlob.includes(rpcUrl), false);
+    assert.equal(nestedBlob.includes("keep-this-message-out"), false);
+    assert.equal(nestedBlob.includes("secret-rpc-key"), false);
+
+    const junk = await fail("not-hex " + rpcUrl + " " + rawMessage);
+    assert.equal(junk.revert_data, null);
+    assert.equal(JSON.stringify(junk).includes(rpcUrl), false);
+    assert.equal(JSON.stringify(junk).includes("keep-this-message-out"), false);
+
+    const odd = await fail("0xabc");
+    assert.equal(odd.revert_data, null);
+
+    const empty = await fail("0x");
+    assert.equal(empty.revert_data, null);
+
+    const oversized = "0x" + "aa".repeat(MAX_REVERT_DATA_BYTES + 1);
+    const huge = await fail(oversized);
+    assert.equal(huge.revert_data, null);
+    assert.equal(JSON.stringify(huge).includes(oversized.slice(0, 32)), false);
+
+    const keyPayload = await fail(KEY);
+    assert.equal(keyPayload.revert_data, null);
+    assert.equal(JSON.stringify(keyPayload).includes(KEY.slice(2)), false);
   });
 });
 
