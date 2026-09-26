@@ -5,13 +5,12 @@ import { fileURLToPath } from "node:url"
 const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 const brand = readFileSync(join(root, "src/brand.ts"), "utf8")
 const productName = brand.match(/export const PRODUCT_NAME = "([^"]+)"/)?.[1]
-const descriptor = brand.match(/export const DESCRIPTOR = "([^"]+)"/)?.[1]
-if (!productName || !descriptor) {
-  console.error("Brand check could not read PRODUCT_NAME and DESCRIPTOR from src/brand.ts")
+if (!productName) {
+  console.error("Brand check could not read PRODUCT_NAME from src/brand.ts")
   process.exit(1)
 }
 
-const title = `${productName} — ${descriptor}`
+const title = `${productName} (Agent Bot Verifier)`
 const html = readFileSync(join(root, "dist/index.html"), "utf8")
 const manifest = JSON.parse(readFileSync(join(root, "dist/manifest.webmanifest"), "utf8"))
 const js = readdirSync(join(root, "dist/assets"))
@@ -31,8 +30,8 @@ const checks = [
   [manifest.name === title, "manifest name"],
   [manifest.short_name === productName, "manifest short_name"],
   [js.includes(productName), "bundle product name"],
+  [js.includes("(Agent Bot Verifier)"), "bundle display form"],
   [js.includes("is a product of Steward of the King LLC, an Ohio (USA) limited liability company."), "bundle footer"],
-  [js.includes(descriptor), "bundle descriptor"],
 ]
 
 const misses = checks.filter(([ok]) => !ok).map(([, label]) => label)

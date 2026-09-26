@@ -6,7 +6,7 @@ import {
   applyBrandHtml,
   brandManifest,
   DESCRIPTION,
-  DESCRIPTOR,
+  DISPLAY_NAME,
   OPERATOR_LINE,
   PRODUCT_NAME,
   PRODUCT_TITLE,
@@ -17,9 +17,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 describe("brand source", () => {
   it("builds the title, footer, and manifest from PRODUCT_NAME", () => {
-    expect(PRODUCT_TITLE).toBe(`${PRODUCT_NAME} — ${DESCRIPTOR}`)
-    expect(OPERATOR_LINE.startsWith(`${PRODUCT_NAME} is a product of `)).toBe(true)
-    expect(DESCRIPTION.startsWith(`${PRODUCT_TITLE}:`)).toBe(true)
+    expect(DISPLAY_NAME).toBe(`${PRODUCT_NAME} (Agent Bot Verifier)`)
+    expect(PRODUCT_TITLE).toBe(DISPLAY_NAME)
+    expect(OPERATOR_LINE.startsWith(`${DISPLAY_NAME} is a product of `)).toBe(true)
+    expect(DESCRIPTION.startsWith(`${DISPLAY_NAME}:`)).toBe(true)
     expect(DESCRIPTION).toContain("chain id 84532")
     expect(DESCRIPTION).toContain("Testnet only, no mainnet.")
     expect(TESTNET_LINE).toBe("Base Sepolia testnet only")
@@ -30,25 +31,25 @@ describe("brand source", () => {
     expect(rawHtml).toContain("%PRODUCT_DESCRIPTION%")
 
     const html = applyBrandHtml(rawHtml)
-    expect(html).toContain(`<title>${PRODUCT_TITLE}</title>`)
+    expect(html).toContain(`<title>${DISPLAY_NAME}</title>`)
     expect(html).toContain(`name="description" content="${DESCRIPTION}"`)
-    expect(html).toContain(`property="og:title" content="${PRODUCT_TITLE}"`)
-    expect(html).toContain(`property="og:site_name" content="${PRODUCT_TITLE}"`)
+    expect(html).toContain(`property="og:title" content="${DISPLAY_NAME}"`)
+    expect(html).toContain(`property="og:site_name" content="${DISPLAY_NAME}"`)
     expect(html).toContain(`property="og:description" content="${DESCRIPTION}"`)
-    expect(html).toContain(`name="twitter:title" content="${PRODUCT_TITLE}"`)
+    expect(html).toContain(`name="twitter:title" content="${DISPLAY_NAME}"`)
     expect(html).toContain(`name="twitter:description" content="${DESCRIPTION}"`)
     expect(html).not.toContain("%PRODUCT_TITLE%")
     expect(html).not.toContain("%PRODUCT_DESCRIPTION%")
 
     const manifest = brandManifest()
-    expect(manifest.name).toBe(PRODUCT_TITLE)
+    expect(manifest.name).toBe(DISPLAY_NAME)
     expect(manifest.short_name).toBe(PRODUCT_NAME)
 
     const app = readFileSync(join(root, "src/App.tsx"), "utf8")
-    expect(app).toContain("{PRODUCT_TITLE}")
+    expect(app).toContain("{DISPLAY_NAME}")
     expect(app).toContain("{OPERATOR_LINE}")
     expect(app).toContain("{TESTNET_LINE}")
     expect(app).not.toContain(PRODUCT_NAME)
-    expect(app).not.toContain(DESCRIPTOR)
+    expect(app).not.toContain(DISPLAY_NAME)
   })
 })

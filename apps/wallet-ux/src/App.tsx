@@ -2,7 +2,7 @@ import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi"
 import { ADDRESSES, addressBook, BASE_SEPOLIA_CHAIN_ID } from "./addresses"
-import { OPERATOR_LINE, PRODUCT_TITLE, TESTNET_LINE } from "./brand"
+import { DISPLAY_NAME, OPERATOR_LINE, TESTNET_LINE } from "./brand"
 import { DenylistLookup } from "./DenylistLookup"
 import { EscrowPanel } from "./EscrowPanel"
 import { errorText, formatEth, shortAddress } from "./format"
@@ -182,7 +182,7 @@ export function App() {
             <source srcSet="/logo.webp" type="image/webp" />
             <img src="/logo.png" alt="" width={34} height={36} />
           </picture>
-          <h1>{PRODUCT_TITLE}</h1>
+          <h1>{DISPLAY_NAME}</h1>
         </div>
         <p className="lede">Base Sepolia only · chain id {BASE_SEPOLIA_CHAIN_ID}</p>
       </header>
