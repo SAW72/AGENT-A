@@ -176,7 +176,7 @@ The live pair has no listings and no Vault bots. Operator scripts call the exist
 
 ## BVT stack (additive)
 
-The Agent-BV — Bot Verifier token lives under `contracts/bvt/`. On-chain ERC-20 name **Bot Verifier Token**. It does **not** change Denylist / Vault / Liability / InsuranceFund / DisputePanel. Those contracts can later call `IBVTFeeGate` / `IAuditorStakeView` (see `contracts/bvt/IBVTHooks.sol`). Core deploy already starts Ownable2Step handoff of Denylist / Vault to `CORE_TIMELOCK`.
+The agent_b_v — Bot Verifier token lives under `contracts/bvt/`. On-chain ERC-20 name **Bot Verifier Token**. It does **not** change Denylist / Vault / Liability / InsuranceFund / DisputePanel. Those contracts can later call `IBVTFeeGate` / `IAuditorStakeView` (see `contracts/bvt/IBVTHooks.sol`). Core deploy already starts Ownable2Step handoff of Denylist / Vault to `CORE_TIMELOCK`.
 
 | File | Role |
 | --- | --- |

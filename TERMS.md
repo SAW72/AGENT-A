@@ -1,4 +1,4 @@
-# Agent-BV — Bot Verifier — Terms of Use (MVP)
+# agent_b_v — Bot Verifier — Terms of Use (MVP)
 
 **Last updated:** 2026-09-26
 
@@ -7,21 +7,21 @@
 
 These Terms of Use (the "**Terms**") are a legally binding agreement between you and the operator named above (the "**Operator**"). If you do not agree, do not use the Service.
 
-Agent-BV is a product of Steward of the King LLC, an Ohio (USA) limited liability company.
+agent_b_v is a product of Steward of the King LLC, an Ohio (USA) limited liability company.
 
 ---
 
 ## 1. Agreement
 
-By accessing the Agent-BV (Bot Verifier), formerly AGENT-A repository, documentation, APIs, stamps, contracts, or related materials (the "**Service**"), you agree to these Terms, the **[Disclaimer](DISCLAIMER.md)**, and the **[Privacy Notice](PRIVACY.md)**. If you use the Service on behalf of an organization, you represent that you have authority to bind it.
+By accessing the agent_b_v (Bot Verifier), formerly AGENT-A repository, documentation, APIs, stamps, contracts, or related materials (the "**Service**"), you agree to these Terms, the **[Disclaimer](DISCLAIMER.md)**, and the **[Privacy Notice](PRIVACY.md)**. If you use the Service on behalf of an organization, you represent that you have authority to bind it.
 
 ## 2. Operator
 
-Agent-BV is a product of Steward of the King LLC, an Ohio (USA) limited liability company. The Service is operated on an experimental basis by Steward of the King LLC. A mailing address is not published in this MVP pack.
+agent_b_v is a product of Steward of the King LLC, an Ohio (USA) limited liability company. The Service is operated on an experimental basis by Steward of the King LLC. A mailing address is not published in this MVP pack.
 
 ## 3. The Service
 
-Agent-BV is an **experimental AI / crypto trust-signal toolkit**. It may include adversarial scenarios, scoring, behavioral fingerprints, denylists, vault/registry designs, dispute and claims-backstop prototypes, APIs, and (where deployed) testnet smart contracts and a BVT token used for fees, auditor bonds, and governance experiments.
+agent_b_v is an **experimental AI / crypto trust-signal toolkit**. It may include adversarial scenarios, scoring, behavioral fingerprints, denylists, vault/registry designs, dispute and claims-backstop prototypes, APIs, and (where deployed) testnet smart contracts and a BVT token used for fees, auditor bonds, and governance experiments.
 
 The Service is **not** a certification body, insurance product, licensed financial service, or investment offering. Features may be incomplete, stubbed, in-memory, unaudited, or testnet-only.
 
