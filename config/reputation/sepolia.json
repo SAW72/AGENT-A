@@ -1,0 +1,91 @@
+{
+  "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
+  "config_version": "sepolia-draft-0",
+  "rule_version": "design-v2",
+  "product": "Bot Verifier",
+  "chain": {
+    "name": "Base Sepolia",
+    "chain_id": 84532,
+    "refused_chain_ids": [1, 8453]
+  },
+  "ledgers": {
+    "usage": "bot-verifier-sepolia-reputation",
+    "arbitrator": "bot-verifier-sepolia-arbitrator-rep",
+    "never_summed": true
+  },
+  "contracts": {
+    "escrow": {
+      "name": "BotAttestationEscrow",
+      "address": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c",
+      "start_block": 47299930,
+      "note": "Live code predates PR #23: emits 1-field VaultUpdated(address) and DisputePanelUpdated(address). Accept both shapes."
+    },
+    "dispute_panel": {
+      "name": "DisputePanel",
+      "address": "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb",
+      "start_block": 47253020
+    },
+    "vault": {
+      "name": "Vault",
+      "address": "0x1463D664fA467FBCDA4B05443434494f05e565bc",
+      "start_block": 47294164
+    },
+    "denylist": {
+      "name": "Denylist",
+      "address": "0xeE76876bECcFc1B58fC06fF4E654a517d784B224",
+      "start_block": 47294163,
+      "note": "Enforcer signals only. Never creates points."
+    }
+  },
+  "scan": {
+    "max_block_range": 625,
+    "note": "sepolia.base.org returns HTTP 413 for eth_getLogs ranges of 1250+ blocks. Halve on 413 and retry.",
+    "provisional_tag": "safe",
+    "final_tag": "finalized"
+  },
+  "points": {
+    "_guess": true,
+    "O1_operator": { "value": 10, "status": "GUESS" },
+    "O2_payer": { "value": 5, "status": "GUESS" },
+    "O2_payee": { "value": 5, "status": "GUESS" },
+    "O3_payer": { "value": 1, "status": "GUESS" },
+    "O3_payee": { "value": 0, "status": "GUESS" },
+    "O4_payer": { "value": 2, "status": "GUESS" },
+    "O4_payee": { "value": 2, "status": "GUESS" },
+    "O5": { "value": 0, "status": "GUESS" },
+    "A1_per_vote": { "value": 3, "status": "GUESS" },
+    "A2_match_bonus": { "value": 2, "status": "GUESS" }
+  },
+  "floors": {
+    "_guess": true,
+    "min_amount_wei": { "value": "100000000000000", "human": "0.0001 test ETH", "applies_to": ["O2", "O3"], "status": "GUESS" },
+    "o2_min_create_to_release_seconds": { "value": 300, "human": "5 minutes", "status": "GUESS" },
+    "o3_min_set_duration_seconds": { "value": 3600, "human": "1 hour (expiresAt minus create block timestamp)", "status": "GUESS" }
+  },
+  "caps": {
+    "_guess": true,
+    "usage_points_per_wallet_per_day": { "value": 20, "status": "GUESS" },
+    "usage_points_per_bot_per_day": { "value": 20, "status": "GUESS" },
+    "escrows_per_wallet_per_day": { "value": 5, "counts": ["O2", "O3"], "status": "GUESS" },
+    "o3_per_wallet_per_day": { "value": 1, "status": "GUESS" },
+    "o4_per_wallet_per_day": { "value": 1, "status": "GUESS" },
+    "pair_per_day": { "value": 2, "status": "GUESS" },
+    "pair_lifetime": { "value": 10, "status": "GUESS" },
+    "usage_points_per_wallet_per_season": { "value": 500, "status": "GUESS" },
+    "arbitrator_points_per_day": { "value": 30, "status": "GUESS" },
+    "decay": { "value": "none", "status": "GUESS" },
+    "day_boundary": { "value": "UTC, by block timestamp", "status": "PROPOSED, not defined in design v2" },
+    "season": { "value": null, "status": "OPEN, not defined in design v2" }
+  },
+  "flags": {
+    "_guess": true,
+    "o5_standalone_disputes_threshold": { "value": 3, "status": "GUESS" },
+    "o5_window_days": { "value": 7, "status": "GUESS" }
+  },
+  "hooks": {
+    "ofac_screening_7": "pending",
+    "sybil_enforcer_9": "pending",
+    "disclaimer_links_11": "pending",
+    "caps_lock_12": "pending"
+  }
+}
