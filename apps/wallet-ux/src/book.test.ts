@@ -43,7 +43,13 @@ describe("deployment book", () => {
     expect(ADDRESSES.botAttestationEscrow).not.toBe(SUPERSEDED.botAttestationEscrow)
     expect(deploymentBook.BotAttestationEscrow.startBlock).toBe(47345163)
     expect(deploymentBook.BotAttestationEscrow.commit).toBe("444c427")
-    expect(deploymentBook.BotAttestationEscrow.acceptOwnership).toBe("pending")
+    expect(deploymentBook.BotAttestationEscrow.acceptOwnership).toBe("complete")
+    expect(deploymentBook.BotAttestationEscrow.owner).toBe("0x10CC9474b45625ADfd05C209f2518023484878D9")
+    expect(deploymentBook.BotAttestationEscrow.pendingOwner).toBe("0x0000000000000000000000000000000000000000")
+    expect(deploymentBook.BotAttestationEscrow.acceptOwnershipTx).toBe(
+      "0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9",
+    )
+    expect(deploymentBook.BotAttestationEscrow.acceptOwnershipBlock).toBe(47345442)
     expect(deploymentBook.claimRelayerWallet).toBe("0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861")
     expect(ADDRESSES.bvt).toBeNull()
     expect(JSON.stringify(ADDRESSES).toLowerCase()).not.toContain(SUPERSEDED.denylist.toLowerCase())

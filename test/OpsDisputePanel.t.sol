@@ -45,10 +45,14 @@ contract OpsDisputePanelGuardTest is Test {
         assertEq(book.readUint(".BotAttestationEscrow.startBlock"), 47345163);
         assertEq(book.readString(".BotAttestationEscrow.commit"), "444c427");
         assertEq(book.readAddress(".BotAttestationEscrow.deployer"), 0x5D467FA00eC0E92044f779e495a17db66c5964aa);
-        assertEq(book.readString(".BotAttestationEscrow.acceptOwnership"), "pending");
-        assertEq(book.readAddress(".BotAttestationEscrow.owner"), 0x5D467FA00eC0E92044f779e495a17db66c5964aa);
-        assertEq(book.readAddress(".BotAttestationEscrow.pendingOwner"), liveTimelock);
-        assertEq(book.readAddress(".BotAttestationEscrow.ownerAfterAcceptOwnership"), liveTimelock);
+        assertEq(book.readString(".BotAttestationEscrow.acceptOwnership"), "complete");
+        assertEq(book.readAddress(".BotAttestationEscrow.owner"), liveTimelock);
+        assertEq(book.readAddress(".BotAttestationEscrow.pendingOwner"), address(0));
+        assertEq(
+            book.readString(".BotAttestationEscrow.acceptOwnershipTx"),
+            "0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9"
+        );
+        assertEq(book.readUint(".BotAttestationEscrow.acceptOwnershipBlock"), 47345442);
         assertEq(
             book.readAddress(".retired.BotAttestationEscrow.address"),
             0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c

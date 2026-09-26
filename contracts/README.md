@@ -124,7 +124,7 @@ forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow 
   --broadcast
 ```
 
-On the live escrow, `acceptOwnership` is pending. `pendingOwner` is `CORE_TIMELOCK`. After `acceptOwnership`, `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. That accept has not landed. Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`, and they also revert until `owner()` is `governance`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
+On the live escrow, `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK`). Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
 
 ## Base Sepolia addresses (84532)
 
@@ -155,7 +155,7 @@ Listing migration replay of `Listed` / `Unlisted` from the previous Denylist was
 | 2 | `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30` | `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6` |
 | 3 | `0xB87Ed5F74276AC6172ef53fE866675093F75936E` | `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3` |
 
-`BotAttestationEscrow` is the ESC-M-1 redeploy at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, built from commit `444c427`, and linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block). Deployer `0x5D467FA00eC0E92044f779e495a17db66c5964aa` called `transferOwnership` in `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. `acceptOwnership` is pending. `pendingOwner` is `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`). After `acceptOwnership`, `owner` is `CORE_TIMELOCK`. That accept has not landed. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan verification is not done.
+`BotAttestationEscrow` is the ESC-M-1 redeploy at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, built from commit `444c427`, and linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block). Deployer `0x5D467FA00eC0E92044f779e495a17db66c5964aa` called `transferOwnership` in `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) and `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK`). Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan verification is pending.
 
 Create txs: Denylist block 47294163, Vault block 47294164, BotAttestationEscrow block 47345163. The Tx column is the create transaction.
 
