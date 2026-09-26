@@ -54,7 +54,7 @@ export const RELAYER_TIMEOUT_TEXT =
 export const RELAYER_RECEIPT_UNKNOWN_TEXT =
   "The claim relayer submitted this transaction, but this page could not confirm it. Check the transaction before you try again."
 export const RELAYER_RECEIPT_REVERTED_TEXT =
-  "The transaction was included, but the contract rejected it. No funds moved."
+  "The transaction was sent but the contract rejected it. Network fees may have been charged; no escrow funds moved."
 
 export type RelayerPhase = "idle" | "submitting" | "confirming"
 
@@ -94,7 +94,7 @@ export const RELAYER_COULD_NOT_SUBMIT =
 export const RELAYER_UNAVAILABLE_TEXT = "The claim relayer is unavailable. Nothing was sent."
 
 const RELAYER_VALIDATION_TEXT = "The claim relayer could not accept this submission. Nothing was sent."
-const RELAYER_NOT_LIVE_TEXT = "The claim relayer is not accepting live submissions right now. Nothing was sent."
+const RELAYER_NOT_LIVE_TEXT = "The claim relayer isn't accepting live submissions right now. Nothing was sent."
 const RELAYER_RETIRED_TEXT =
   "The claim relayer is pointed at a retired escrow, so this was not submitted. Use your wallet instead."
 const RELAYER_RETIRED_SENT_TEXT =
@@ -387,11 +387,23 @@ function codeForStatus(status: number, error: string): string {
   return error
 }
 
+function isBlankRevertField(value: unknown): boolean {
+  if (value == null) return true
+  if (typeof value !== "string") return false
+  const trimmed = value.trim()
+  return trimmed === "" || trimmed === "0x"
+}
+
+/** First revert payload in revert_data, then revertData, then data. Blank values fall through. */
 function bodyRevertHex(body: Record<string, unknown> | null): unknown {
   if (!body) return null
-  if ("revert_data" in body) return body.revert_data
-  if ("revertData" in body) return body.revertData
-  if ("data" in body) return body.data
+  const ordered: unknown[] = []
+  if ("revert_data" in body) ordered.push(body.revert_data)
+  if ("revertData" in body) ordered.push(body.revertData)
+  if ("data" in body) ordered.push(body.data)
+  for (const value of ordered) {
+    if (!isBlankRevertField(value)) return value
+  }
   return null
 }
 

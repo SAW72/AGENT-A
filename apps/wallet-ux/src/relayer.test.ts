@@ -253,6 +253,39 @@ describe("relayer broadcast failures", () => {
     expect(decoded.detail).toContain("502 broadcast_failed")
     expect(decoded.main).not.toContain("0xf10068b5")
 
+    const fromRevertData = await postLiveClaim({
+      url: relayerUrl,
+      body,
+      fetchImpl: async () =>
+        jsonResponse(502, {
+          error: "broadcast_failed",
+          revert_data: null,
+          revertData: "0x8aab0a8f",
+          data: "0x9bc3a099",
+        }),
+    }).catch((cause: unknown) => cause)
+    const revertDataHit = presentRelayerError(fromRevertData)
+    expect(revertDataHit.main).toBe("This dispute already has votes, so it can't be linked to this claim.")
+    expect(revertDataHit.detail).toContain("0x8aab0a8f")
+    expect(revertDataHit.main).not.toMatch(/0x[0-9a-fA-F]+/)
+    expect(revertDataHit.main).not.toMatch(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/)
+
+    const fromData = await postLiveClaim({
+      url: relayerUrl,
+      body,
+      fetchImpl: async () =>
+        jsonResponse(502, {
+          error: "broadcast_failed",
+          revert_data: "",
+          revertData: "0x",
+          data: "0x9bc3a099",
+        }),
+    }).catch((cause: unknown) => cause)
+    const dataHit = presentRelayerError(fromData)
+    expect(dataHit.main).toBe("This dispute was opened before this claim, so it can't be linked.")
+    expect(dataHit.detail).toContain("0x9bc3a099")
+    expect(dataHit.main).not.toContain("0x9bc3a099")
+
     const absent = await postLiveClaim({
       url: relayerUrl,
       body,
@@ -501,6 +534,10 @@ describe("dispute submit via the claim relayer", () => {
     expect(plain.ok).toBe(false)
     if (plain.ok) return
     expect(plain.presentation.main).toBe(RELAYER_RECEIPT_REVERTED_TEXT)
+    expect(plain.presentation.main).toContain("The transaction was sent")
+    expect(plain.presentation.main).toContain("no escrow funds moved")
+    expect(plain.presentation.main).not.toContain("No funds moved")
+    expect(plain.presentation.main).not.toMatch(/Nothing was sent/)
     expect(plain.presentation.link?.href).toBe(relayerTxUrl(txHash))
   })
 })
@@ -535,7 +572,7 @@ describe("relayer response copy", () => {
     {
       status: 409,
       body: { ok: false, error: "live_submit_blocked", reason: "live_submit_off", txHash: null },
-      main: "The claim relayer is not accepting live submissions right now. Nothing was sent.",
+      main: "The claim relayer isn't accepting live submissions right now. Nothing was sent.",
       detail: "Details: 409 live_submit_blocked",
     },
     {

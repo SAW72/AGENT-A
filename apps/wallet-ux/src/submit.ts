@@ -69,15 +69,54 @@ export function assertSubmitTarget(to: Address, allowed: readonly Address[]): vo
 
 export function submitSenderNote(functionName: string): string {
   if (functionName === "createEscrow") {
-    return "createEscrow is sent by the connected wallet. It succeeds only when that wallet is the payer's Vault operator. This app does not treat the funding relayer as that operator."
+    return "The connected wallet sends this new claim. It goes through only when that wallet is allowed to fund claims for the payer."
   }
   if (functionName === "dispute") {
-    return "dispute() must be sent by the payer or the payee. The connected wallet is the sender."
+    return "The payer or the payee has to send this. The connected wallet is the sender."
   }
   if (functionName === "openDispute") {
-    return "openDispute is sent to the Base Sepolia dispute panel by the connected wallet."
+    return "The connected wallet sends this dispute to the panel on Base Sepolia."
   }
-  return "release and refund are permissionless. The connected wallet sends this transaction on Base Sepolia."
+  return "Anyone can send a payout or a refund. The connected wallet sends this on Base Sepolia."
+}
+
+export function previewCardCopy(functionName: string, relayerConfigured: boolean): string {
+  const lead =
+    functionName === "createEscrow"
+      ? "This prepares a new claim."
+      : functionName === "release"
+        ? "This prepares a payout of a claim."
+        : functionName === "refund"
+          ? "This prepares a refund of a claim."
+          : functionName === "dispute"
+            ? "This prepares linking a dispute to a claim."
+            : functionName === "openDispute"
+              ? "This prepares opening a dispute."
+              : "This prepares a transaction."
+  const relayer =
+    relayerConfigured && functionName !== "openDispute"
+      ? " Escrow steps can also be sent through the claim relayer on Base Sepolia."
+      : ""
+  return `${lead} Submit sends it from the connected wallet on Base Sepolia only.${relayer}`
+}
+
+export const FORM_ERRORS = {
+  createIds: "Enter the claim identifier and both bot identifiers before creating a claim.",
+  payee: "Enter the payee wallet address.",
+  valueFormat: "Enter an amount of ETH, such as 0.01.",
+  valueZero: "Enter an amount greater than zero. Nothing was sent.",
+  releaseId: "Enter the claim identifier before releasing this claim.",
+  refundId: "Enter the claim identifier before refunding this claim.",
+  openIds: "Enter the dispute identifier and the claim identifier before opening a dispute.",
+  openReason: "Enter a reason before opening a dispute.",
+  disputeClaim: "Enter the claim identifier before opening a dispute.",
+  disputeId: "Enter the dispute identifier before opening a dispute.",
+  denylistHash: "Enter the identifier before looking it up.",
+  denylistCheck: "Enter the weight, behavior, and prompt identifiers before checking the deny list.",
+} as const
+
+export function durationValidationMessage(maxSeconds: number): string {
+  return `Enter a whole number of seconds from 1 through ${maxSeconds}, which is 30 days.`
 }
 
 export function submitControl(decision: SubmitDecision, pending: boolean): {
