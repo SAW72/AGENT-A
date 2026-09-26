@@ -1,7 +1,7 @@
 {
-  "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2.1 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
-  "config_version": "sepolia-draft-0",
-  "rule_version": "design-v2.1",
+  "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2.2 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
+  "config_version": "sepolia-draft-1",
+  "rule_version": "design-v2.2",
   "product": "the product",
   "chain": {
     "name": "Base Sepolia",
@@ -54,7 +54,7 @@
     "O4_payee": { "value": 2, "status": "GUESS" },
     "O5": { "value": 0, "status": "GUESS" },
     "A1_per_vote": { "value": 3, "status": "GUESS" },
-    "A2_match_bonus": { "value": 2, "status": "GUESS" }
+    "A2_match_bonus": { "value": 0, "status": "GUESS", "note": "Revisit only if commit-reveal voting is added on-chain." }
   },
   "floors": {
     "_guess": true,
@@ -69,13 +69,53 @@
     "escrows_per_wallet_per_day": { "value": 5, "counts": ["O2", "O3"], "status": "GUESS" },
     "o3_per_wallet_per_day": { "value": 1, "status": "GUESS" },
     "o4_per_wallet_per_day": { "value": 1, "status": "GUESS" },
-    "pair_per_day": { "value": 2, "status": "GUESS" },
-    "pair_lifetime": { "value": 10, "status": "GUESS" },
+    "pair_per_day": { "value": 2, "applies_to": ["O2", "O3", "O4"], "status": "GUESS" },
+    "pair_lifetime": { "value": 10, "applies_to": ["O2", "O3", "O4"], "status": "GUESS" },
     "usage_points_per_wallet_per_season": { "value": 500, "status": "GUESS" },
     "arbitrator_points_per_day": { "value": 30, "status": "GUESS" },
     "decay": { "value": "none", "status": "GUESS" },
-    "day_boundary": { "value": "UTC, by block timestamp", "status": "PROPOSED, not defined in design v2.1" },
-    "season": { "value": null, "status": "OPEN, not defined in design v2.1" }
+    "day_boundary": { "value": "UTC day by block_timestamp", "order": ["block_number", "log_index"] },
+    "season_length_days": { "value": 90, "status": "GUESS" },
+    "season_start_block": { "value": null, "note": "Set at go-live after Spencer's GO." }
+  },
+  "gates": {
+    "o1_tier_gate": {
+      "enabled": true,
+      "min_tier": { "value": 3, "name": "Financial", "status": "GUESS" },
+      "note": "On by default. O1 credits only if the Registered tier is >= min_tier. Spencer can turn this off."
+    }
+  },
+  "excluded_addresses": {
+    "usage_points": { "value": 0, "status": "GUESS" },
+    "note": "These addresses earn 0 usage points, including when one is a bot operator or the payer or payee named on EscrowCreated. Parties still come from EscrowCreated, never tx.from.",
+    "entries": [
+      {
+        "role": "claim_relayer",
+        "address": null,
+        "note": "TBD. Placeholder until the claim relayer address is pinned."
+      },
+      {
+        "role": "CORE_TIMELOCK",
+        "address": "0x10CC9474b45625ADfd05C209f2518023484878D9",
+        "note": "EOA with EIP-7702 delegation, not a timelock contract."
+      },
+      {
+        "role": "escrow",
+        "address": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c"
+      },
+      {
+        "role": "dispute_panel",
+        "address": "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb"
+      },
+      {
+        "role": "vault",
+        "address": "0x1463D664fA467FBCDA4B05443434494f05e565bc"
+      },
+      {
+        "role": "denylist",
+        "address": "0xeE76876bECcFc1B58fC06fF4E654a517d784B224"
+      }
+    ]
   },
   "flags": {
     "_guess": true,

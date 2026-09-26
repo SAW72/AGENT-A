@@ -1,7 +1,7 @@
 # Base Sepolia reputation indexer spec
 
 Status: DRAFT spec, docs only. Build and staging only. No indexer code, no deploy, no transactions.
-Rules follow the Tokenomics design note v2.1 (2026-09-26). Every point value, floor, and cap is a Tokenomics **GUESS** and is loaded from [config/reputation/sepolia.json](../../config/reputation/sepolia.json), never hard-coded. Event details: [EVENT_MAP.md](./EVENT_MAP.md).
+Rules follow the Tokenomics design note v2.2 (2026-09-26). Where v2.2 section 12 conflicts with v2.1, v2.2 wins. Every point value, floor, and cap is a Tokenomics **GUESS** and is loaded from [config/reputation/sepolia.json](../../config/reputation/sepolia.json), never hard-coded. Event details: [EVENT_MAP.md](./EVENT_MAP.md).
 
 Gate: do not merge or run against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.
 
@@ -17,7 +17,7 @@ The two ledgers are never summed, in storage, API, or UI. Points are off-chain, 
 ## 2. Inputs
 
 - chainId `84532` only. Refuse to start (and refuse any RPC whose `eth_chainId` is not `0x14a34`) on any other chain, explicitly including `1` and `8453`.
-- Addresses and start blocks come from config (`contracts.*.address`, `contracts.*.start_block`). Usage and arbitrator outcomes read only Escrow, DisputePanel and Vault logs. Denylist logs are read for enforcer signals only and never create points.
+- Addresses and start blocks come from config (`contracts.*.address`, `contracts.*.start_block`). Usage and arbitrator points are earned only from Escrow, DisputePanel, and Vault logs on chainId `84532`. Denylist logs and the `Vault.bots()` view are allowed for enforcer signals only, at 0 points, and only from the pinned addresses in config. They are never an earning source.
 - Register every topic0 listed in EVENT_MAP.md, including **both** shapes of Escrow `VaultUpdated` and `DisputePanelUpdated` (1-field live, 4-field `main`). Decode by `(address, topic0)`. Unknown topic0 values are logged and skipped, never fatal.
 - Block header timestamps (`eth_getBlockByNumber`) are the only time source. Never use wall-clock time or `expiresAt` alone for "created at".
 
@@ -30,7 +30,7 @@ The two ledgers are never summed, in storage, API, or UI. Points are off-chain, 
 
 ## 4. Finality and reorgs
 
-- An entry is `provisional` when all of its source logs are at or below the `safe` block, and becomes `final` when all of its source logs are at or below the `finalized` block. (Design v2.1 cites Builder's measurement of about 21 minutes from latest to `finalized`; not independently verified.)
+- An entry is `provisional` when all of its source logs are at or below the `safe` block, and becomes `final` when all of its source logs are at or below the `finalized` block. (Design v2.2 cites Builder's measurement of about 21 minutes from latest to `finalized`; not independently verified.)
 - On each pass, re-read the canonical block hash for every stored block between `final_cursor` and `safe_cursor`. If a stored `block_hash` is no longer canonical: drop that block's raw logs, set every `provisional` entry derived from them to `cancelled` with `cancel_reason = "reorg"`, rewind `safe_cursor` to the fork point, and rescan. Re-derived entries get the same semantic `entry_id` and are re-inserted as `provisional`.
 - `final` entries are never rewritten by the indexer. Only an `ADJ` entry can change them.
 
@@ -46,19 +46,21 @@ The two ledgers are never summed, in storage, API, or UI. Points are off-chain, 
 
 ## 6. Derived state (rebuilt from events)
 
-- **Escrow record** per `escrowId`: from `EscrowCreated` (payer, payee, payerBotId, payeeBotId, amount, expiresAt, create block timestamp), plus optional `EscrowDisputed(disputeId)` and a terminal `EscrowReleased` or `EscrowRefunded` with its block timestamp. Ordering is by `(block_number, log_index)`.
-- **Dispute record** per `disputeId`: `DisputeOpened(subjectHash, challenger)`, up to 3 `VoteCast(voter, support)`, optional `DisputeResolved(upheld)`.
+- **Escrow record** per `escrowId`: from `EscrowCreated` (payer, payee, payerBotId, payeeBotId, amount, expiresAt, create block number, create block timestamp), plus optional `EscrowDisputed(disputeId)` and a terminal `EscrowReleased` or `EscrowRefunded` with its block timestamp. Ordering is by `(block_number, log_index)`.
+- **Dispute record** per `disputeId`: `DisputeOpened(subjectHash, challenger)` including its block number, up to 3 `VoteCast(voter, support)`, optional `DisputeResolved(upheld)`.
 - **Operator at block**: for each botId, the ordered list of `OperatorSet(botId, account)` events. The operator of botId at block B is the `account` of the last `OperatorSet` at or before B (by block, then logIndex). Every operator write emits `OperatorSet`, so this is complete. An `eth_call Vault.operator(botId)` at block B is a cross-check only.
-- **Fingerprint to botId map** (denylist signals): botIds are enumerable from `Registered`. For each new botId, call `Vault.bots(botId)` once (any block after registration; the hashes are fixed) and index `weightHash`, `behaviorSig`, `promptHash` -> botId. A `Listed(id, bucket, ...)` whose `id` matches maps to that botId, then to its operator via operator-at-block. This is an enforcer signal with 0 points.
+- **Fingerprint to botId map** (denylist signals): botIds are enumerable from `Registered`. For each new botId, call `Vault.bots(botId)` once (any block after registration; the hashes are fixed) and index `weightHash`, `behaviorSig`, `promptHash` -> botId. A `Listed(id, bucket, ...)` whose `id` matches maps to that botId, then to its operator via operator-at-block. This read, and Denylist logs, are enforcer signals at 0 points from pinned addresses on chainId `84532`. They are never an earning source.
 
 ## 7. Usage rules (ledger `agent-bv-sepolia-reputation`)
 
-Parties for O2, O3, O4 are always taken from `EscrowCreated.payer` / `.payee`, never from `tx.from` or `msg.sender`, because `release` and `refund` are permissionless.
+Parties for O2, O3, and O4 are always taken from `EscrowCreated.payer` / `.payee`, never from `tx.from` or `msg.sender`, because `release` and `refund` are permissionless. An address on `excluded_addresses` earns 0 usage points, including when it is the operator, the payer, or the payee.
 
 ### O1. Bot onboarded (+`points.O1` to the operator; GUESS 10)
 - Trigger: the **first** `OperatorSet` ever seen for a botId (the 6-arg `register` emits it in the same tx after `Registered`; the 5-arg `register` sets no operator, so the credit waits for a later `setOperator`).
-- Credit `wallet = OperatorSet.account`, `bot_id = botId`.
+- Credit `wallet = OperatorSet.account`, `bot_id = botId`, unless that wallet is on `excluded_addresses` (then 0).
 - Every later `OperatorSet` for the same botId (rotation) earns 0.
+- **Active gate, evaluated when the O1 entry finalizes.** Credit only if there is no `Burned` event for that botId at or before the block of this first `OperatorSet`. A burn at or before that block earns 0. The check waits for finality so a reorg of `Burned` or `OperatorSet` cannot lock the answer early.
+- **Tier gate** (`gates.o1_tier_gate`, on by default). When enabled, credit only if the bot's `Registered` tier is at least `min_tier` (GUESS: Financial = 3). Spencer can turn the flag off. The tier number is a GUESS.
 
 ### O2. Escrow completed without dispute (+`points.O2_payer` / +`points.O2_payee`; GUESS 5 / 5)
 Join `EscrowCreated` -> `EscrowReleased` on `escrowId`. Credit only if all hold:
@@ -71,46 +73,50 @@ Join `EscrowCreated` -> `EscrowRefunded` on `escrowId`. Credit only if all hold:
 - the escrow was **never** disputed (no `EscrowDisputed` for that escrowId). `EscrowRefunded` does not say which path produced it, so any ever-disputed escrow is excluded;
 - set duration `EscrowCreated.expiresAt - create_block_timestamp >= floors.o3_min_set_duration_seconds` (GUESS 3600). The contract allows 1 s;
 - `amount >= floors.min_amount_wei`;
-- at most `caps.o3_per_wallet_per_day` (1) per payer wallet per day, and it counts toward `caps.escrows_per_wallet_per_day` (5).
+- at most `caps.o3_per_wallet_per_day` (GUESS 1) per payer wallet per day, and it counts toward `caps.escrows_per_wallet_per_day` (GUESS 5).
 
 ### O4. Dispute path completed (+`points.O4_payer` / +`points.O4_payee`; GUESS 2 / 2)
-Credit when **all three** exist, in **any order** of arrival:
+Credit when **all three** exist:
 1. `EscrowDisputed(escrowId, disputeId)`;
 2. `DisputeResolved(disputeId, ...)` for that same disputeId;
 3. a terminal `EscrowReleased` or `EscrowRefunded` for that escrowId.
 
-Implementation: evaluate O4 each time any of the three events for the pair is ingested, and emit the entry when the last one lands. The chain allows `DisputeResolved` **before** `EscrowDisputed` (`dispute()` only needs the panel dispute to exist). The disputeId-to-escrowId join can also be cross-checked through `DisputeOpened.subjectHash == escrowId`.
-- A disputed escrow refunded through the expiry backstop with no `DisputeResolved` earns 0.
-- No flagger-specific credit; nothing depends on `tx.from`.
-- At most `caps.o4_per_wallet_per_day` (1) per wallet per day.
+**Arrival order** applies only to `EscrowDisputed` versus `DisputeResolved`. Either may land first. `dispute()` only needs the panel dispute to exist, so `DisputeResolved` can precede `EscrowDisputed`. Evaluate O4 each time any of the three events for the pair is ingested, and emit the entry when the last one lands. The disputeId-to-escrowId join can also be cross-checked through `DisputeOpened.subjectHash == escrowId`.
 
-### O5. Standalone dispute (0 points; flag record only)
-- A `DisputeOpened` whose `subjectHash` is not an escrow, or whose subject escrow is no longer Open without ever having been linked through `EscrowDisputed`.
-- Track `DisputeOpened.challenger`. If one challenger has `>= flags.o5_standalone_disputes_threshold` (GUESS 3) standalone disputes within `flags.o5_window_days` (GUESS 7), raise a flag to the enforcer hook (section 11). No points change.
+**Block order is not free.** O4 counts only when the `EscrowCreated` block number is strictly less than the `DisputeOpened` block number for that disputeId. If `DisputeOpened` is missing, or the escrow was created in the same block or later, both parties get 0 and the enforcer hook receives `DISPUTE_PREDATES_ESCROW` (section 11). That signal does not auto-cancel other entries.
+
+O4 pays both parties, including the side the panel ruled against. That is intended: the points reward finishing the dispute process, not winning it. Paying only the winner would give a counterparty a reason to avoid an honest dispute. The payout is symmetric, capped at `caps.o4_per_wallet_per_day` (GUESS 1) per wallet per day, and it counts toward the same-pair caps (`caps.pair_per_day` GUESS 2, `caps.pair_lifetime` GUESS 10).
+- A disputed escrow refunded through the expiry backstop with no `DisputeResolved` earns 0.
+- No flagger-specific credit. Parties come from `EscrowCreated`, never from `tx.from`. An excluded address still earns 0.
+
+### O5. Standalone dispute (0 points; stays provisional)
+- A `DisputeOpened` whose `subjectHash` is not an escrow, or whose subject escrow is no longer Open without ever having been linked through `EscrowDisputed`. Points stay 0.
+- The classification stays provisional: escrowIds are caller-chosen, so a later escrow can still be created and linked. If `EscrowDisputed` later links that disputeId to an escrow, drop the O5 treatment and re-evaluate under O4, including the block-order rule above. A link that fails the block-order rule pays 0 and raises `DISPUTE_PREDATES_ESCROW`.
+- Track `DisputeOpened.challenger`. If one challenger has `>= flags.o5_standalone_disputes_threshold` (GUESS 3) standalone disputes within `flags.o5_window_days` (GUESS 7), raise `O5_REPEAT` to the enforcer hook for review only. The flag never auto-cancels points.
 
 ## 8. Arbitrator rules (ledger `agent-bv-sepolia-arbitrator-rep`)
 
-Only disputes tied to an escrow through `EscrowDisputed` count, in any order. Every resolved dispute has exactly 3 votes.
+Only disputes tied to an escrow through `EscrowDisputed` count. `EscrowDisputed` and `DisputeResolved` may arrive in either order. Every resolved dispute has exactly 3 votes. A1 and A2 use the same block-order rule as O4: the `EscrowCreated` block number must be strictly less than the `DisputeOpened` block number for that disputeId. Otherwise every voter gets 0 and the enforcer hook receives `DISPUTE_PREDATES_ESCROW`.
 
-- **A1** (+`points.A1_per_vote`; GUESS 3): a `VoteCast` on an escrow-linked dispute that resolved.
-- **A2** (+`points.A2_match_bonus`; GUESS 2): additionally when `VoteCast.support == DisputeResolved.upheld`.
-- **Per-transaction scoring.** Score after processing all logs of a transaction, not at the moment `DisputeResolved` is seen: the resolving vote's tx emits `DisputeResolved` at logIndex n and its own `VoteCast` at n+1. When the dispute becomes resolved, score all 3 votes (earlier txs plus the resolving tx). If the `EscrowDisputed` link arrives in a later tx, score then (any order).
-- Cap: `caps.arbitrator_points_per_day` (30) per arbitrator per day. Manual enforcer cancel (ADJ) for collusion or missed duties.
+- **A1** (+`points.A1_per_vote`; GUESS 3): a `VoteCast` on an escrow-linked dispute that resolved and passes the block-order rule.
+- **A2** (+`points.A2_match_bonus`; GUESS 0): additionally when `VoteCast.support == DisputeResolved.upheld`. The default is 0 because votes are public as they land, so a match bonus rewards copying earlier voters. Revisit A2 only if commit-reveal voting is added on-chain.
+- An arbitrator who is `EscrowCreated.payer` or `EscrowCreated.payee` of the linked escrow gets 0 A1 and 0 A2 on that dispute.
+- **Per-transaction scoring.** Score after processing all logs of a transaction, not at the moment `DisputeResolved` is seen: the resolving vote's tx emits `DisputeResolved` at logIndex n and its own `VoteCast` at n+1. When the dispute becomes resolved, score all 3 votes (earlier txs plus the resolving tx). If the `EscrowDisputed` link arrives in a later tx, score then. Arrival order does not relax the block-order rule.
+- Cap: `caps.arbitrator_points_per_day` (GUESS 30) per arbitrator per day. Manual enforcer cancel (ADJ) for collusion or missed duties.
 - This track pays no BVT, no USD, and nothing from the InsuranceFund. AI can assist or co-seat, but humans stay in Gate B.
 
 ## 9. Caps and anti-gaming (checklist #12, all GUESS, config defaults)
 
-Applied in block order (block_number, log_index) at credit time. Proposed (not in design v2.1): an entry over a cap is stored with `points = 0` and a `capped` note so the history stays explainable.
-- Usage points: 20 per wallet per day, 20 per botId per day.
-- At most 5 counted escrows per wallet per day (O2 plus O3).
-- Same payer/payee pair: at most 2 per day, 10 lifetime.
-- 500 usage points per wallet per season.
+Applied in `(block_number, log_index)` order at credit time. The day is the UTC day of `block_timestamp` (`caps.day_boundary`). Spec proposal (not stated in design v2.2): an entry over a cap is stored with `points = 0` and a `capped` note so the history stays explainable.
+- Usage points: 20 per wallet per day, 20 per botId per day (GUESS).
+- At most 5 counted escrows per wallet per day (O2 plus O3) (GUESS).
+- Same payer/payee pair: at most 2 per day and 10 lifetime (GUESS). These pair caps apply to O4 as well as O2 and O3.
+- 500 usage points per wallet per season (GUESS). The season is `caps.season_length_days` (GUESS 90). Season 1 starts at `caps.season_start_block`, which stays null until go-live after Spencer's GO.
 - No decay in v1.
-- Arbitrator ledger: 30 per arbitrator per day.
-- Slashing: the enforcer cancels points with manual ADJ entries until #9 names an owner and a written abuse policy.
-- "Day" and "season" boundaries are config values (`caps.day_boundary`, `caps.season`); design v2.1 does not define them yet.
+- Arbitrator ledger: 30 per arbitrator per day (GUESS).
+- Slashing: the enforcer cancels points with manual ADJ entries until #9 names an owner and a written abuse policy. O5 repeat flags and `DISPUTE_PREDATES_ESCROW` go to review only and never auto-cancel.
 
-## 10. Ledger entry schema (matches design v2.1 section 6)
+## 10. Ledger entry schema (matches design v2.2 section 6)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -142,7 +148,7 @@ interface EligibilityScreen {
 
 // #9 Sybil / abuse enforcer (OPEN: Spencer names owner, Lawyer reviews policy)
 interface AbuseEnforcer {
-  flag(signal: { kind: "O5_REPEAT" | "DENYLIST_LISTED" | "BOT_BURNED" | "PAIR_CAP" | "OTHER"; wallet?: Address; botId?: Bytes32; refs: string[] }): void
+  flag(signal: { kind: "O5_REPEAT" | "DISPUTE_PREDATES_ESCROW" | "DENYLIST_LISTED" | "BOT_BURNED" | "PAIR_CAP" | "OTHER"; wallet?: Address; botId?: Bytes32; refs: string[] }): void
   cancel(entryId: string, reason: string, by: string): AdjEntry   // writes an ADJ entry
 }
 
@@ -171,17 +177,27 @@ interface CapPolicy {
 
 ## 13. Known limits
 
-- **Flagger identity is not derivable.** `EscrowDisputed` does not log `msg.sender`, and `tx.from` is wrong for smart accounts, EIP-7702 accounts, batched calls, and the claim relayer. Not needed, because flagging is not penalized or credited in design v2.1. Penalizing it later would need `address indexed flaggedBy` on `EscrowDisputed`, which means an Escrow redeploy.
+- **Flagger identity is not derivable.** `EscrowDisputed` does not log `msg.sender`, and `tx.from` is wrong for smart accounts, EIP-7702 accounts, batched calls, and the claim relayer. Not needed, because flagging is not penalized or credited in design v2.2. Penalizing it later would need `address indexed flaggedBy` on `EscrowDisputed`, which means an Escrow redeploy.
 - **No attestation / challenge-window primitive exists on-chain.** "Undisputed completion" is detected positively as `EscrowReleased` with no `EscrowDisputed`, never inferred from elapsed time or silence. An attestation with a challenge window would need a new contract.
+- **Immediate release after a pre-resolved upheld dispute** is a contract-level fund-flow question raised with the Smart Contract Auditor. An upheld dispute can let a party move Open to Disputed to Released without waiting for expiry. The indexer does not treat that as a points question: O4, A1, and A2 still require `EscrowCreated` block < `DisputeOpened` block, and a failure there pays 0. The fund flow itself is not solved here.
 - No business events exist live yet, so event ordering is verified from source and bytecode only.
 
-## 14. Open questions (not resolved by this spec)
+## 14. Resolved in design v2.2
 
-These are flagged for Tokenomics / Spencer, not decided here:
-1. Design v2.1 section 6 says to read "only from the three contract addresses" (Vault, Escrow, DisputePanel). This spec also reads Denylist logs and calls `Vault.bots()` for enforcer signals only, with 0 points. Confirm that is acceptable.
-2. O5 "subject is not an escrow" is only knowable as of now: escrowIds are caller-chosen, so a dispute can be opened on an escrowId that is created later and then linked. O5 classification (and the repeat-use flag) should stay provisional while the subject could still become an Open escrow.
-3. O4 any-order: a dispute can be resolved before it is linked. An upheld pre-resolved dispute lets a party move Open -> Disputed -> Released immediately (skipping expiry and re-verification); an unwind lets Disputed -> Refunded happen before expiry. Needs 3 arbitrator votes, so it is not free, but it is a collusion path worth a cap review.
-4. O1 credits the first `OperatorSet` even if the bot was `Burned` first (`setOperator` checks registration, not `active`), and regardless of tier. Decide whether to gate on `active` and tier >= Financial.
-5. Relayer-operated bots: if the claim relayer wallet is a bot's Vault operator, `EscrowCreated.payer` is the relayer and it would receive the points. Decide eligibility.
-6. Day boundary (UTC by block timestamp is the proposed default) and season length are not defined in design v2.1.
-7. O4 pays both parties regardless of ruling, including the party the panel ruled against; A2 has a herding incentive because votes are public as they land. Both are design choices to confirm when caps lock.
+Design note v2.2 section 12 closes the questions that were open here. The rules in sections 2 and 6 through 9 are the normative text. Spencer has not given GO. Every number below stays a GUESS until checklist #12 locks.
+
+| # | Ruling |
+|---|---|
+| 1 | Denylist logs and `Vault.bots()` are allowed for enforcer signals only, at 0 points, from pinned addresses on chainId `84532`. They are never an earning source. |
+| 2 | O5 stays provisional at 0 points. A later escrow link is re-evaluated under O4 and the block-order rule. The 3-in-7-days flag is review only and never auto-cancels. |
+| 3 | O4, A1, and A2 require `EscrowCreated` block strictly before `DisputeOpened` block. Otherwise both parties and all voters get 0 and the enforcer receives `DISPUTE_PREDATES_ESCROW`. "Any order" covers only `EscrowDisputed` versus `DisputeResolved` arrival. Same-pair caps (GUESS 2/day, 10 lifetime) apply to O4. Immediate release after a pre-resolved upheld dispute is a fund-flow question for the Smart Contract Auditor, not an indexer rule. |
+| 4 | O1 credits only if the bot is active: no `Burned` for that botId at or before the first `OperatorSet` block, checked when the entry finalizes. The tier gate is on by default at Financial (3), GUESS, and can be turned off. |
+| 5 | `excluded_addresses` earn 0 usage points. The claim relayer address is null until pinned. `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9` is an EOA with EIP-7702 delegation, not a timelock contract. The four contract addresses are excluded too. Parties come from `EscrowCreated`, never `tx.from`. An arbitrator who is payer or payee of the linked escrow gets 0 A1 and 0 A2 on that dispute. |
+| 6 | The day is the UTC day of `block_timestamp`. Caps apply in `(block_number, log_index)` order. The season is 90 days (GUESS), starting at a config block that stays null until go-live after Spencer's GO. The season cap stays 500 (GUESS). |
+| 7 | O4 paying both parties, including the side ruled against, is intended: it rewards finishing the process, and it is symmetric and capped. A2 defaults to 0 (GUESS). A1 stays +3 (GUESS). Revisit A2 only if commit-reveal voting is added on-chain. |
+
+### Still open
+
+- Spencer's GO before merge or any live use. Checklist #7, #9, #11, and #12 are still open. Numeric caps, floors, and points stay GUESS until #12 locks. #9 has no named owner yet, so enforcer flags do not auto-cancel.
+- The claim relayer entry on `excluded_addresses` is null until that address is pinned.
+- Whether the EIP-7702 delegation on `CORE_TIMELOCK` is the intended governance setup is a question for Spencer and BOB. The indexer only excludes the address.
