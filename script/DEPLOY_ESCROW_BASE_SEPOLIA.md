@@ -46,7 +46,7 @@ Liability `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` and InsuranceFund `0x19fc
 
 ## Escrow simulate env
 
-`script/DeployBotAttestationEscrow.s.sol` reads these. All four addresses are required and must be the live rows above. The script reverts on any other Denylist, Vault, panel, or `CORE_TIMELOCK`. It deploys only `BotAttestationEscrow`. Dry-run does not read a private key. `CORE_TIMELOCK` must not equal the deployer. Never commit `PRIVATE_KEY`.
+`script/DeployBotAttestationEscrow.s.sol` reads these. All four addresses are required and must be the live rows above. The script reverts on any other Denylist, Vault, panel, or `CORE_TIMELOCK`. It deploys only `BotAttestationEscrow`. The deployer is `msg.sender`, which `forge` sets from `--sender` on a dry run and from `--account` plus `--sender` on a broadcast. The script does not read a signing key from the environment. `CORE_TIMELOCK` must not equal the deployer.
 
 ```bash
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
@@ -54,13 +54,10 @@ export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
 export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
 export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
-# PRIVATE_KEY is Spencer's broadcast only. It is a deployer key, not CORE_TIMELOCK.
-# Do not paste it into a PR, a log, or this file. Omit it for simulate.
 ```
 
 | Variable | Meaning |
 | --- | --- |
-| `PRIVATE_KEY` | Deployer key for Spencer's **broadcast** only. Omit it for simulate. Must not be `CORE_TIMELOCK`. |
 | `DENYLIST` | Live Denylist above. The script does not redeploy it. |
 | `VAULT` | Live Vault above. The script does not redeploy it. |
 | `DISPUTE_PANEL` | Live DisputePanel above. The script does not redeploy it. |
@@ -72,7 +69,6 @@ export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 Dry-run sender is `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` (`SIMULATE_SENDER`), the public burn EOA. No private key. No `--broadcast`. Forge checks that sender's real balance while estimating gas, and this address already holds dust on Base Sepolia. It is not the deployer Spencer will use, and it is not `CORE_TIMELOCK`.
 
 ```bash
-unset PRIVATE_KEY
 forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
   --rpc-url https://sepolia.base.org \
   --sender 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
@@ -88,9 +84,32 @@ Spencer gave a conditional GO for an **escrow-only** redeploy on Base Sepolia (c
 
 The script deploys one `BotAttestationEscrow` and calls `transferOwnership(CORE_TIMELOCK)`. Constructor arguments are the live Denylist, Vault, DisputePanel, and `CORE_TIMELOCK`. It does not deploy a new Denylist, Vault, or panel. `acceptOwnership` is a second transaction from `CORE_TIMELOCK`, not from the deployer, and not inside the deploy script.
 
+### Keystore (one time, on the human machine)
+
+Spencer's signing uses a Foundry keystore. No key on the command line, and no signing key in the environment. `cast wallet import --interactive` prompts for the key and stores it in the local keystore.
+
+```bash
+cast wallet import agentbv-deployer --interactive
+cast wallet address --account agentbv-deployer
+```
+
+Import the `CORE_TIMELOCK` account the same way when that key is available on this machine:
+
+```bash
+cast wallet import core-timelock --interactive
+```
+
+If that account lives in a browser wallet, skip the `core-timelock` import. After the source is verified, `acceptOwnership()` can be sent from Basescan's Write Contract tab instead.
+
+`<DEPLOYER_ADDRESS>` below is the address printed by `cast wallet address --account agentbv-deployer`. It must not be `CORE_TIMELOCK`.
+
 ### Broadcast (human only, after Auditor PASS and Verifier APPROVE)
 
-Signer placeholder. Never put a real key in this file, a PR, or a log. The key's address must not be `CORE_TIMELOCK`.
+Check out main at the squash-merge commit of PR #30 so the on-chain code matches main:
+
+```bash
+git checkout <MAIN_MERGE_SHA>
+```
 
 ```bash
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
@@ -98,39 +117,39 @@ export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
 export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
 export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
-export PRIVATE_KEY="<DEPLOYER_PRIVATE_KEY>"
 
 forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
-  --broadcast \
-  --private-key "$PRIVATE_KEY"
+  --rpc-url https://sepolia.base.org \
+  --account agentbv-deployer \
+  --sender <DEPLOYER_ADDRESS> \
+  --broadcast
 ```
 
-Record the new address as `NEW_ESCROW` and the create transaction as `DEPLOY_TX` from the broadcast receipt. Leave the book address `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` in place until the wiring PR.
+Record the new address as `NEW_ESCROW` and the create transaction as `DEPLOY_TX` from the broadcast receipt. Leave the book address `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` in place until the wiring PR. Broadcast from Foundry's default sender `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38` or from the simulate burn address reverts `DeployEscrow: pass --account and --sender`.
 
 ### acceptOwnership (CORE_TIMELOCK, not the deployer)
 
-`CORE_TIMELOCK` is the pending owner. The signer placeholder is that account's key, not the deployer key.
+`CORE_TIMELOCK` is the pending owner.
 
 ```bash
 export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
-export PRIVATE_KEY="<CORE_TIMELOCK_PRIVATE_KEY>"
 
-cast send "$NEW_ESCROW" "acceptOwnership()" \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
-  --private-key "$PRIVATE_KEY"
+cast send "$NEW_ESCROW" "acceptOwnership()" --rpc-url https://sepolia.base.org --account core-timelock
 ```
 
 Before this call, `owner()` is the deployer and `pendingOwner()` is `CORE_TIMELOCK`. After it, `owner()` is `0x10CC9474b45625ADfd05C209f2518023484878D9` and `pendingOwner()` is the zero address.
 
 ### Verify (Sourcify, then Basescan via Etherscan v2)
 
-Compiler settings match `foundry.toml`: solc `0.8.20`, optimizer on, 200 runs, `cancun`. `ETHERSCAN_API_KEY` is a placeholder. Never commit it.
+Compiler settings match `foundry.toml`: solc `0.8.20`, optimizer on, 200 runs, `cancun`. Basescan verification reads `ETHERSCAN_API_KEY` from the environment. Never commit it. Set it in the shell without echoing it:
+
+```bash
+read -s ETHERSCAN_API_KEY && export ETHERSCAN_API_KEY
+```
 
 ```bash
 export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
 export DEPLOY_TX="<DEPLOY_TX_HASH>"
-export ETHERSCAN_API_KEY="<ETHERSCAN_API_KEY>"
 CTOR_ARGS="$(cast abi-encode "constructor(address,address,address,address)" \
   0xeE76876bECcFc1B58fC06fF4E654a517d784B224 \
   0x1463D664fA467FBCDA4B05443434494f05e565bc \
@@ -151,7 +170,6 @@ forge verify-contract \
   --chain 84532 \
   --verifier etherscan \
   --verifier-url "https://api.etherscan.io/v2/api?chainid=84532" \
-  --etherscan-api-key "$ETHERSCAN_API_KEY" \
   --compiler-version 0.8.20 \
   --num-of-optimizations 200 \
   --evm-version cancun \
@@ -206,7 +224,7 @@ The broadcast that created `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` already 
 
 Gate B is seated. `arbitratorCount` is 3. The three arbitrators and seat txs are in the live-address section above. `openDispute` reverts `panel not seated` if `arbitratorCount` drops below 3. The escrow deploy script does not appoint arbitrators. The ops scripts below call the live panel only. They do not deploy a new panel. Agents do not `--broadcast` them.
 
-Same broadcast rule as [`OpsDenylist`](OpsDenylist.s.sol) / [`OpsVault`](OpsVault.s.sol): dry-run `prank`s `CORE_TIMELOCK` and does not read `PRIVATE_KEY`. `--broadcast` and `--resume` revert with `OpsLive: PRIVATE_KEY is not the live owner; Spencer only` unless that key's address is `CORE_TIMELOCK`.
+Same broadcast rule as [`OpsDenylist`](OpsDenylist.s.sol) / [`OpsVault`](OpsVault.s.sol): dry-run `prank`s `CORE_TIMELOCK` and does not read a signing key. `--broadcast` and `--resume` revert unless the signer is `CORE_TIMELOCK`. Those ops scripts still use the older signing path. This escrow redeploy does not. The remaining runbook is [`OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md).
 
 The three live seats are already on the panel. The placeholders below are for a future add or remove. They are not the seated arbitrators. Replace them before any new panel op.
 
@@ -227,7 +245,6 @@ export ARBITRATOR_3=0x0000000000000000000000000000000000000A33
 | `CORE_TIMELOCK` | every panel op | Must be the live owner above, and must equal `owner()`. |
 | `ARBITRATOR` | add and remove | One address. |
 | `ARBITRATOR_1`, `ARBITRATOR_2`, `ARBITRATOR_3` | seat | Three distinct non-zero addresses. |
-| `PRIVATE_KEY` | Spencer `--broadcast` only | Must be the key for `CORE_TIMELOCK`. Omit it for simulate. |
 
 ### Simulate (not live)
 
@@ -282,15 +299,7 @@ cast calldata "setArbitrator(address,bool)" "$ARBITRATOR_1" true
 cast calldata "setArbitrator(address,bool)" "$ARBITRATOR_1" false
 ```
 
-Spencer send, only from the `CORE_TIMELOCK` key. Agents must not run this. `cast send` does not enforce the script's address book, so check `owner()` first.
-
-```bash
-cast send "$DISPUTE_PANEL" "setArbitrator(address,bool)" "$ARBITRATOR_1" true \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
-  --private-key "$PRIVATE_KEY"
-```
-
-Repeat for the second and third seats (`true`). A removal passes `false`. After three successful adds, `arbitratorCount` is at least 3 and `openDispute` can succeed. Dropping below 3 makes `openDispute` revert `panel not seated` again.
+A direct `cast send` of `setArbitrator` is not part of this escrow redeploy. Agents must not run it. The command still lives in [`OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md) and still uses the older signing path. Check `owner()` first: `cast send` does not enforce the script's address book. After three successful adds, `arbitratorCount` is at least 3 and `openDispute` can succeed. Dropping below 3 makes `openDispute` revert `panel not seated` again.
 
 ## Failure modes
 
@@ -306,13 +315,14 @@ Repeat for the second and third seats (`true`). A removal passes `false`. After 
 | `DeployEscrow: VAULT is not the live Base Sepolia Vault` | Env vault is not `0x1463D664fA467FBCDA4B05443434494f05e565bc` |
 | `DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel` | Env panel is not `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` |
 | `DeployEscrow: CORE_TIMELOCK is not the live owner` | Env timelock is not `0x10CC9474b45625ADfd05C209f2518023484878D9` |
+| `DeployEscrow: pass --account and --sender` | Escrow `--broadcast` from Foundry's default sender or from `SIMULATE_SENDER` |
 | `OpsPanel: DISPUTE_PANEL unset` / `ARBITRATOR unset` / `ARBITRATOR_1 unset` (and `_2`, `_3`) | Missing or zero panel-op env |
 | `OpsLive: CORE_TIMELOCK unset` | Panel op missing the timelock env |
 | `OpsPanel: DISPUTE_PANEL is not the live Base Sepolia DisputePanel` | Env panel is not the live address |
 | `OpsLive: CORE_TIMELOCK is not the live owner` | Env timelock is not the book address |
 | `OpsPanel: DisputePanel.owner is not CORE_TIMELOCK` | On-chain owner moved |
 | `OpsPanel: zero arbitrator` / `duplicate arbitrator` | Seat list |
-| `OpsLive: PRIVATE_KEY is not the live owner; Spencer only` | Panel `--broadcast` with any other key |
+| `OpsLive` signer is not the live owner | Panel `--broadcast` with any signer other than `CORE_TIMELOCK` |
 | `OpsLive: owner unset` | Empty owner passed into the helper |
 | `not owner` | `setArbitrator` from anyone except `owner()` |
 | `zero arbitrator` | Panel rejects `address(0)` if a call reaches it |

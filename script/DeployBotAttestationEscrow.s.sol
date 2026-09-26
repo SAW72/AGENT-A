@@ -16,7 +16,10 @@ import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
 /// Chainid guard: Base Sepolia (84532) only. Any other chain reverts. Mainnet is always refused.
 /// ETH Sepolia (11155111) is documented as a one-line switch — do not enable it
 /// here unless you intentionally change ALLOWED_CHAIN_ID.
-/// Dry-run uses `SIMULATE_SENDER` and does not read a private key.
+/// Dry-run keeps working with `--sender` set to `SIMULATE_SENDER` and no account.
+/// Broadcast uses a Foundry keystore: `forge` sets `msg.sender` from `--account`
+/// and `--sender`, and `run` calls `vm.startBroadcast()` with no key argument.
+/// The default Foundry sender and `SIMULATE_SENDER` revert on broadcast.
 /// Agents do not --broadcast. Spencer runs the broadcast command locally, after
 /// the Auditor re-audit passes and the Verifier approves.
 contract DeployBotAttestationEscrow is Script {
@@ -33,8 +36,12 @@ contract DeployBotAttestationEscrow is Script {
     /// @dev Dry-run sender only. Not a key and not CORE_TIMELOCK.
     ///      Forge checks this account's real balance while estimating gas. This is the
     ///      public burn EOA, which already holds dust on Base Sepolia. Spencer's
-    ///      broadcast uses a different deployer key.
+    ///      broadcast uses a different deployer account from the keystore.
     address public constant SIMULATE_SENDER = 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001;
+
+    /// @dev Foundry's sender when `--sender` / `--account` is omitted.
+    ///      `forge-std` `DEFAULT_SENDER`. Broadcast must not use it.
+    address public constant FOUNDRY_DEFAULT_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
     function requireAllowedChain() public view {
         if (block.chainid == ETH_MAINNET_CHAIN_ID) {
@@ -82,6 +89,18 @@ contract DeployBotAttestationEscrow is Script {
         return vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
     }
 
+    /// @notice Broadcast must name a keystore account and its address.
+    ///         The default Foundry sender and the dry-run burn address are refused.
+    ///         `run` calls this only when `broadcasting()` is true. `forge test` cannot
+    ///         enter `ScriptBroadcast`, so the unit test calls this function directly.
+    function requireBroadcastSender(
+        address deployer
+    ) public pure {
+        if (deployer == FOUNDRY_DEFAULT_SENDER || deployer == SIMULATE_SENDER) {
+            revert("DeployEscrow: pass --account and --sender");
+        }
+    }
+
     function readAddress(
         string memory key,
         string memory unsetErr
@@ -116,20 +135,15 @@ contract DeployBotAttestationEscrow is Script {
         requireDeps(denylist, vault, panel);
         requireLiveStack(denylist, vault, panel, timelock);
 
-        bool send = broadcasting();
-        address deployer;
-        if (send) {
-            uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-            deployer = vm.addr(deployerKey);
-            requireTimelock(deployer, timelock);
+        address deployer = msg.sender;
+        requireTimelock(deployer, timelock);
+        if (broadcasting()) {
+            requireBroadcastSender(deployer);
             console.log("BROADCAST Spencer-only");
-            vm.startBroadcast(deployerKey);
         } else {
-            deployer = SIMULATE_SENDER;
-            requireTimelock(deployer, timelock);
             console.log("SIMULATE; no transaction will be sent");
-            vm.startBroadcast(deployer);
         }
+        vm.startBroadcast();
 
         BotAttestationEscrow escrow = deploy(denylist, vault, panel, timelock);
         vm.stopBroadcast();
@@ -144,7 +158,7 @@ contract DeployBotAttestationEscrow is Script {
         console.log("owner", escrow.owner());
         console.log("pendingOwner", escrow.pendingOwner());
         console.log("Do not write this address into deployments/base-sepolia.json.");
-        console.log("Wiring is a separate PR after a human broadcast. Never commit PRIVATE_KEY.");
+        console.log("Wiring is a separate PR after a human broadcast.");
         console.log("Agents must not --broadcast.");
     }
 }

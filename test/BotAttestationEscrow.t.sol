@@ -1153,6 +1153,20 @@ contract DeployEscrowGuardTest is Test {
         deploy.requireLiveStack(denylist, vault, panel, other);
         assertEq(deploy.SIMULATE_SENDER(), 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001);
         assertTrue(deploy.SIMULATE_SENDER() != timelock);
+        assertEq(deploy.FOUNDRY_DEFAULT_SENDER(), 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
+    }
+
+    /// @dev `run` calls this only when `broadcasting()` is true. A Foundry unit test
+    ///      runs as `ForgeContext.Test`, so `vm.isContext(ScriptBroadcast)` stays false
+    ///      and `run()` cannot be driven into the broadcast branch.
+    function test_broadcastSenderRejectsDefaultAndSimulate() public {
+        address foundryDefault = deploy.FOUNDRY_DEFAULT_SENDER();
+        address simulateSender = deploy.SIMULATE_SENDER();
+        vm.expectRevert(bytes("DeployEscrow: pass --account and --sender"));
+        deploy.requireBroadcastSender(foundryDefault);
+        vm.expectRevert(bytes("DeployEscrow: pass --account and --sender"));
+        deploy.requireBroadcastSender(simulateSender);
+        deploy.requireBroadcastSender(address(0x5D46));
     }
 
     function test_deployWiresDepsAndHandsOffToTimelock() public {
