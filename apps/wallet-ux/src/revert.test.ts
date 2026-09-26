@@ -17,7 +17,9 @@ import { escrowAbi } from "./abi"
 import { ADDRESSES } from "./addresses"
 import { errorText, presentError } from "./format"
 import { ERROR_GLOSSARY } from "./preview"
-import { submitAfterPreflight } from "./preflight"
+import { CLAIM_RELAYER_WALLET, submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
+import { RELAYER_PLAIN_TEXT } from "./relayer"
+import { REVERT_FALLBACK_TEXT, WALLET_CANCEL_TEXT } from "./revert"
 
 const escrow = ADDRESSES.botAttestationEscrow
 if (!escrow) throw new Error("booked escrow missing")
@@ -26,27 +28,27 @@ const ESC_M1 = [
   {
     name: "DisputeAlreadyResolved",
     selector: "0xf10068b5",
-    meaning: "This dispute is already resolved, so it can't be linked to this escrow.",
+    meaning: "This dispute is already resolved, so it can't be linked to this claim.",
   },
   {
     name: "DisputeVotesCast",
     selector: "0x8aab0a8f",
-    meaning: "This dispute already has votes, so it can't be linked to this escrow.",
+    meaning: "This dispute already has votes, so it can't be linked to this claim.",
   },
   {
     name: "DisputePredatesEscrow",
     selector: "0x9bc3a099",
-    meaning: "This dispute was created before this escrow, so it can't be linked.",
+    meaning: "This dispute was opened before this claim, so it can't be linked.",
   },
   {
     name: "DisputeChallengerNotParty",
     selector: "0xb4b5168e",
-    meaning: "The challenger on this dispute is neither the payer nor the payee.",
+    meaning: "The person who opened this dispute is neither the payer nor the payee, so it can't be linked to this claim.",
   },
   {
     name: "DisputeAfterExpiry",
     selector: "0xaf6c5d51",
-    meaning: "The escrow window has closed, so this dispute can't be linked.",
+    meaning: "The claim window has closed, so this dispute can't be linked.",
   },
 ] as const
 
@@ -111,9 +113,44 @@ describe("ESC-M-1 revert text", () => {
   it("renders Error(string) from the glossary, with the name only in the details", () => {
     const data = encodeErrorResult({ abi: errorStringAbi, args: ["not a party"] })
     const presented = presentError(rpcRevert(data))
-    expect(presented.main).toBe("dispute() caller is neither payer nor payee.")
+    expect(presented.main).toBe("Only the payer or payee on this claim can open a dispute. Switch to that wallet.")
     expect(presented.detail).toBe("Details: Error (0x08c379a0)")
     expect(presented.main).not.toContain("0x08c379a0")
+    expect(presented.main).not.toContain("()")
+  })
+
+  it("uses plain English for an Error string that is not in the glossary", () => {
+    const data = encodeErrorResult({ abi: errorStringAbi, args: ["vault is paused for maintenance"] })
+    const presented = presentError(rpcRevert(data))
+    expect(presented.main).toBe(REVERT_FALLBACK_TEXT)
+    expect(presented.detail).toBe("Details: vault is paused for maintenance")
+    expect(presented.main).not.toContain("vault is paused")
+    expect(presented.main).not.toMatch(/unknown reason/i)
+  })
+
+  it("puts a Panic code in the details and keeps the main text plain", () => {
+    const panicAbi = [{ type: "error", name: "Panic", inputs: [{ name: "code", type: "uint256" }] }] as const
+    const data = encodeErrorResult({ abi: panicAbi, args: [0x11n] })
+    const presented = presentError(rpcRevert(data))
+    expect(presented.main).toBe(REVERT_FALLBACK_TEXT)
+    expect(presented.detail).toBe("Details: Panic 0x11")
+    expect(presented.main).not.toContain("0x11")
+    expect(presented.main).not.toMatch(/unknown reason/i)
+  })
+
+  it("uses the fallback when revert data is empty, missing, or not a 4-byte-aligned payload", () => {
+    const cases = ["0x", "0xabcd", "0x1234567890"] as const
+    for (const data of cases) {
+      const error = rpcRevert(data as Hex)
+      const presented = presentError(error)
+      expect(presented.main).toBe(REVERT_FALLBACK_TEXT)
+      expect(presented.main).not.toMatch(/unknown reason/i)
+      expect(error.shortMessage).toMatch(/unknown reason/i)
+    }
+    const missing = rpcRevert(undefined as unknown as Hex)
+    const presented = presentError(missing)
+    expect(presented.main).toBe(REVERT_FALLBACK_TEXT)
+    expect(presented.main).not.toMatch(/unknown reason/i)
   })
 
   it("says the wallet was cancelled for UserRejectedRequestError and EIP-1193 code 4001", () => {
@@ -123,8 +160,15 @@ describe("ESC-M-1 revert text", () => {
     const coded = new BaseError("Provider failed.", {
       cause: Object.assign(new Error("denied"), { code: 4001 }),
     })
+    const stringCode = { code: "4001", message: "User rejected the request." }
+    const actionRejected = {
+      code: "ACTION_REJECTED",
+      message: "ethers rejected",
+      info: { error: { code: 4001, message: "User denied transaction signature" } },
+    }
+    const nestedInfo = { info: { error: { code: "4001" } } }
 
-    for (const error of [rejected, wrapped, coded]) {
+    for (const error of [rejected, wrapped, coded, stringCode, actionRejected, nestedInfo]) {
       const presented = presentError(error)
       expect(presented.main).toBe("You cancelled in your wallet")
       expect(presented.detail).toBeNull()
@@ -175,7 +219,7 @@ describe("preflight", () => {
       })
     } catch (cause) {
       expect(presentError(cause).main).toBe(
-        "This dispute is already resolved, so it can't be linked to this escrow.",
+        "This dispute is already resolved, so it can't be linked to this claim.",
       )
     }
   })
@@ -209,7 +253,7 @@ describe("preflight", () => {
         value: 0n,
         send,
       }),
-    ).rejects.toThrow(/84532/)
+    ).rejects.toThrow(/Base Sepolia/)
     await expect(
       submitAfterPreflight({
         chainId: 8453,
@@ -219,7 +263,7 @@ describe("preflight", () => {
         value: 0n,
         send,
       }),
-    ).rejects.toThrow(/84532/)
+    ).rejects.toThrow(/Base Sepolia/)
     expect(client.call).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
   })
@@ -238,5 +282,91 @@ describe("preflight", () => {
     expect(notice).toContain('role="alert"')
     expect(styles).toContain("overflow-wrap: anywhere")
     expect(styles).toContain(".error-notice")
+    const relayer = source.slice(source.indexOf("async function onRelayer"))
+    const simulate = relayer.indexOf("submitRelayerAfterPreflight")
+    const post = relayer.indexOf("postLiveClaim")
+    expect(simulate).toBeGreaterThan(-1)
+    expect(post).toBeGreaterThan(simulate)
+    expect(relayer).toContain("presentRelayerError")
+  })
+
+  it("does not post to the claim relayer when the relayer-wallet simulation reverts", async () => {
+    const post = vi.fn()
+    const client = {
+      call: vi.fn(async () => {
+        throw rpcRevert("0xf10068b5")
+      }),
+    }
+    await expect(
+      submitRelayerAfterPreflight({
+        client,
+        to: escrow,
+        data: calldata,
+        value: 0n,
+        post,
+      }),
+    ).rejects.toBeTruthy()
+    expect(CLAIM_RELAYER_WALLET).toBe("0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861")
+    expect(client.call).toHaveBeenCalledWith({
+      account: CLAIM_RELAYER_WALLET,
+      to: escrow,
+      data: calldata,
+      value: 0n,
+    })
+    expect(post).not.toHaveBeenCalled()
+    try {
+      await submitRelayerAfterPreflight({ client, to: escrow, data: calldata, value: 0n, post })
+    } catch (cause) {
+      expect(presentError(cause).main).toBe("This dispute is already resolved, so it can't be linked to this claim.")
+    }
+  })
+})
+
+describe("end-user main text", () => {
+  const identifiers = [
+    "createEscrow",
+    "openDispute",
+    "setDenylist",
+    "setVault",
+    "setDisputePanel",
+    "setArbitrator",
+    "escrowId",
+    "subjectHash",
+    "PANEL_SIZE",
+    "arbitratorCount",
+    "expiresAt",
+    "lockedValue",
+    "CORE_TIMELOCK",
+    "bytes32",
+    "durationSeconds",
+    "payerBotId",
+    "payeeBotId",
+  ]
+
+  it("keeps glossary sentences and fallback messages free of calls and identifiers", () => {
+    const mains = [
+      ...ERROR_GLOSSARY.map((entry) => entry.meaning),
+      WALLET_CANCEL_TEXT,
+      REVERT_FALLBACK_TEXT,
+      ...RELAYER_PLAIN_TEXT,
+      "This check only runs on the Base Sepolia network. Nothing was sent.",
+      "The network client isn't ready, so nothing was sent.",
+      "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",
+      "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
+    ]
+    for (const text of mains) {
+      expect(text).not.toContain("()")
+      expect(text).not.toMatch(/\b[a-z]+[A-Z][A-Za-z0-9]*\b/)
+      expect(text).not.toMatch(/\b[A-Z][A-Z0-9_]{3,}\b/)
+      for (const name of identifiers) {
+        expect(text).not.toContain(name)
+      }
+    }
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "not a party")?.meaning).toBe(
+      "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",
+    )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "EscrowNotOpen")?.meaning).toBe(
+      "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
+    )
   })
 })
