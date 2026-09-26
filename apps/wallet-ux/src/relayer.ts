@@ -659,8 +659,9 @@ export async function confirmRelayerReceipt(input: {
 }
 
 /**
- * Simulate as the relayer wallet, POST /v1/claims, then wait for the receipt.
- * A timed-out POST does not claim that nothing was broadcast.
+ * Reject actions the relayer does not accept, then simulate as the relayer
+ * wallet, POST /v1/claims, and wait for the receipt. A timed-out POST does
+ * not claim that nothing was broadcast.
  */
 export async function runRelayerSubmission(input: {
   url: string
@@ -673,6 +674,17 @@ export async function runRelayerSubmission(input: {
   onPhase?: (phase: RelayerPhase, txHash?: Hex) => void
 }): Promise<RelayerRunResult> {
   input.onPhase?.("submitting")
+  let body: LiveClaimBody
+  try {
+    body = claimBodyFromPreview(input.preview)
+  } catch (cause) {
+    return {
+      ok: false,
+      txHash: null,
+      code: cause instanceof RelayerRequestError ? cause.code : null,
+      presentation: presentRelayerError(cause),
+    }
+  }
   let posted: LiveClaimResult
   try {
     posted = await submitRelayerAfterPreflight({
@@ -684,7 +696,7 @@ export async function runRelayerSubmission(input: {
         postLiveClaim({
           url: input.url,
           secret: input.secret,
-          body: claimBodyFromPreview(input.preview),
+          body,
           fetchImpl: input.fetchImpl,
           timeoutMs: input.fetchTimeoutMs,
         }),

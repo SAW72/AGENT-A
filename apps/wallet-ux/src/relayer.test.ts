@@ -380,6 +380,32 @@ describe("dispute submit via the claim relayer", () => {
     expect(relayerTxUrl(txHash)).toBe(`https://sepolia.basescan.org/tx/${txHash}`)
   })
 
+  it("rejects a non-relayer action before any eth_call or fetch", async () => {
+    let fetches = 0
+    const client = {
+      call: vi.fn(async () => "0x"),
+      waitForTransactionReceipt: vi.fn(),
+    }
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: previewOpenDispute(panel, other, id, "wallet only"),
+      client,
+      fetchImpl: async () => {
+        fetches += 1
+        return jsonResponse(200, { ok: true, mode: "live", txHash })
+      },
+    })
+    expect(client.call).not.toHaveBeenCalled()
+    expect(fetches).toBe(0)
+    expect(client.waitForTransactionReceipt).not.toHaveBeenCalled()
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe("action_not_claim")
+      expect(result.presentation.main).toBe("This step has to be sent from your wallet, not the claim relayer.")
+    }
+  })
+
   it("does not post when the relayer-wallet simulation reverts", async () => {
     let fetches = 0
     const client = {
