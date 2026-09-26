@@ -105,6 +105,8 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId,
         bytes32 disputeId
     ) internal {
+        // Challenger must be a party. The test contract is neither payer nor payee.
+        vm.prank(payer);
         panel.openDispute(disputeId, escrowId, "attestation stale");
     }
 
@@ -788,6 +790,258 @@ contract BotAttestationEscrowTest is Test {
         assertEq(vault.operator(botId), payer);
         vault.setOperator(botId, payee);
         assertEq(vault.operator(botId), payee);
+    }
+
+    // -------------------------------------------------------------------------
+    // ESC-M-1. On unfixed main (300fbae) `dispute()` accepted any existing panel
+    // case whose subject equalled the caller-chosen escrowId. `forge test
+    // --match-contract EscM1Repro` against that tree (temporary reproduction,
+    // not kept) passed all five attacks: payee balance increased by 1 ether on
+    // (1) post-expiry upheld release, (2) denylist bypass release, (4) a second
+    // escrow sharing the panel, and (5) two pre-create uphold votes then a
+    // third vote plus denylist; (3) refunded the payer 1 ether before expiry.
+    // -------------------------------------------------------------------------
+
+    /// @notice (1) A pre-upheld dispute cannot be linked after expiry to steal the refund.
+    function test_escM1_preUpheldAfterExpiryCannotStealRefund() public {
+        bytes32 escrowId = keccak256("esc-m1-expiry-steal");
+        bytes32 disputeId = keccak256("esc-m1-expiry-steal-d");
+        uint256 amount = 1 ether;
+
+        vm.prank(payee);
+        panel.openDispute(disputeId, escrowId, "pre-opened");
+        _panelRule(disputeId, true);
+
+        _create(escrowId, amount, 100);
+        vm.warp(block.timestamp + 101);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputeAlreadyResolved.selector);
+        escrow.dispute(escrowId, disputeId);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.EscrowExpired.selector);
+        escrow.release(escrowId);
+
+        uint256 before = payer.balance;
+        vm.prank(payer);
+        escrow.refund(escrowId);
+        assertEq(payer.balance, before + amount);
+        assertEq(address(escrow).balance, 0);
+    }
+
+    /// @notice (2) A pre-upheld dispute cannot bypass a post-create denylist.
+    function test_escM1_preUpheldDenylistBypassRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-denylist");
+        bytes32 disputeId = keccak256("esc-m1-denylist-d");
+        uint256 amount = 1 ether;
+
+        vm.prank(payee);
+        panel.openDispute(disputeId, escrowId, "pre-opened");
+        _panelRule(disputeId, true);
+
+        _create(escrowId, amount, 3600);
+        denylist.addExact(keccak256("w2"));
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputeAlreadyResolved.selector);
+        escrow.dispute(escrowId, disputeId);
+
+        vm.prank(payee);
+        vm.expectRevert(abi.encodeWithSignature("AttestationFailed(string)", "payee bot denylisted"));
+        escrow.release(escrowId);
+        assertEq(address(escrow).balance, amount);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Open));
+    }
+
+    /// @notice (3) A resolved unwind on the same subject cannot instant-refund a new escrow.
+    function test_escM1_resolvedUnwindCannotInstantRefund() public {
+        bytes32 escrowId = keccak256("esc-m1-unwind");
+        bytes32 disputeId = keccak256("esc-m1-unwind-d");
+        uint256 amount = 1 ether;
+
+        vm.prank(payer);
+        panel.openDispute(disputeId, escrowId, "pre-unwound");
+        _panelRule(disputeId, false);
+
+        _create(escrowId, amount, 3600);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputeAlreadyResolved.selector);
+        escrow.dispute(escrowId, disputeId);
+
+        vm.prank(payer);
+        vm.expectRevert(bytes("not expired"));
+        escrow.refund(escrowId);
+        assertEq(address(escrow).balance, amount);
+    }
+
+    /// @notice (4) A second escrow deployment sharing the panel rejects an old ruling.
+    function test_escM1_secondDeploymentRejectsOldRuling() public {
+        bytes32 escrowId = keccak256("esc-m1-second");
+        bytes32 disputeId = keccak256("esc-m1-second-d");
+        uint256 amount = 1 ether;
+
+        vm.prank(payee);
+        panel.openDispute(disputeId, escrowId, "old ruling");
+        _panelRule(disputeId, true);
+
+        BotAttestationEscrow escrow2 = _secondEscrow();
+        vm.prank(payer);
+        escrow2.createEscrow{ value: amount }(escrowId, payee, payerBot, payeeBot, 3600);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputeAlreadyResolved.selector);
+        escrow2.dispute(escrowId, disputeId);
+
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = escrow2.escrows(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Open));
+        assertEq(address(escrow2).balance, amount);
+    }
+
+    /// @notice (5) Two uphold votes before create, still unresolved, same timestamp.
+    /// @dev `resolved` is false and `createdAt` is equal, so checks 2 and 4 pass.
+    ///      The vote total is what rejects the link.
+    function test_escM1_twoUpholdVotesBeforeCreateRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-two-votes");
+        bytes32 disputeId = keccak256("esc-m1-two-votes-d");
+        uint256 openedAt = block.timestamp;
+
+        vm.prank(payee);
+        panel.openDispute(disputeId, escrowId, "pre-voted");
+        vm.prank(arb1);
+        panel.vote(disputeId, true);
+        vm.prank(arb2);
+        panel.vote(disputeId, true);
+
+        _create(escrowId, 1 ether, 3600);
+
+        (,,, uint256 votesFor, uint256 votesAgainst, bool resolved,, uint256 disputeCreatedAt) =
+            panel.disputes(disputeId);
+        (,,,,, uint256 escrowCreatedAt,,,) = escrow.escrows(escrowId);
+        assertEq(disputeCreatedAt, openedAt);
+        assertEq(escrowCreatedAt, openedAt);
+        assertFalse(resolved);
+        assertEq(votesFor, 2);
+        assertEq(votesAgainst, 0);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputeVotesCast.selector);
+        escrow.dispute(escrowId, disputeId);
+    }
+
+    function test_escM1_thirdPartyChallengerRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-challenger");
+        _create(escrowId, 1 ether, 3600);
+        bytes32 disputeId = keccak256("esc-m1-challenger-d");
+        vm.prank(makeAddr("stranger-challenger"));
+        panel.openDispute(disputeId, escrowId, "not a party");
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputeChallengerNotParty.selector);
+        escrow.dispute(escrowId, disputeId);
+    }
+
+    function test_escM1_disputePredatesEscrowRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-predates");
+        bytes32 disputeId = keccak256("esc-m1-predates-d");
+        vm.prank(payer);
+        panel.openDispute(disputeId, escrowId, "early");
+        vm.warp(block.timestamp + 1);
+        _create(escrowId, 1 ether, 3600);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputePredatesEscrow.selector);
+        escrow.dispute(escrowId, disputeId);
+    }
+
+    function test_escM1_disputeAfterExpiryRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-after-expiry");
+        _create(escrowId, 1 ether, 100);
+        bytes32 disputeId = keccak256("esc-m1-after-expiry-d");
+        vm.prank(payer);
+        panel.openDispute(disputeId, escrowId, "in window");
+        vm.warp(block.timestamp + 101);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputeAfterExpiry.selector);
+        escrow.dispute(escrowId, disputeId);
+    }
+
+    function test_escM1_alreadyResolvedRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-resolved");
+        _create(escrowId, 1 ether, 3600);
+        bytes32 disputeId = keccak256("esc-m1-resolved-d");
+        vm.prank(payer);
+        panel.openDispute(disputeId, escrowId, "then ruled");
+        _panelRule(disputeId, true);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputeAlreadyResolved.selector);
+        escrow.dispute(escrowId, disputeId);
+    }
+
+    function test_escM1_votesAlreadyCastRejected() public {
+        bytes32 escrowId = keccak256("esc-m1-one-vote");
+        _create(escrowId, 1 ether, 3600);
+        bytes32 disputeId = keccak256("esc-m1-one-vote-d");
+        vm.prank(payee);
+        panel.openDispute(disputeId, escrowId, "voted");
+        vm.prank(arb1);
+        panel.vote(disputeId, true);
+
+        (,,, uint256 votesFor, uint256 votesAgainst, bool resolved,,) = panel.disputes(disputeId);
+        assertEq(votesFor, 1);
+        assertEq(votesAgainst, 0);
+        assertFalse(resolved);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputeVotesCast.selector);
+        escrow.dispute(escrowId, disputeId);
+    }
+
+    /// @notice Same-block open is allowed: dispute.createdAt >= escrow.createdAt.
+    function test_escM1_sameBlockDisputeLinks() public {
+        bytes32 escrowId = keccak256("esc-m1-same-block");
+        bytes32 disputeId = keccak256("esc-m1-same-block-d");
+        _create(escrowId, 1 ether, 3600);
+        vm.prank(payee);
+        panel.openDispute(disputeId, escrowId, "same block");
+
+        (,,,,, uint256 escrowCreatedAt,,,) = escrow.escrows(escrowId);
+        (,,,,,,, uint256 disputeCreatedAt) = panel.disputes(disputeId);
+        assertEq(disputeCreatedAt, escrowCreatedAt);
+
+        vm.prank(payee);
+        escrow.dispute(escrowId, disputeId);
+        (,,,,,,, BotAttestationEscrow.EscrowState state, bytes32 linked) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Disputed));
+        assertEq(linked, disputeId);
+    }
+
+    /// @notice Linking is allowed at the exact expiry timestamp (`block.timestamp <= expiresAt`).
+    function test_escM1_disputeAllowedAtExactExpiry() public {
+        bytes32 escrowId = keccak256("esc-m1-exact-expiry");
+        _create(escrowId, 1 ether, 100);
+        bytes32 disputeId = keccak256("esc-m1-exact-expiry-d");
+        vm.prank(payer);
+        panel.openDispute(disputeId, escrowId, "at edge");
+
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt);
+        vm.prank(payer);
+        escrow.dispute(escrowId, disputeId);
+
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Disputed));
+    }
+
+    function _secondEscrow() internal returns (BotAttestationEscrow escrow2) {
+        escrow2 = new BotAttestationEscrow(address(denylist), address(vault), address(panel), governance);
+        escrow2.transferOwnership(governance);
+        vm.prank(governance);
+        escrow2.acceptOwnership();
     }
 
     function _escrowTuple(
