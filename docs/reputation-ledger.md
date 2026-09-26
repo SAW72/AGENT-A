@@ -1,8 +1,8 @@
 # Agent BV — Bot Verifier reputation ledger (Base Sepolia)
 
-Status: **draft for build and staging**. Spencer has not approved design note v2. This pull request stays a draft and must not be merged. Nothing here is a token, a claim, or a mainnet path.
+Status: **draft for build and staging**. Spencer has not approved design note v2.1. This pull request stays a draft and must not be merged. Nothing here is a token, a claim, or a mainnet path.
 
-The rules are design note v2 (Tokenomics, 26 Sep 2026), sections 3, 4, 6, 7, and 9. Event layouts and start blocks follow Blockchain Builder's draft [PR #28](https://github.com/SAW72/AGENT-B.V./pull/28) (`docs/reputation/EVENT_MAP.md`, `docs/reputation/INDEXER_SPEC.md`, `config/reputation/sepolia.json`). That PR is docs only and is not on `main`. This service recomputes topic0 locally; the scored topics match that map. Where this document disagrees with PR #28, the difference is called out below and flagged for Tokenomics.
+The rules are design note **v2.1** (Tokenomics, 26 Sep 2026, 3:42 PM ET), sections 3, 4, 6, 7, and 9. v2.1 is a naming-only change from v2: the product is Agent BV, and the ledgers are `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`. No rule, weight, or cap changed, so `rule_version` stays `design-v2`. Event layouts and start blocks follow Blockchain Builder's draft [PR #28](https://github.com/SAW72/AGENT-B.V./pull/28) (`docs/reputation/EVENT_MAP.md`, `docs/reputation/INDEXER_SPEC.md`, `config/reputation/sepolia.json`). That PR is docs only and is not on `main`. This service recomputes topic0 locally; the scored topics match that map. Where this document disagrees with PR #28, the difference is called out below and flagged for Tokenomics.
 
 Product name: **Agent BV**. Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited.
 
@@ -127,11 +127,11 @@ All of these live in `config/reputation/sepolia.json` under `points`, `floors`, 
 | Arbitrator points per day | 30 | A1 and A2 together |
 | O5 window | 3 standalone disputes in 7 UTC days | Flag only |
 
-**Day** (proposed, not locked by Spencer): UTC day index = `floor(block_timestamp / 86400)`. The window resets at 00:00:00 UTC. The timestamp is the completing log's block timestamp, which is the moment the outcome becomes true. Wall-clock time is not used.
+**Day** (decided by Tokenomics): a day is the UTC day of `block_timestamp`, index `floor(block_timestamp / 86400)`, resetting at 00:00:00 UTC. The timestamp is the completing log's `block_timestamp`, including when a later log is what makes the outcome true. Wall-clock time is not used.
 
 **Season** (draft): `caps.season.value` is null in the Builder file. Until Spencer defines one, `season_implementation` uses a single open-ended season `sepolia-draft-0` from timestamp 0 with the 500 point ceiling. A later timeline row can start a new season id. Cancelling a row does not refund cap headroom.
 
-An over-cap candidate is stored with `points: 0`, `capped: true`, and `cap_name` set to the config key that bound (PR #28 section 9). The full nominal amount must fit. Remainders are not clipped. Caps run in canonical order: completing `(block_number, log_index)`, then outcome (A1 before A2 on the same vote), then role (payer before payee).
+An over-cap candidate is stored with `points: 0`, `capped: true`, and `cap_name` set to the config key that bound (PR #28 section 9). The full nominal amount must fit. Remainders are not clipped. Caps are applied in canonical `(block_number, log_index)` order (decided by Tokenomics), then outcome (A1 before A2 on the same vote), then role (payer before payee).
 
 ## Dedup and reorgs
 
@@ -145,15 +145,23 @@ Semantic dedup is the entry id plus a block-hash check, not `(tx_hash, log_index
 
 Each escrow id is counted once whether the submit was wallet-direct or through the claim relayer. The relayer is not a special case: the escrow id is the key.
 
-## Two gaps, resolved here and flagged
+## Decided by Tokenomics
 
-**(a) Manual ADJ / cancel.** These are not chain logs, so a pure log replay cannot invent them. They live in `config/reputation/adjustments.json`, changed only by pull request, and are applied during replay. There is no admin write endpoint. A cancel names `cancels_entry_id`, has `points: 0`, and sets that row to `cancelled`. A slash has negative `points` and no cancel target, and those points count in the balance. Positive ADJ points are rejected. A negative amount combined with a cancel target is rejected as ambiguous. An unknown target fails closed.
+These five are decided. They are not open questions. Checklist items 7, 9, 11, and 12 stay open: fail-closed hooks are the behavior until those items close, not a substitute for OFAC screening or a named enforcer.
 
-**(b) `rule_version` / `config_version`.** `config/reputation/timeline.json` lists versions with `effective_from_block`. Replay stamps the version whose range contains the completing block. History is not rescored when a later version changes a weight. The checked-in timeline has one version, `sepolia-draft-0` / `design-v2`, from block 0.
+**(a) Adjustments file.** Manual ADJ and cancel rows are not chain logs, so replay cannot invent them. They live in `config/reputation/adjustments.json`, changed only by pull request, and are applied during replay. There is no admin write endpoint. A cancel names `cancels_entry_id`, has `points: 0`, and sets that row to `cancelled`. A slash has negative `points` and no cancel target, and those points count in the balance. Positive ADJ points are rejected. A negative amount combined with a cancel target is rejected as ambiguous. An unknown target fails closed.
+
+**(b) Config timeline.** `config/reputation/timeline.json` lists versions with `effective_from_block`. Replay stamps the version active at the completing block. A later edit does not rescore earlier blocks. The checked-in timeline has one version, `sepolia-draft-0` / `design-v2`, from block 0. v2.1 did not add a timeline row.
+
+**(c) Day.** A day is the UTC day of `block_timestamp`, as in the caps section above.
+
+**(d) Cap order.** Caps run in canonical `(block_number, log_index)` order, as in the caps section above.
+
+**(e) Hooks fail closed.** Checklist #7 and #9 are still open, and the default hooks do not silently credit. See the next section.
 
 ## Hooks (fail closed)
 
-PR #28's stub returns `eligible: true` with reason `pending-#7` for staging. **This service does not.** The task requires the default to withhold or mark rows not eligible rather than silently credit. The default eligibility hook returns `{ eligible: false, reason: "ofac_unconfigured" }`. The row is still stored, `nominal_points` keeps the weight, and `points` is 0 so a raw sum does not credit it. Tests inject `allowAllEligibility` when they need to see weights land.
+Tokenomics confirmed that the #7 and #9 hooks fail closed. PR #28's stub returns `eligible: true` with reason `pending-#7` for staging. **This service does not.** The default eligibility hook returns `{ eligible: false, status: "unverified", reason: "ofac_unconfigured" }`. The row is still stored, `nominal_points` keeps the weight, and `points` is 0 so a raw sum does not credit it. Tests inject `allowAllEligibility` when they need to see weights land.
 
 The enforcer hook receives:
 
@@ -200,26 +208,25 @@ Copy does not use "reward" or "earn". Any method other than GET or OPTIONS on th
 | 4 | Stranded fee credits are N/A. | No Stranded or GasRescue reads or writes. |
 | 5 | No public TGE or airdrop calendar. | No such fields. |
 | 6 | Non-transferable and cancellable. No property right. | No transfer surface. ADJ file can cancel. Disclaimer states it. |
-| 7 | OFAC / sanctions before soft launch. **Open.** | `eligibility` hook. Default marks every row not eligible and zeros `points`. |
+| 7 | OFAC / sanctions before soft launch. **Open.** | `eligibility` hook. Fail closed, as Tokenomics decided: every row is not eligible and `points` is 0 until a real screen is plugged in. |
 | 8 | A later claim needs its own terms. Points are not a claim. | No reputation claim or redeem route. The existing `POST /v1/claims` path is the escrow relayer and is unchanged. |
-| 9 | Name the sybil / abuse enforcer and write the policy. **Open.** | `enforcer` hook. O5 bursts withhold later usage credits. Burns and listings are signals. Cancels are ADJ. Owner is not named. |
+| 9 | Name the sybil / abuse enforcer and write the policy. **Open.** | `enforcer` hook. Fail closed, as Tokenomics decided. O5 bursts withhold later usage credits. Burns and listings are signals. Cancels are ADJ. Owner is not named. |
 | 10 | No cross-product dashboard and no summed ledgers. | Two objects. Tests reject a combined key. |
 | 11 | Securities, master, AS IS, and not-investment links. **Open.** | `disclaimer.links` from config. Empty slots are `null` until the links exist. |
 | 12 | Lock caps before soft launch. **Open.** | Section 7 numbers in `config/reputation/sepolia.json`, labeled `DRAFT/GUESS`. `GET /v1/reputation/config` returns `status: "draft"` on the body and on each cap and threshold. |
 
 ## Open questions for Tokenomics
 
-1. PR #28 also ingests Denylist for signals. Design v2 section 6 says the three contracts only. This code gives Denylist zero points and does not map listings to bots. Confirm that split.
+Decided, and not listed here: the adjustments file, the config timeline, UTC day by `block_timestamp`, canonical cap order, and fail-closed #7 and #9 hooks.
+
+1. PR #28 also ingests Denylist for signals. Design note v2.1 section 6 says the three contracts only. This code gives Denylist zero points and does not map listings to bots. Confirm that split.
 2. O5 on a subject that is not an escrow yet can change if a later `EscrowCreated` uses that id. Replay recomputes from the full log set, so the old O5 disappears in the next replay. PR #28 asked for that classification to stay provisional while the subject could still be created. Confirm replay-replacement is enough.
 3. Pair cap includes O4, and the pair is ordered payer then payee. Confirm.
 4. Cap overflow is all-or-nothing (`points: 0` plus `cap_name`), not a clipped remainder.
 5. O2/O4 `entry_id` appends the wallet; `semantic_key` is the spec key. Confirm.
-6. The day is the completing log's UTC day, not the vote's day when a link arrives later.
-7. Default eligibility here is fail-closed (`eligible: false`). PR #28's stub is `eligible: true` for staging. Confirm which staging behavior Spencer wants.
-8. Default enforcer withholds later **usage** credits after an O5 burst. It does not auto-slash arbitrator points. Confirm.
-9. Season id `sepolia-draft-0` is a stand-in while `caps.season` is null.
-10. O1 still credits a bot that is later burned, and it does not check tier. PR #28 question 4.
-11. If the claim-relayer wallet is the Vault operator, `EscrowCreated.payer` is that wallet and it would be the credited payer once eligibility is opened. PR #28 question 5.
+6. Season id `sepolia-draft-0` is a stand-in while `caps.season` is null.
+7. O1 still credits a bot that is later burned, and it does not check tier. PR #28 question 4.
+8. If the claim-relayer wallet is the Vault operator, `EscrowCreated.payer` is that wallet and it would be the credited payer once eligibility is opened. PR #28 question 5.
 
 ## Verification
 

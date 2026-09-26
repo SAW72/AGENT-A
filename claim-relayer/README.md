@@ -205,7 +205,7 @@ The public funding wallet is not assumed to be a Vault operator. A live `createE
 
 ## Reputation read API (draft)
 
-Off-chain Base Sepolia reputation for Agent BV — Bot Verifier. Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth or the claim-route CORS list. The ledger ids are `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`.
+Off-chain Base Sepolia reputation for Agent BV — Bot Verifier, per design note v2.1 (naming only; rules unchanged). Design: [`docs/reputation-ledger.md`](../docs/reputation-ledger.md). This does not change `POST /v1/claims` auth or the claim-route CORS list. The ledger ids are `agent-bv-sepolia-reputation` and `agent-bv-sepolia-arbitrator-rep`.
 
 - `GET /v1/reputation/config?chainId=84532` returns caps and thresholds with `status: "draft"` while checklist #12 is open. This path is matched before `/{address}`.
 - `GET /v1/reputation/{address}?chainId=84532` returns `ledgers.usage` and `ledgers.arbitrator` as separate objects (`final` and `provisional`). There is no combined total. Omitted `chainId` defaults to 84532. Any other chain is 400, including 1 and 8453, and the body has no ledger data. An unknown address is 200 with zeros.

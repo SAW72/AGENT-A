@@ -1,5 +1,5 @@
 {
-  "_status": "DRAFT. Build and staging only. Every value under points, floors, caps and flags is a Tokenomics GUESS from design note v2 (2026-09-26) and must not be treated as final until Spencer locks checklist #12. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
+  "_status": "DRAFT. Build and staging only. Design note v2.1 (Tokenomics, 2026-09-26) is a naming-only change from v2. Every value under points, floors, caps and flags is still a Tokenomics GUESS from v2 and must not be treated as final until Spencer locks checklist #12. rule_version stays design-v2 because no rule changed. Do not use against live data until Blockchain Verifier APPROVE and Spencer's GO via BOB.",
   "config_version": "sepolia-draft-0",
   "rule_version": "design-v2",
   "effective_from_block": 0,
@@ -76,7 +76,7 @@
     "usage_points_per_wallet_per_season": { "value": 500, "status": "GUESS" },
     "arbitrator_points_per_day": { "value": 30, "status": "GUESS" },
     "decay": { "value": "none", "status": "GUESS" },
-    "day_boundary": { "value": "UTC, by block timestamp", "status": "PROPOSED, not defined in design v2" },
+    "day_boundary": { "value": "UTC, by block timestamp", "status": "DECIDED by Tokenomics: UTC day by block_timestamp" },
     "season": { "value": null, "status": "OPEN, not defined in design v2" }
   },
   "flags": {
@@ -92,8 +92,8 @@
   },
   "day_implementation": {
     "value": "utc_day_by_block_timestamp",
-    "definition": "UTC day index = floor(block_timestamp / 86400). The cap window resets at 00:00:00 UTC. This is the proposed reading of caps.day_boundary.",
-    "status": "PROPOSED"
+    "definition": "UTC day index = floor(block_timestamp / 86400). The cap window resets at 00:00:00 UTC. Tokenomics confirmed this reading of day.",
+    "status": "DECIDED"
   },
   "season_implementation": {
     "id": "sepolia-draft-0",
