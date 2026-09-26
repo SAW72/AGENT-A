@@ -147,6 +147,8 @@ Listing migration replay of `Listed` / `Unlisted` from the previous Denylist was
 | DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` | `0x9ecd10d67054fbf9e63ad25dd1520ed809fbf94c4ab1f19ad84e81899562b77f` |
 | BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` | `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` |
 
+The live Sepolia Denylist (`0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, create block 47294163) is the pre-L-4 build. It has no `InvalidBucket` and no `_asBucket`. L-4 ships with the next Denylist deploy (mainnet at the latest). There will be no Denylist redeploy without Spencer's GO. The address in the table does not change.
+
 `DisputePanel.owner()` is `CORE_TIMELOCK`. Gate B is seated: `arbitratorCount` is 3.
 
 | # | Arbitrator | Seat tx (block 47299643) |

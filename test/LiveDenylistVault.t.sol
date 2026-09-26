@@ -26,6 +26,16 @@ contract LiveDenylistVaultTest is Test {
 
     uint256 internal constant BASE_SEPOLIA = 84532;
 
+    /// @dev `keccak256` of the live Base Sepolia Denylist runtime at
+    ///      `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` (create block 47294163).
+    ///      This is the full runtime, CBOR metadata tail included. It is the pre-L-4
+    ///      build: no `InvalidBucket` and no `_asBucket`. A `forge build` of
+    ///      `contracts/Denylist.sol` at `ca23d4a` (parent of `e3110440`, PR #23)
+    ///      reproduces these bytes exactly, so the metadata tail did not need to be
+    ///      stripped for that comparison. It is not the tip Denylist runtime.
+    bytes32 internal constant LIVE_DENYLIST_PRE_L4_RUNTIME_HASH =
+        0x6d58afc07cebf667421cd28c317e937db9d1ee8df62ee507c48cc13e66b77dc4;
+
     bytes32 internal constant WEIGHT = keccak256("qa-live-denylist-vault-weight");
     bytes32 internal constant SIG = keccak256("qa-live-denylist-vault-sig");
     bytes32 internal constant PROMPT = keccak256("qa-live-denylist-vault-prompt");
@@ -53,12 +63,25 @@ contract LiveDenylistVaultTest is Test {
         console2.log("live fork block", block.number);
     }
 
-    function test_forkIsBaseSepoliaAndRuntimeMatchesTip() public view {
+    /// @notice The fork is Base Sepolia. The live Denylist is the pre-L-4 runtime,
+    ///         not the tip build that added `InvalidBucket` / `_asBucket`.
+    function test_forkIsBaseSepoliaAndDenylistIsPreL4Build() public view {
         assertEq(block.chainid, BASE_SEPOLIA);
         assertGt(DENYLIST.code.length, 0);
         assertGt(VAULT.code.length, 0);
-        assertEq(DENYLIST.code, type(Denylist).runtimeCode);
-        assertEq(VAULT.code, type(Vault).runtimeCode);
+
+        assertEq(keccak256(DENYLIST.code), LIVE_DENYLIST_PRE_L4_RUNTIME_HASH);
+        // Tip `contracts/Denylist.sol` compiles to a different runtime. The live
+        // contract does not contain L-4. This assertion documents that drift.
+        assertTrue(keccak256(type(Denylist).runtimeCode) != LIVE_DENYLIST_PRE_L4_RUNTIME_HASH);
+
+        // `Vault.sol` itself matches the tip executable runtime. Full bytecode does
+        // not: the CBOR metadata tail commits to imported `Denylist.sol`, and the
+        // live artifact was compiled with the pre-L-4 Denylist source. That is a
+        // metadata difference, not a second Vault logic build. Do not treat it as
+        // a reason to redeploy Vault.
+        assertEq(_stripCborMetadata(VAULT.code), _stripCborMetadata(type(Vault).runtimeCode));
+        assertTrue(keccak256(VAULT.code) != keccak256(type(Vault).runtimeCode));
     }
 
     function test_ownerAndPendingOwnerAreCoreTimelock() public view {
@@ -333,6 +356,22 @@ contract LiveDenylistVaultTest is Test {
         assertEq(denylist.listing(uint8(Denylist.Bucket.Exact), WEIGHT).timesListed, 1);
         assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), WEIGHT));
         assertEq(uint256(denylist.check(WEIGHT, bytes32(0), bytes32(0))), uint256(Denylist.MatchLevel.None));
+    }
+
+    /// @dev Drop the solc CBOR auxdata (`0xa2 …` plus the trailing 2-byte length).
+    function _stripCborMetadata(
+        bytes memory code
+    ) internal pure returns (bytes memory stripped) {
+        uint256 len = code.length;
+        require(len >= 2, "runtime shorter than cbor length");
+        uint256 metaLen = (uint256(uint8(code[len - 2])) << 8) | uint256(uint8(code[len - 1]));
+        require(metaLen + 2 < len, "cbor tail overruns runtime");
+        uint256 bodyLen = len - metaLen - 2;
+        require(uint8(code[bodyLen]) == 0xa2, "cbor tail is not a map");
+        stripped = new bytes(bodyLen);
+        for (uint256 i = 0; i < bodyLen; ++i) {
+            stripped[i] = code[i];
+        }
     }
 
     function _eip7702Delegate(

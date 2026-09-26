@@ -15,7 +15,8 @@
     "pendingOwner": "0x0000000000000000000000000000000000000000",
     "acceptOwnership": "complete",
     "acceptOwnershipTx": "0xc8ad34d956d802b3d0d8d032178c9b6786ead6afec1bd502158f1f603b3e3949",
-    "acceptOwnershipBlock": 47294619
+    "acceptOwnershipBlock": 47294619,
+    "build_note": "The live Sepolia Denylist is the pre-L-4 build (no InvalidBucket/_asBucket). L-4 ships with the next Denylist deploy (mainnet at the latest). There will be no Denylist redeploy without Spencer's GO."
   },
   "Vault": {
     "address": "0x1463D664fA467FBCDA4B05443434494f05e565bc",

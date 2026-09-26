@@ -16,6 +16,8 @@ Canonical addresses: [`deployments/base-sepolia.json`](../deployments/base-sepol
 
 Gate A is done. `owner()` is `CORE_TIMELOCK` and `pendingOwner()` is the zero address on both. `Vault.denylist()` is the live Denylist. Listing migration from the previous denylist was empty (0 Exact / 0 Signature / 0 Prompt), so this pair starts with no active listings and no bots.
 
+The live Sepolia Denylist is the pre-L-4 build (no `InvalidBucket` / `_asBucket`). L-4 ships with the next Denylist deploy (mainnet at the latest). There will be no Denylist redeploy without Spencer's GO. These scripts call the address above. They do not deploy a new Denylist.
+
 The previous pair is still on chain and is **not** a target:
 
 | Role | Superseded address |

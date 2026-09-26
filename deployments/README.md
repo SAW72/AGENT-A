@@ -26,6 +26,7 @@ JSON has no comments. Field meanings:
 | `<Contract>.acceptOwnershipBlock` | Optional. Block number of that accept tx. |
 | `<Contract>.deployBlock` / `startBlock` | Optional. Create-tx block. For `BotAttestationEscrow` this is the indexer and relayer start block. |
 | `<Contract>.commit` | Optional. Source commit the deployed bytecode was built from. |
+| `<Contract>.build_note` | Optional free text. Which source build is on that address. Not an address and not a deploy instruction. |
 | `superseded` | Previous Denylist and Vault. Each keeps `address`, `deployTx`, `supersededBy`, and why it was replaced. These are not the live slots. |
 | `retired` | History that is not a live slot. `retired.BotAttestationEscrow` is the pre-ESC-M-1 escrow. |
 
@@ -44,6 +45,8 @@ The previous escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC
 `DisputePanel` ownership moves immediately via `setOwner`. `openDispute` reverts with `panel not seated` until that owner has called `setArbitrator` for three addresses (`arbitratorCount >= 3`). On the live panel Gate B is seated: `arbitratorCount` is 3. Arbitrators: `0xD5ee9fA366C3698b34204722c635989E5197B018`, `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30`, `0xB87Ed5F74276AC6172ef53fE866675093F75936E`. Seat txs (block 47299643): `0xa97b518ad87489ab1d45ec4bef5e548c1d4bf3b9c940552e8cba1752fed7553c`, `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6`, `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3`. Commands: [`script/DEPLOY_ESCROW_BASE_SEPOLIA.md`](../script/DEPLOY_ESCROW_BASE_SEPOLIA.md).
 
 `claimRelayerWallet` is the public funding and signing EOA for the Base Sepolia claim relayer. It is not a deployed contract and it is not a live slot the wallet UI reads. The hosted service derives it from `RELAYER_PRIVATE_KEY`. Record only the address. Never commit the private key.
+
+The live `Denylist` entry's `build_note` records a source drift. That contract (`0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, create block 47294163) is the pre-L-4 build. It has no `InvalidBucket` and no `_asBucket`. L-4 (PR #23, squash-merged at `e3110440`) is in the repo tip and ships with the next Denylist deploy, mainnet at the latest. There will be no Denylist redeploy without Spencer's GO. The address does not change.
 
 Spencer fills this file. Agents do not `--broadcast`.
 
