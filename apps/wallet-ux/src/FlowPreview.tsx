@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem"
 import { useAccount, usePublicClient, useSendTransaction } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
@@ -17,13 +17,20 @@ import {
   type CallPreview,
 } from "./preview"
 import {
-  claimBodyFromPreview,
-  postLiveClaim,
-  presentRelayerError,
+  readRelayerPaused,
+  RELAYER_CONFIRMED_TEXT,
+  RELAYER_SUBMITTED_TEXT,
+  RELAYER_SUBMITTING_TEXT,
+  RELAYER_TX_LINK_LABEL,
+  RELAYER_WAITING_TEXT,
+  relayerButtonModel,
   relayerConfigFromEnv,
   relayerSubmitAllowed,
+  relayerTxUrl,
+  runRelayerSubmission,
+  type RelayerPhase,
 } from "./relayer"
-import { submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
+import { submitAfterPreflight } from "./preflight"
 import { assertSubmitTarget, evaluateEscrowSubmit, submitControl, submitSenderNote } from "./submit"
 import { useConnectorChainId } from "./useWalletChain"
 
@@ -40,16 +47,42 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
   const { sendTransactionAsync, isPending } = useSendTransaction()
   const [txHash, setTxHash] = useState<Hex | null>(null)
   const [submitError, setSubmitError] = useState<ErrorPresentation | null>(null)
-  const [relayerPending, setRelayerPending] = useState(false)
+  const [relayerPhase, setRelayerPhase] = useState<RelayerPhase>("idle")
+  const [relayerPaused, setRelayerPaused] = useState(false)
+  const [pendingHash, setPendingHash] = useState<Hex | null>(null)
+  const [confirmedHash, setConfirmedHash] = useState<Hex | null>(null)
+  const relayerFlight = useRef(false)
   const relayer = relayerConfigFromEnv({
     VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL,
     VITE_CLAIM_API_SECRET: import.meta.env.VITE_CLAIM_API_SECRET,
   })
   const relayerGate = relayerSubmitAllowed({ walletConnected: account.isConnected, walletChainId })
-  const control = submitControl(decision, isPending || relayerPending)
+  const relayerBusy = relayerPhase !== "idle"
+  const control = submitControl(decision, isPending || relayerBusy)
+  const relayerButton = relayerButtonModel({
+    url: relayer.url,
+    secret: relayer.secret,
+    paused: relayerPaused,
+    phase: relayerPhase,
+    gate: relayerGate,
+    action: preview.functionName,
+  })
+
+  useEffect(() => {
+    if (!relayer.url) return
+    let cancelled = false
+    void readRelayerPaused({ url: relayer.url }).then((paused) => {
+      if (!cancelled && paused != null) setRelayerPaused(paused)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [relayer.url])
 
   async function onClick() {
     setSubmitError(null)
+    setConfirmedHash(null)
+    setPendingHash(null)
     const current = evaluateEscrowSubmit({
       walletConnected: account.isConnected,
       walletChainId: account.isConnected ? resolveWalletChainId(account.chainId, connectorChainId) : null,
@@ -89,7 +122,10 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
   }
 
   async function onRelayer() {
+    if (relayerFlight.current) return
     setSubmitError(null)
+    setConfirmedHash(null)
+    setPendingHash(null)
     const gate = relayerSubmitAllowed({
       walletConnected: account.isConnected,
       walletChainId: account.isConnected ? resolveWalletChainId(account.chainId, connectorChainId) : null,
@@ -99,35 +135,43 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       setSubmitError(notice(gate.reason))
       return
     }
-    if (!relayer.url) return
+    if (!relayer.url || !relayer.secret || relayerPaused) return
     if (!publicClient) {
       setTxHash(null)
       setSubmitError(notice("The network client isn't ready, so nothing was sent."))
       return
     }
-    setRelayerPending(true)
+    relayerFlight.current = true
+    setRelayerPhase("submitting")
+    setTxHash(null)
     try {
       assertSubmitTarget(preview.to, [escrow, panel])
       const url = relayer.url
       const secret = relayer.secret
-      const result = await submitRelayerAfterPreflight({
+      const outcome = await runRelayerSubmission({
+        url,
+        secret,
+        preview,
         client: publicClient,
-        to: preview.to,
-        data: preview.calldata,
-        value: preview.valueWei,
-        post: () =>
-          postLiveClaim({
-            url,
-            secret,
-            body: claimBodyFromPreview(preview),
-          }),
+        onPhase: (phase, hash) => {
+          setRelayerPhase(phase)
+          if (hash) setPendingHash(hash)
+        },
       })
-      setTxHash(result.txHash)
+      if (outcome.ok) {
+        setPendingHash(null)
+        setConfirmedHash(outcome.txHash)
+        return
+      }
+      setPendingHash(null)
+      setSubmitError(outcome.presentation)
+      if (outcome.code === "kill_switch") setRelayerPaused(true)
     } catch (cause) {
-      setTxHash(null)
-      setSubmitError(presentRelayerError(cause))
+      setPendingHash(null)
+      setSubmitError(presentError(cause))
     } finally {
-      setRelayerPending(false)
+      relayerFlight.current = false
+      setRelayerPhase("idle")
     }
   }
 
@@ -137,23 +181,55 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       <button type="button" data-testid={control.testId} disabled={control.disabled} onClick={() => void onClick()}>
         {control.label}
       </button>
-      {relayer.url ? (
-        <div>
-          <p>
-            Optional claim relayer on Base Sepolia. A matching VITE_CLAIM_API_SECRET is sent as x-claim-secret. A secret
-            in this static build is a soft deterrent only, not browser security. Render CORS must allow this origin.
-          </p>
+      {relayerButton.visible ? (
+        <div data-testid="relayer-panel">
+          <p>Submit through the claim relayer, or from your wallet.</p>
+          {relayerButton.note ? (
+            <p className="relayer-pending" role="status" data-testid="relayer-note">
+              {relayerButton.note}
+            </p>
+          ) : null}
+          {relayerPhase === "submitting" ? (
+            <p className="relayer-pending" role="status" data-testid="relayer-status">
+              {RELAYER_SUBMITTING_TEXT}
+            </p>
+          ) : null}
+          {relayerPhase === "confirming" && pendingHash ? (
+            <div className="relayer-pending" role="status" data-testid="relayer-status">
+              <p>{RELAYER_WAITING_TEXT}</p>
+              <p>{RELAYER_SUBMITTED_TEXT}</p>
+              <p>
+                <a href={relayerTxUrl(pendingHash)} data-testid="relayer-tx-link">
+                  {RELAYER_TX_LINK_LABEL}
+                </a>
+              </p>
+            </div>
+          ) : null}
           <button
             type="button"
             data-testid="relayer-submit"
-            disabled={!relayerGate.ok || relayerPending || isPending}
+            disabled={relayerButton.disabled || isPending}
+            aria-busy={relayerBusy}
             onClick={() => void onRelayer()}
           >
-            {!relayerGate.ok ? relayerGate.reason : relayerPending ? "Submitting via claim relayer…" : "Submit via claim relayer"}
+            {relayerButton.label}
           </button>
         </div>
       ) : null}
-      {submitError ? <ErrorNotice main={submitError.main} detail={submitError.detail} /> : null}
+      {confirmedHash ? (
+        <div className="relayer-ok" role="status" data-testid="relayer-result">
+          <p>{RELAYER_SUBMITTED_TEXT}</p>
+          <p>{RELAYER_CONFIRMED_TEXT}</p>
+          <p>
+            <a href={relayerTxUrl(confirmedHash)} data-testid="relayer-tx-link">
+              {RELAYER_TX_LINK_LABEL}
+            </a>
+          </p>
+        </div>
+      ) : null}
+      {submitError ? (
+        <ErrorNotice main={submitError.main} detail={submitError.detail} link={submitError.link} />
+      ) : null}
       {txHash ? (
         <p className="mono" data-testid="submit-tx">
           Submitted {txHash}

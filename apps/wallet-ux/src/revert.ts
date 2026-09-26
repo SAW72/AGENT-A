@@ -35,6 +35,8 @@ export type DecodedRevert = {
 export type ErrorPresentation = {
   main: string
   detail: string | null
+  /** Optional next step, such as a block explorer link. */
+  link?: { href: string; label: string }
 }
 
 export const WALLET_CANCEL_TEXT = "You cancelled in your wallet"

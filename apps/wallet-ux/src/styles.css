@@ -222,6 +222,35 @@ label { display: block; margin-bottom: 4px; }
   white-space: pre-wrap;
   word-break: break-all;
 }
+.relayer-pending,
+.relayer-ok {
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+
+.relayer-pending {
+  background: var(--info-bg);
+  color: var(--info);
+  border: 1px solid #c5d6e8;
+}
+
+.relayer-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border: 1px solid #b7dfc8;
+}
+
+.relayer-pending p,
+.relayer-ok p {
+  margin: 0 0 8px;
+}
+
+.relayer-pending p:last-child,
+.relayer-ok p:last-child {
+  margin-bottom: 0;
+}
+
 .glossary { margin: 0; }
 .glossary div { margin: 8px 0; }
 .glossary dt { font-weight: 600; }

@@ -18,7 +18,7 @@ import { ADDRESSES } from "./addresses"
 import { errorText, presentError } from "./format"
 import { ERROR_GLOSSARY } from "./preview"
 import { CLAIM_RELAYER_WALLET, submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
-import { RELAYER_PLAIN_TEXT } from "./relayer"
+import { RELAYER_USER_TEXT } from "./relayer"
 import { REVERT_FALLBACK_TEXT, WALLET_CANCEL_TEXT } from "./revert"
 
 const escrow = ADDRESSES.botAttestationEscrow
@@ -282,12 +282,15 @@ describe("preflight", () => {
     expect(notice).toContain('role="alert"')
     expect(styles).toContain("overflow-wrap: anywhere")
     expect(styles).toContain(".error-notice")
-    const relayer = source.slice(source.indexOf("async function onRelayer"))
-    const simulate = relayer.indexOf("submitRelayerAfterPreflight")
-    const post = relayer.indexOf("postLiveClaim")
+    const relayer = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "relayer.ts"), "utf8")
+    const handler = relayer.slice(relayer.indexOf("export async function runRelayerSubmission"))
+    const simulate = handler.indexOf("submitRelayerAfterPreflight")
+    const post = handler.indexOf("postLiveClaim")
     expect(simulate).toBeGreaterThan(-1)
     expect(post).toBeGreaterThan(simulate)
-    expect(relayer).toContain("presentRelayerError")
+    expect(handler).toContain("presentRelayerError")
+    expect(source).toContain("runRelayerSubmission")
+    expect(source).toContain("relayerFlight")
   })
 
   it("does not post to the claim relayer when the relayer-wallet simulation reverts", async () => {
@@ -348,7 +351,7 @@ describe("end-user main text", () => {
       ...ERROR_GLOSSARY.map((entry) => entry.meaning),
       WALLET_CANCEL_TEXT,
       REVERT_FALLBACK_TEXT,
-      ...RELAYER_PLAIN_TEXT,
+      ...RELAYER_USER_TEXT,
       "This check only runs on the Base Sepolia network. Nothing was sent.",
       "The network client isn't ready, so nothing was sent.",
       "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",

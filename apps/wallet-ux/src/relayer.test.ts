@@ -1,17 +1,29 @@
-import { parseEther } from "viem"
+import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { describe, expect, it } from "vitest"
-import { previewCreateEscrow, previewOpenDispute, previewRelease } from "./preview"
+import { CallExecutionError, ExecutionRevertedError, RpcRequestError, parseEther, type Hex } from "viem"
+import { describe, expect, it, vi } from "vitest"
+import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRelease } from "./preview"
 import {
   claimBodyFromPreview,
   postLiveClaim,
   presentRelayerError,
+  readRelayerPaused,
+  RELAYER_CHECK_WALLET_LABEL,
+  RELAYER_COULD_NOT_SUBMIT,
+  RELAYER_PAUSED_NOTE,
+  RELAYER_RECEIPT_REVERTED_TEXT,
+  RELAYER_RECEIPT_UNKNOWN_TEXT,
+  RELAYER_SECRET_NOTE,
+  RELAYER_TIMEOUT_TEXT,
+  relayerButtonModel,
   relayerConfigFromEnv,
   relayerErrorText,
   relayerSubmitAllowed,
-  RELAYER_COULD_NOT_SUBMIT,
+  relayerTxUrl,
+  relayerWalletUrl,
+  runRelayerSubmission,
   type LiveClaimBody,
 } from "./relayer"
 
@@ -80,7 +92,7 @@ describe("postLiveClaim", () => {
         return jsonResponse(200, { ok: true, mode: "live", txHash })
       },
     })
-    expect(result).toEqual({ txHash, mode: "live" })
+    expect(result).toEqual({ txHash, mode: "live", escrowAddress: null })
     expect(captured.url).toBe(`${relayerUrl}/v1/claims`)
     const headers = new Headers(captured.init.headers)
     expect(headers.get("x-claim-secret")).toBe("sepolia-test-secret")
@@ -253,10 +265,431 @@ describe("wallet submit stays direct unless the UI opts in", () => {
     expect(submit).not.toContain("VITE_CLAIM_RELAYER_URL")
     expect(submit).not.toContain("postLiveClaim")
     expect(flow).toContain("sendTransactionAsync")
-    expect(flow).toContain("postLiveClaim")
-    expect(flow).toContain("presentRelayerError")
-    expect(flow).toContain("submitRelayerAfterPreflight")
+    expect(flow).toContain("runRelayerSubmission")
     expect(flow).toContain('data-testid="relayer-submit"')
+    expect(flow).toContain('data-testid="relayer-tx-link"')
     expect(flow).toContain("relayer.url")
+    expect(flow).toContain("RELAYER_SUBMITTING_TEXT")
+    expect(flow).toContain("RELAYER_WAITING_TEXT")
+    expect(flow).toContain("relayerFlight")
+    expect(flow).toContain("if (relayerFlight.current) return")
+  })
+})
+
+const retiredEscrow = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c"
+const relayerPackage = join(dirname(fileURLToPath(import.meta.url)), "../../../claim-relayer")
+
+function rpcRevert(data: Hex) {
+  const rpc = new RpcRequestError({
+    body: { method: "eth_call", params: [] },
+    error: { code: 3, message: "execution reverted", data },
+    url: "http://127.0.0.1:8545",
+  })
+  const reverted = new ExecutionRevertedError({ cause: rpc, message: rpc.details })
+  return new CallExecutionError(reverted, { to: escrow, data: "0x" })
+}
+
+function relayerValidated(body: unknown): { action: string; calldata: string; valueWei: string } {
+  const script = `
+    import { describeCalldata, assertBaseSepolia, parseClaimId, wantsLiveSubmit } from "./claims.mjs";
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    assertBaseSepolia(body);
+    if (!wantsLiveSubmit(body)) throw new Error("expected a live claim");
+    const encoded = describeCalldata(body);
+    if (encoded.calldataStatus !== "encoded" || !encoded.calldata) throw new Error("calldata was not encoded");
+    parseClaimId(body.claimId);
+    process.stdout.write(JSON.stringify({
+      action: encoded.action,
+      calldata: encoded.calldata,
+      valueWei: encoded.valueWei,
+    }));
+  `
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: relayerPackage,
+    input: JSON.stringify(body),
+    encoding: "utf8",
+  })
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout || "relayer validation failed")
+  return JSON.parse(result.stdout) as { action: string; calldata: string; valueWei: string }
+}
+
+function readyClient(receipt: { status: "success" | "reverted" } | Error) {
+  return {
+    call: vi.fn(async () => "0x"),
+    waitForTransactionReceipt: vi.fn(async () => {
+      if (receipt instanceof Error) throw receipt
+      return receipt
+    }),
+  }
+}
+
+describe("dispute submit via the claim relayer", () => {
+  const dispute = previewDispute(escrow, id, other)
+
+  it("posts the exact live dispute body the relayer handler validates", async () => {
+    const phases: string[] = []
+    let posted = ""
+    let method = ""
+    let secretHeader: string | null = null
+    let target = ""
+    const client = readyClient({ status: "success" })
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client,
+      onPhase: (phase) => phases.push(phase),
+      fetchImpl: async (url, init) => {
+        target = String(url)
+        method = String(init?.method)
+        posted = String(init?.body)
+        secretHeader = new Headers(init?.headers).get("x-claim-secret")
+        expect(new Headers(init?.headers).get("content-type")).toBe("application/json")
+        return jsonResponse(200, {
+          ok: true,
+          mode: "live",
+          txHash,
+          escrowAddress: escrow,
+          chainId: 84532,
+        })
+      },
+    })
+    expect(phases).toEqual(["submitting", "confirming"])
+    expect(method).toBe("POST")
+    expect(target).toBe(`${relayerUrl}/v1/claims`)
+    expect(secretHeader).toBe("sepolia-test-secret")
+    const body = JSON.parse(posted) as LiveClaimBody
+    expect(body).toEqual({
+      action: "dispute",
+      claimId: id,
+      disputeId: other,
+      chainId: 84532,
+      live: true,
+    })
+    expect(Object.keys(body)).toEqual(["action", "claimId", "disputeId", "chainId", "live"])
+    expect(body).not.toHaveProperty("amountWei")
+    const accepted = relayerValidated(body)
+    expect(accepted.action).toBe("dispute")
+    expect(accepted.valueWei).toBe("0")
+    expect(accepted.calldata.toLowerCase()).toBe(dispute.calldata.toLowerCase())
+    expect(client.call).toHaveBeenCalledWith({
+      account: "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
+      to: escrow,
+      data: dispute.calldata,
+      value: 0n,
+    })
+    expect(result).toEqual({ ok: true, txHash })
+    expect(relayerTxUrl(txHash)).toBe(`https://sepolia.basescan.org/tx/${txHash}`)
+  })
+
+  it("does not post when the relayer-wallet simulation reverts", async () => {
+    let fetches = 0
+    const client = {
+      call: vi.fn(async () => {
+        throw rpcRevert("0xf10068b5")
+      }),
+      waitForTransactionReceipt: vi.fn(),
+    }
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client,
+      fetchImpl: async () => {
+        fetches += 1
+        return jsonResponse(200, { ok: true, mode: "live", txHash })
+      },
+    })
+    expect(fetches).toBe(0)
+    expect(client.waitForTransactionReceipt).not.toHaveBeenCalled()
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.presentation.main).toBe("This dispute is already resolved, so it can't be linked to this claim.")
+    }
+  })
+
+  it("keeps a timed-out post unknown and points at the relayer wallet", async () => {
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client: readyClient({ status: "success" }),
+      fetchTimeoutMs: 20,
+      fetchImpl: () => new Promise(() => undefined),
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe("timeout_unknown")
+    expect(result.presentation.main).toBe(RELAYER_TIMEOUT_TEXT)
+    expect(result.presentation.main.toLowerCase()).not.toContain("nothing was sent")
+    expect(result.presentation.main).not.toMatch(/[()]/)
+    expect(result.presentation.detail).toBe("Details: timeout_unknown")
+    expect(result.presentation.link).toEqual({ href: relayerWalletUrl(), label: RELAYER_CHECK_WALLET_LABEL })
+  })
+
+  it("links the transaction when the receipt never arrives", async () => {
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client: readyClient(Object.assign(new Error("Timed out while waiting for transaction."), { name: "WaitForTransactionReceiptTimeoutError" })),
+      fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe("receipt_unknown")
+    expect(result.txHash).toBe(txHash)
+    expect(result.presentation.main).toBe(RELAYER_RECEIPT_UNKNOWN_TEXT)
+    expect(result.presentation.main.toLowerCase()).not.toContain("nothing was sent")
+    expect(result.presentation.link?.href).toBe(relayerTxUrl(txHash))
+  })
+
+  it("explains a reverted receipt in plain English and keeps the transaction link", async () => {
+    let calls = 0
+    const client = {
+      call: vi.fn(async () => {
+        calls += 1
+        if (calls === 1) return "0x"
+        throw rpcRevert("0xf10068b5")
+      }),
+      waitForTransactionReceipt: vi.fn(async () => ({ status: "reverted" as const })),
+    }
+    const decoded = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client,
+      fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
+    })
+    expect(decoded.ok).toBe(false)
+    if (decoded.ok) return
+    expect(decoded.presentation.main).toBe("This dispute is already resolved, so it can't be linked to this claim.")
+    expect(decoded.presentation.link?.href).toBe(relayerTxUrl(txHash))
+    expect(decoded.presentation.main).not.toMatch(/[()]/)
+
+    const plain = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client: readyClient({ status: "reverted" }),
+      fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
+    })
+    expect(plain.ok).toBe(false)
+    if (plain.ok) return
+    expect(plain.presentation.main).toBe(RELAYER_RECEIPT_REVERTED_TEXT)
+    expect(plain.presentation.link?.href).toBe(relayerTxUrl(txHash))
+  })
+})
+
+describe("relayer response copy", () => {
+  const dispute = previewDispute(escrow, id, other)
+  const cases: { status: number; body: Record<string, unknown>; main: string; detail: string }[] = [
+    {
+      status: 400,
+      body: { ok: false, error: "invalid_json" },
+      main: "The claim relayer could not accept this submission. Nothing was sent.",
+      detail: "Details: 400 invalid_json",
+    },
+    {
+      status: 401,
+      body: { ok: false, error: "unauthorized" },
+      main: "The claim relayer refused this request. Nothing was sent.",
+      detail: "Details: 401 unauthorized",
+    },
+    {
+      status: 403,
+      body: { ok: false, error: "forbidden" },
+      main: "The claim relayer refused this request. Nothing was sent.",
+      detail: "Details: 403 forbidden",
+    },
+    {
+      status: 404,
+      body: { ok: false, error: "not_found" },
+      main: "The claim relayer could not find that submission path. Nothing was sent.",
+      detail: "Details: 404 not_found",
+    },
+    {
+      status: 409,
+      body: { ok: false, error: "live_submit_blocked", reason: "live_submit_off", txHash: null },
+      main: "The claim relayer is not accepting live submissions right now. Nothing was sent.",
+      detail: "Details: 409 live_submit_blocked",
+    },
+    {
+      status: 422,
+      body: { ok: false, error: "unprocessable" },
+      main: "The claim relayer could not accept this submission. Nothing was sent.",
+      detail: "Details: 422 unprocessable",
+    },
+    {
+      status: 429,
+      body: { ok: false, error: "rate_limited" },
+      main: "The claim relayer is limiting submissions. Wait a moment and try again. Nothing was sent.",
+      detail: "Details: 429 rate_limited",
+    },
+    {
+      status: 400,
+      body: {
+        ok: false,
+        error: "retired_or_superseded_address",
+        address: retiredEscrow,
+        current: escrow,
+      },
+      main: "The claim relayer is pointed at a retired escrow, so this was not submitted. Use your wallet instead.",
+      detail: "Details: 400 retired_or_superseded_address",
+    },
+    {
+      status: 409,
+      body: {
+        ok: false,
+        error: "live_submit_blocked",
+        reason: "escrow_not_booked_sepolia",
+        escrowAddress: retiredEscrow,
+        txHash: null,
+      },
+      main: "The claim relayer is pointed at a retired escrow, so this was not submitted. Use your wallet instead.",
+      detail: "Details: 409 live_submit_blocked",
+    },
+    {
+      status: 503,
+      body: { ok: false, error: "kill_switch" },
+      main: "The claim relayer is paused. Nothing was sent.",
+      detail: "Details: 503 kill_switch",
+    },
+  ]
+
+  it("maps client errors to plain English and keeps the raw status in the details", async () => {
+    for (const item of cases) {
+      const result = await runRelayerSubmission({
+        url: relayerUrl,
+        secret: "sepolia-test-secret",
+        preview: dispute,
+        client: readyClient({ status: "success" }),
+        fetchImpl: async () => jsonResponse(item.status, item.body),
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) continue
+      expect(result.presentation.main).toBe(item.main)
+      expect(result.presentation.detail).toBe(item.detail)
+      expect(result.presentation.main).not.toMatch(/[()]/)
+      expect(result.presentation.main).not.toContain(String(item.status))
+      const code = String(item.body.error)
+      expect(result.presentation.main).not.toContain(code)
+    }
+  })
+
+  it("treats a live hash aimed at the retired escrow as already submitted", async () => {
+    const client = readyClient({ status: "success" })
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      secret: "sepolia-test-secret",
+      preview: dispute,
+      client,
+      fetchImpl: async () =>
+        jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: retiredEscrow }),
+    })
+    expect(client.waitForTransactionReceipt).not.toHaveBeenCalled()
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.code).toBe("retired_or_superseded_address")
+    expect(result.presentation.main).toBe("The claim relayer used a retired escrow. Check the transaction before you try again.")
+    expect(result.presentation.main.toLowerCase()).not.toContain("nothing was sent")
+    expect(result.presentation.link?.href).toBe(relayerTxUrl(txHash))
+    expect(result.presentation.detail).toBe("Details: 200 retired_or_superseded_address")
+  })
+})
+
+describe("relayer button", () => {
+  it("hides the relayer when the URL is unset and when the action is not a claim", () => {
+    expect(
+      relayerButtonModel({
+        url: null,
+        secret: "secret",
+        paused: false,
+        phase: "idle",
+        gate: { ok: true },
+        action: "dispute",
+      }).visible,
+    ).toBe(false)
+    expect(
+      relayerButtonModel({
+        url: relayerUrl,
+        secret: "secret",
+        paused: false,
+        phase: "idle",
+        gate: { ok: true },
+        action: "openDispute",
+      }).visible,
+    ).toBe(false)
+  })
+
+  it("disables the button with an explanation when the secret is missing or the relayer is paused", () => {
+    const secret = relayerButtonModel({
+      url: relayerUrl,
+      secret: null,
+      paused: false,
+      phase: "idle",
+      gate: { ok: true },
+      action: "dispute",
+    })
+    expect(secret).toMatchObject({ visible: true, disabled: true, note: RELAYER_SECRET_NOTE })
+    const paused = relayerButtonModel({
+      url: relayerUrl,
+      secret: "secret",
+      paused: true,
+      phase: "idle",
+      gate: { ok: true },
+      action: "release",
+    })
+    expect(paused).toMatchObject({ visible: true, disabled: true, note: RELAYER_PAUSED_NOTE })
+  })
+
+  it("disables the button while submitting and while waiting for confirmation", () => {
+    const submitting = relayerButtonModel({
+      url: relayerUrl,
+      secret: "secret",
+      paused: false,
+      phase: "submitting",
+      gate: { ok: true },
+      action: "dispute",
+    })
+    const waiting = relayerButtonModel({
+      url: relayerUrl,
+      secret: "secret",
+      paused: false,
+      phase: "confirming",
+      gate: { ok: true },
+      action: "refund",
+    })
+    expect(submitting).toMatchObject({ disabled: true, label: "Submitting through the claim relayer…" })
+    expect(waiting).toMatchObject({ disabled: true, label: "Waiting for confirmation…" })
+  })
+})
+
+describe("relayer health", () => {
+  it("reads the kill switch from /health and stays quiet when the check fails", async () => {
+    let target = ""
+    const paused = await readRelayerPaused({
+      url: `${relayerUrl}/`,
+      fetchImpl: async (url) => {
+        target = String(url)
+        return jsonResponse(200, { ok: true, killSwitch: true })
+      },
+    })
+    expect(paused).toBe(true)
+    expect(target).toBe(`${relayerUrl}/health`)
+    const open = await readRelayerPaused({
+      url: relayerUrl,
+      fetchImpl: async () => jsonResponse(200, { ok: true, killSwitch: false }),
+    })
+    expect(open).toBe(false)
+    const down = await readRelayerPaused({
+      url: relayerUrl,
+      fetchImpl: async () => {
+        throw new TypeError("Failed to fetch")
+      },
+    })
+    expect(down).toBeNull()
   })
 })
