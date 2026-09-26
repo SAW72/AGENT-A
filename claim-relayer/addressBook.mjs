@@ -10,6 +10,23 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 
+/**
+ * Previous Denylist, Vault, and retired escrow. Same pins as wallet-ux SUPERSEDED.
+ * Blocked even when a book omits `retired` / `superseded`.
+ */
+export const SUPERSEDED = {
+  denylist: "0xF0f260967D377E07Bdd7840862508ddB23C012b8",
+  vault: "0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7",
+  botAttestationEscrow: "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c",
+};
+
+/** Live replacements for the pinned superseded contracts. */
+const SUPERSEDED_CURRENT = {
+  [SUPERSEDED.denylist.toLowerCase()]: "0xeE76876bECcFc1B58fC06fF4E654a517d784B224",
+  [SUPERSEDED.vault.toLowerCase()]: "0x1463D664fA467FBCDA4B05443434494f05e565bc",
+  [SUPERSEDED.botAttestationEscrow.toLowerCase()]: "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
+};
+
 function bookError(error, extra = {}) {
   return Object.assign(new Error(error), { status: 500, error, ...extra });
 }
@@ -21,12 +38,108 @@ function optionalAddress(value) {
   return trimmed;
 }
 
-/** Deploy block used as the indexer/relayer start block. Missing or invalid is null. */
+function isMissingStartBlock(raw) {
+  if (raw === null || raw === undefined) return true;
+  if (typeof raw === "string" && raw.trim() === "") return true;
+  return false;
+}
+
+/**
+ * Non-negative integer block, or null when the value is missing or not a whole block.
+ * JSON null and "" are missing. Number(null) is 0, so null must not go through Number().
+ * @param {unknown} raw
+ * @returns {number | null}
+ */
+export function parseStartBlock(raw) {
+  if (isMissingStartBlock(raw)) return null;
+  if (typeof raw === "boolean") return null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!/^(0|[1-9]\d*)$/.test(trimmed)) return null;
+    const n = Number(trimmed);
+    if (!Number.isSafeInteger(n)) return null;
+    return n;
+  }
+  if (typeof raw === "number") {
+    if (!Number.isSafeInteger(raw) || raw < 0) return null;
+    return raw;
+  }
+  return null;
+}
+
+/** Deploy block used as the indexer/relayer start block. Missing or invalid is null, never 0-by-coercion. */
 function optionalStartBlock(slot) {
-  const raw = slot.deployBlock ?? slot.startBlock;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) return null;
-  return n;
+  if (!slot || typeof slot !== "object") return null;
+  const raw = !isMissingStartBlock(slot.deployBlock) ? slot.deployBlock : slot.startBlock;
+  return parseStartBlock(raw);
+}
+
+function addAddress(set, value) {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (!ADDRESS_RE.test(trimmed) || trimmed.toLowerCase() === ZERO_ADDRESS) return;
+  set.add(trimmed.toLowerCase());
+}
+
+function walkAddressFields(node, visit) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) walkAddressFields(item, visit);
+    return;
+  }
+  visit(node);
+  for (const value of Object.values(node)) {
+    if (value && typeof value === "object") walkAddressFields(value, visit);
+  }
+}
+
+/** Lowercased addresses under retired.* and superseded.*, plus the SUPERSEDED pins. */
+export function forbiddenAddresses(raw) {
+  const blocked = new Set(Object.values(SUPERSEDED).map((address) => address.toLowerCase()));
+  if (!raw || typeof raw !== "object") return blocked;
+  for (const section of [raw.retired, raw.superseded]) {
+    walkAddressFields(section, (node) => addAddress(blocked, node.address));
+  }
+  return blocked;
+}
+
+/** Lowercased retired/superseded address → current booked address (book supersededBy, else the pin). */
+export function replacementAddresses(raw) {
+  const map = new Map(Object.entries(SUPERSEDED_CURRENT));
+  if (!raw || typeof raw !== "object") return map;
+  for (const section of [raw.retired, raw.superseded]) {
+    walkAddressFields(section, (node) => {
+      if (typeof node.address !== "string") return;
+      const from = node.address.trim();
+      const current = typeof node.supersededBy === "string" ? node.supersededBy.trim() : "";
+      if (!ADDRESS_RE.test(from) || !ADDRESS_RE.test(current) || current.toLowerCase() === ZERO_ADDRESS) return;
+      map.set(from.toLowerCase(), current);
+    });
+  }
+  return map;
+}
+
+/**
+ * Refuse a configured contract that matches retired.* or a superseded address.
+ * Comparison is case-insensitive. The message names the rejected address and the current booking.
+ * @param {string | null | undefined} address
+ * @param {{ forbidden?: Set<string>, replacements?: Map<string, string> }} book
+ */
+export function rejectRetiredAddress(address, book = {}) {
+  if (!address) return;
+  const shown = String(address).trim();
+  const key = shown.toLowerCase();
+  const forbidden = book.forbidden || forbiddenAddresses(null);
+  if (!forbidden.has(key)) return;
+  const replacements = book.replacements || replacementAddresses(null);
+  const current = replacements.get(key) || SUPERSEDED_CURRENT[SUPERSEDED.botAttestationEscrow.toLowerCase()];
+  const message = `${shown} is retired/superseded. Current booked address is ${current}.`;
+  throw Object.assign(new Error(message), {
+    status: 400,
+    error: "retired_or_superseded_address",
+    address: shown,
+    current,
+  });
 }
 
 /**
@@ -58,6 +171,8 @@ export function loadAddressBook(filePath = DEFAULT_ADDRESS_BOOK) {
   }
 
   const bvtRaw = raw.BVT && typeof raw.BVT === "object" ? raw.BVT.address : null;
+  const forbidden = forbiddenAddresses(raw);
+  const replacements = replacementAddresses(raw);
   return {
     chainId: BASE_SEPOLIA_CHAIN_ID,
     network: "base-sepolia",
@@ -66,7 +181,11 @@ export function loadAddressBook(filePath = DEFAULT_ADDRESS_BOOK) {
     escrowStartBlock: optionalStartBlock(slot),
     escrowOwner: optionalAddress(slot.owner),
     disputePanelAddress: optionalAddress(raw.DisputePanel?.address),
+    denylistAddress: optionalAddress(raw.Denylist?.address),
+    vaultAddress: optionalAddress(raw.Vault?.address),
     coreTimelock: optionalAddress(raw.coreTimelock),
     bvtAddress: bvtRaw === null || bvtRaw === undefined || String(bvtRaw).trim() === "" ? null : optionalAddress(bvtRaw),
+    forbidden,
+    replacements,
   };
 }

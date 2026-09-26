@@ -4,7 +4,11 @@ Gas and ops service for the Agent A (Agent Auditor) claim flow. Default mode is 
 
 Public funding wallet (address only): `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` (`…31861`). The same EOA is booked as `claimRelayerWallet` in `deployments/base-sepolia.json`. It is not a contract. The hosted service derives it from `RELAYER_PRIVATE_KEY`. Never commit the private key.
 
-`BotAttestationEscrow` is booked in `deployments/base-sepolia.json` at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. The indexer and relayer start block is the deploy block `47345163` (`BOOKED_SEPOLIA_ESCROW_START_BLOCK`, also `BotAttestationEscrow.startBlock` in the address book). When `ESCROW_ADDRESS` is unset, health reports `escrowBooked: true` and that address (`escrowSource: "address_book"`). BVT is still null. Set `ESCROW_ADDRESS` to the zero address to force `escrowBooked: false`. The previous escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26) and is not a live submit target.
+`BotAttestationEscrow` is booked in `deployments/base-sepolia.json` at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. The indexer and relayer start block is the deploy block `47345163` (`BOOKED_SEPOLIA_ESCROW_START_BLOCK`, also `BotAttestationEscrow.startBlock` in the address book). When `ESCROW_ADDRESS` is unset, health reports `escrowBooked: true` and that address (`escrowSource: "address_book"`) with `escrowStartBlock: 47345163` and `escrowStartBlockSource: "address_book"`. BVT is still null. Set `ESCROW_ADDRESS` to the zero address to force `escrowBooked: false` (`escrowStartBlockSource: "unbooked"`).
+
+The booked start block is used only when the configured escrow is that booked contract (address-book block, or the constant when the book omits one). An `ESCROW_ADDRESS` override that points at a different contract does not inherit `47345163`. Set `ESCROW_START_BLOCK` to a non-negative integer for that contract, or leave it unset. Unset means `escrowStartBlock: null` and `escrowStartBlockSource: "unset"` on `/health`, plus a startup log. It does not mean block 0. A JSON `null`, an empty string, or a missing book `deployBlock` / `startBlock` is missing, not block 0. A present non-integer or negative `ESCROW_START_BLOCK` refuses to boot (`invalid_escrow_start_block`).
+
+Config load refuses any adopted address (escrow env or book, denylist, vault, dispute panel) that matches `retired.*`, `superseded.*`, or the wallet-ux superseded pins. Comparison ignores case and checksum. The previous escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26). Setting it as `ESCROW_ADDRESS` fails at boot: `retired_or_superseded_address`, and the message names that address and the current booked address `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`.
 
 ## HARD STOP
 
@@ -52,6 +56,8 @@ Tests use Node's built-in runner. They do not touch the network.
   "escrowBooked": true,
   "escrowAddress": "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
   "escrowSource": "address_book",
+  "escrowStartBlock": 47345163,
+  "escrowStartBlockSource": "address_book",
   "relayerAddress": "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
   "liveSubmit": false,
   "liveSubmitRequested": false,
@@ -162,7 +168,7 @@ CORS preflight allows `content-type`, `x-admin-secret`, `authorization`, and `x-
 | 401 | `unauthorized` | Admin route called with the wrong `ADMIN_SECRET`, or a live claim (gate open) without a matching `CLAIM_API_SECRET`. |
 | 404 | `not_found` | Unknown path. |
 
-Startup with `CHAIN_ID` other than `84532` refuses to boot (`mainnet_refused` or `wrong_chain`). `RELAYER_KEY_FILE` / `RELAYER_PRIVATE_KEY_FILE` refuse to boot. Keys stay in the environment.
+Startup with `CHAIN_ID` other than `84532` refuses to boot (`mainnet_refused` or `wrong_chain`). `RELAYER_KEY_FILE` / `RELAYER_PRIVATE_KEY_FILE` refuse to boot. A retired or superseded escrow, denylist, vault, or dispute panel refuses to boot (`retired_or_superseded_address`). A non-integer or negative `ESCROW_START_BLOCK` on a non-booked escrow refuses to boot (`invalid_escrow_start_block`). Keys stay in the environment.
 
 ## Kill switch
 

@@ -192,6 +192,8 @@ describe("claim relayer HTTP", () => {
       const health = await request(ctx.port, "GET", "/health");
       assert.equal(health.json.escrowBooked, true);
       assert.equal(health.json.escrowAddress, "0x3333333333333333333333333333333333333333");
+      assert.equal(health.json.escrowStartBlock, null);
+      assert.equal(health.json.escrowStartBlockSource, "unset");
       assert.equal(health.json.liveSubmit, false);
       assert.equal(health.json.mode, "fixture");
       assert.equal(health.json.liveSubmitRequested, true);
