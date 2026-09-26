@@ -8,7 +8,7 @@
 #   (b) Create the service from this Blueprint in the Render dashboard.
 # This PR does not move the file. It stays reference-only under claim-relayer/.
 #
-# Product name is Agent BV — Bot Verifier. The Render service slug stays bot-verifier-claim-relayer
+# Product name is Agent-BV — Bot Verifier. The Render service slug stays bot-verifier-claim-relayer
 # (intentional locked name; changing it is an import-breaking path). Spencer can
 # rename the slug later in the dashboard.
 #
@@ -36,7 +36,7 @@
 
 services:
   - type: web
-    # Agent BV product. Slug stays bot-verifier-claim-relayer unless Spencer
+    # Agent-BV product. Slug stays bot-verifier-claim-relayer unless Spencer
     # renames it in the Render dashboard.
     name: bot-verifier-claim-relayer
     runtime: node

@@ -147,7 +147,7 @@ def score_trace(trace: AgentTrace) -> Dict[str, Any]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Agentic Agent BV — Bot Verifier runner")
+    parser = argparse.ArgumentParser(description="Agentic Agent-BV — Bot Verifier runner")
     parser.add_argument("--target", default="grok", help="Bot under test")
     parser.add_argument("--scenario", default="agentic/scenarios/01_privilege_escalation.md")
     parser.add_argument("--max-turns", type=int, default=20)

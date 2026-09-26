@@ -1,5 +1,5 @@
 # Steward of the King LLC — Commercial Proprietary License
-# Agent BV (Bot Verifier), formerly AGENT-A
+# Agent-BV (Bot Verifier), formerly AGENT-A
 # DRAFT — not effective until Spencer clears and a signed order / invoice exists
 
 Copyright (c) 2026 Steward of the King LLC. All rights reserved under this commercial track.
@@ -13,11 +13,11 @@ Without an Order, this file does **not** grant any proprietary rights. Use the A
 
 ## 2. Grant
 
-Subject to timely payment of fees in the Order and compliance with this license and the Order, Steward grants Licensee a non-exclusive, non-transferable (except as the Order allows), worldwide license to use, modify, and deploy the Agent BV software identified in the Order **without** the copyleft / network-use source-disclosure obligations of the AGPL-3.0, solely for Licensee’s internal business purposes and any external use expressly listed in the Order.
+Subject to timely payment of fees in the Order and compliance with this license and the Order, Steward grants Licensee a non-exclusive, non-transferable (except as the Order allows), worldwide license to use, modify, and deploy the Agent-BV software identified in the Order **without** the copyleft / network-use source-disclosure obligations of the AGPL-3.0, solely for Licensee’s internal business purposes and any external use expressly listed in the Order.
 
 ## 3. What this commercial license buys (intent)
 
-Licensee is **not** required to release Licensee’s proprietary application source that merely uses or runs Agent BV under this commercial license, and is **not** required by this commercial license to publish modified Agent BV source solely because Licensee offers Agent BV functionality over a network — **provided** Licensee stays within the Order’s scope (seats, environments, redistribution rules).
+Licensee is **not** required to release Licensee’s proprietary application source that merely uses or runs Agent-BV under this commercial license, and is **not** required by this commercial license to publish modified Agent-BV source solely because Licensee offers Agent-BV functionality over a network — **provided** Licensee stays within the Order’s scope (seats, environments, redistribution rules).
 
 This does **not** waive AGPL obligations for any code Licensee obtained or distributes **under AGPL**, or for third-party AGPL components.
 
@@ -25,7 +25,7 @@ This does **not** waive AGPL obligations for any code Licensee obtained or distr
 
 Unless the Order expressly allows it, Licensee shall not:
 
-- sublicense, sell, rent, or redistribute Agent BV source or binaries to third parties as a standalone product;
+- sublicense, sell, rent, or redistribute Agent-BV source or binaries to third parties as a standalone product;
 - remove copyright, license, or NOTICE markings from Steward files;
 - use Steward’s names, marks, or “certified / insured / bank-ready” style claims beyond what Steward’s public disclaimers allow;
 - exceed seats, environments, or redistribution limits in the Order.
@@ -38,11 +38,11 @@ Steward may terminate this commercial license for material breach uncured within
 
 ## 6. Ownership
 
-Steward retains all right, title, and interest in Agent BV. No trademark license is granted except as needed to describe factual use of the software.
+Steward retains all right, title, and interest in Agent-BV. No trademark license is granted except as needed to describe factual use of the software.
 
 ## 7. Disclaimer; limitation of liability
 
-THE SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT PERMITTED BY LAW, STEWARD’S TOTAL LIABILITY UNDER THIS COMMERCIAL LICENSE IS LIMITED TO FEES PAID BY LICENSEE FOR THE SOFTWARE IN THE TWELVE (12) MONTHS BEFORE THE CLAIM. Agent BV IS AN EXPERIMENTAL INFORMATIONAL TOOL — NOT CERTIFICATION, INSURANCE, OR A SAFETY GUARANTEE.
+THE SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT PERMITTED BY LAW, STEWARD’S TOTAL LIABILITY UNDER THIS COMMERCIAL LICENSE IS LIMITED TO FEES PAID BY LICENSEE FOR THE SOFTWARE IN THE TWELVE (12) MONTHS BEFORE THE CLAIM. Agent-BV IS AN EXPERIMENTAL INFORMATIONAL TOOL — NOT CERTIFICATION, INSURANCE, OR A SAFETY GUARANTEE.
 
 ## 8. Governing law
 

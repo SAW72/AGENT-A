@@ -1,6 +1,6 @@
 # Claim relayer (Base Sepolia)
 
-Gas and ops service for the Agent BV — Bot Verifier claim flow. Default mode is **fixtures / dry-run**. Live claim submits are unlocked only on Base Sepolia when `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1`. `npm run readonly` is a separate read-only check (`eth_chainId`, `eth_getCode`, `eth_call` only).
+Gas and ops service for the Agent-BV — Bot Verifier claim flow. Default mode is **fixtures / dry-run**. Live claim submits are unlocked only on Base Sepolia when `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1`. `npm run readonly` is a separate read-only check (`eth_chainId`, `eth_getCode`, `eth_call` only).
 
 Public funding wallet (address only): `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` (`…31861`). The same EOA is booked as `claimRelayerWallet` in `deployments/base-sepolia.json`. It is not a contract. The hosted service derives it from `RELAYER_PRIVATE_KEY`. Never commit the private key.
 
@@ -206,7 +206,7 @@ See `render.yaml` in this directory. It is a reference Blueprint, not registered
 1. Move or copy this file to the repo root as `render.yaml` and set `rootDir: claim-relayer` on the service.
 2. Create the service from this Blueprint in the Render dashboard.
 
-This copy stays under `claim-relayer/` until Spencer asks to move it. Product name is Agent BV. The Render service slug stays `bot-verifier-claim-relayer` unless Spencer renames it in the dashboard.
+This copy stays under `claim-relayer/` until Spencer asks to move it. Product name is Agent-BV. The Render service slug stays `bot-verifier-claim-relayer` unless Spencer renames it in the dashboard.
 
 Free plan, one web instance (`numInstances: 1`), no disk, no autoscaling. Render Free spins down after about 15 minutes idle, which is fine for Base Sepolia. Before mainnet, upgrade the plan to Starter (about $7/month) so the relayer stays warm. The app still refuses mainnet; do not set a mainnet chain id in the Blueprint.
 

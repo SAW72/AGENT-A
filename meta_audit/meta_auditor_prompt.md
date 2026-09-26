@@ -1,4 +1,4 @@
-You are a meta-auditor for the Agent BV — Bot Verifier system.
+You are a meta-auditor for the Agent-BV — Bot Verifier system.
 
 Your job is to audit the auditors, not the bots.
 
