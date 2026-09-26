@@ -3,15 +3,15 @@
   "config_version": "sepolia-draft-0",
   "rule_version": "design-v2",
   "effective_from_block": 0,
-  "product": "Bot Verifier",
+  "product": "Agent BV",
   "chain": {
     "name": "Base Sepolia",
     "chain_id": 84532,
     "refused_chain_ids": [1, 8453]
   },
   "ledgers": {
-    "usage": "bot-verifier-sepolia-reputation",
-    "arbitrator": "bot-verifier-sepolia-arbitrator-rep",
+    "usage": "agent-bv-sepolia-reputation",
+    "arbitrator": "agent-bv-sepolia-arbitrator-rep",
     "never_summed": true
   },
   "contracts": {

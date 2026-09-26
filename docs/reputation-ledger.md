@@ -1,10 +1,10 @@
-# Bot Verifier reputation ledger (Base Sepolia)
+# Agent BV — Bot Verifier reputation ledger (Base Sepolia)
 
 Status: **draft for build and staging**. Spencer has not approved design note v2. This pull request stays a draft and must not be merged. Nothing here is a token, a claim, or a mainnet path.
 
 The rules are design note v2 (Tokenomics, 26 Sep 2026), sections 3, 4, 6, 7, and 9. Event layouts and start blocks follow Blockchain Builder's draft [PR #28](https://github.com/SAW72/AGENT-B.V./pull/28) (`docs/reputation/EVENT_MAP.md`, `docs/reputation/INDEXER_SPEC.md`, `config/reputation/sepolia.json`). That PR is docs only and is not on `main`. This service recomputes topic0 locally; the scored topics match that map. Where this document disagrees with PR #28, the difference is called out below and flagged for Tokenomics.
 
-Product name in this document: **Bot Verifier**. Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited.
+Product name: **Agent BV**. Contract names and addresses are unchanged. Stranded / GasRescue is not read and is not credited.
 
 ## Architecture
 
@@ -18,8 +18,8 @@ The ledger is a pure function of:
 
 | Ledger | Contents |
 | --- | --- |
-| `bot-verifier-sepolia-reputation` | O1–O5 and usage ADJ |
-| `bot-verifier-sepolia-arbitrator-rep` | A1, A2, and arbitrator ADJ |
+| `agent-bv-sepolia-reputation` | O1–O5 and usage ADJ |
+| `agent-bv-sepolia-arbitrator-rep` | A1, A2, and arbitrator ADJ |
 
 They are never added together, including in API objects. There is no `total`, `combined`, or `sum` field.
 

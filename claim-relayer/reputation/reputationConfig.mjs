@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BASE_SEPOLIA_CHAIN_ID, httpError } from "../config.mjs";
 
-export const USAGE_LEDGER = "bot-verifier-sepolia-reputation";
-export const ARBITRATOR_LEDGER = "bot-verifier-sepolia-arbitrator-rep";
+export const USAGE_LEDGER = "agent-bv-sepolia-reputation";
+export const ARBITRATOR_LEDGER = "agent-bv-sepolia-arbitrator-rep";
 export const CONFIG_DIR = fileURLToPath(new URL("../../config/reputation/", import.meta.url));
 
 const REFUSED = new Set([1, 8453]);

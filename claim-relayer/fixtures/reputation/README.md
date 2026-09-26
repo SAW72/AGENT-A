@@ -1,6 +1,6 @@
 # Example reputation responses
 
-These files are **example data** for Wallet UX. They are fixture output from the read API. They are not a live Base Sepolia scan, and the contracts have not emitted these logs.
+These files are **example data** for the Agent BV — Bot Verifier read API. They are fixture output, not a live Base Sepolia scan, and the contracts have not emitted these logs. The usage ledger id is `agent-bv-sepolia-reputation`. The arbitrator ledger id is `agent-bv-sepolia-arbitrator-rep`.
 
 | File | Request |
 | --- | --- |

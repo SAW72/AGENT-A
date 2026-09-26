@@ -9,12 +9,12 @@
     "chainId": 84532,
     "ledgers": {
       "usage": {
-        "ledger": "bot-verifier-sepolia-reputation",
+        "ledger": "agent-bv-sepolia-reputation",
         "final": 0,
         "provisional": 0
       },
       "arbitrator": {
-        "ledger": "bot-verifier-sepolia-arbitrator-rep",
+        "ledger": "agent-bv-sepolia-arbitrator-rep",
         "final": 0,
         "provisional": 0
       }
