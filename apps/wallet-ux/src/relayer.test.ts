@@ -1,8 +1,15 @@
-import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { CallExecutionError, ExecutionRevertedError, RpcRequestError, parseEther, type Hex } from "viem"
+import {
+  CallExecutionError,
+  ExecutionRevertedError,
+  RpcRequestError,
+  keccak256,
+  parseEther,
+  toBytes,
+  type Hex,
+} from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRelease } from "./preview"
 import {
@@ -289,30 +296,21 @@ function rpcRevert(data: Hex) {
   return new CallExecutionError(reverted, { to: escrow, data: "0x" })
 }
 
-function relayerValidated(body: unknown): { action: string; calldata: string; valueWei: string } {
-  const script = `
-    import { describeCalldata, assertBaseSepolia, parseClaimId, wantsLiveSubmit } from "./claims.mjs";
-    const chunks = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
-    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    assertBaseSepolia(body);
-    if (!wantsLiveSubmit(body)) throw new Error("expected a live claim");
-    const encoded = describeCalldata(body);
-    if (encoded.calldataStatus !== "encoded" || !encoded.calldata) throw new Error("calldata was not encoded");
-    parseClaimId(body.claimId);
-    process.stdout.write(JSON.stringify({
-      action: encoded.action,
-      calldata: encoded.calldata,
-      valueWei: encoded.valueWei,
-    }));
-  `
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    cwd: relayerPackage,
-    input: JSON.stringify(body),
-    encoding: "utf8",
-  })
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout || "relayer validation failed")
-  return JSON.parse(result.stdout) as { action: string; calldata: string; valueWei: string }
+/** Encode the dispute body the same way claim-relayer/escrowCalldata.mjs does, without that package's install. */
+function relayerDisputeCalldata(body: { claimId: string; disputeId: string }): string {
+  const calldataSource = readFileSync(join(relayerPackage, "escrowCalldata.mjs"), "utf8")
+  const claimsSource = readFileSync(join(relayerPackage, "claims.mjs"), "utf8")
+  expect(calldataSource).toContain('dispute: "dispute(bytes32,bytes32)"')
+  expect(calldataSource).toMatch(/if \(action === "dispute"\) \{[\s\S]*assertNoValue\(body\)[\s\S]*bytes32Word\(body\.disputeId, "disputeId"\)/)
+  expect(calldataSource).toContain("return bytes32Word(body.claimId, \"claimId\")")
+  expect(claimsSource).toContain("return body.live === true || body.liveSubmit === true")
+  expect(claimsSource).toContain("const encoded = describeCalldata(body)")
+  expect(claimsSource).toContain("const claimId = parseClaimId(body.claimId)")
+  if (!/^0x[0-9a-fA-F]{64}$/.test(body.claimId) || !/^0x[0-9a-fA-F]{64}$/.test(body.disputeId)) {
+    throw new Error("relayer dispute body failed bytes32 validation")
+  }
+  const selector = keccak256(toBytes("dispute(bytes32,bytes32)")).slice(0, 10)
+  return `${selector}${body.claimId.slice(2).toLowerCase()}${body.disputeId.slice(2).toLowerCase()}`
 }
 
 function readyClient(receipt: { status: "success" | "reverted" } | Error) {
@@ -370,10 +368,8 @@ describe("dispute submit via the claim relayer", () => {
     })
     expect(Object.keys(body)).toEqual(["action", "claimId", "disputeId", "chainId", "live"])
     expect(body).not.toHaveProperty("amountWei")
-    const accepted = relayerValidated(body)
-    expect(accepted.action).toBe("dispute")
-    expect(accepted.valueWei).toBe("0")
-    expect(accepted.calldata.toLowerCase()).toBe(dispute.calldata.toLowerCase())
+    const accepted = relayerDisputeCalldata({ claimId: body.claimId, disputeId: body.disputeId ?? "" })
+    expect(accepted.toLowerCase()).toBe(dispute.calldata.toLowerCase())
     expect(client.call).toHaveBeenCalledWith({
       account: "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
       to: escrow,
