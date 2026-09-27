@@ -18,8 +18,9 @@ import { ADDRESSES } from "./addresses"
 import { errorText, presentError } from "./format"
 import { ERROR_GLOSSARY } from "./preview"
 import { CLAIM_RELAYER_WALLET, submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
-import { RELAYER_PLAIN_TEXT } from "./relayer"
-import { REVERT_FALLBACK_TEXT, WALLET_CANCEL_TEXT } from "./revert"
+import { RELAYER_RECEIPT_REVERTED_TEXT, RELAYER_USER_TEXT } from "./relayer"
+import { REVERT_FALLBACK_TEXT, visibleDetail, WALLET_CANCEL_TEXT } from "./revert"
+import { durationValidationMessage, FORM_ERRORS, previewCardCopy, submitSenderNote } from "./submit"
 
 const escrow = ADDRESSES.botAttestationEscrow
 if (!escrow) throw new Error("booked escrow missing")
@@ -117,6 +118,20 @@ describe("ESC-M-1 revert text", () => {
     expect(presented.detail).toBe("Details: Error (0x08c379a0)")
     expect(presented.main).not.toContain("0x08c379a0")
     expect(presented.main).not.toContain("()")
+  })
+
+  it("hides the details line when Error(string) has an empty reason", () => {
+    for (const message of ["", "   "]) {
+      const data = encodeErrorResult({ abi: errorStringAbi, args: [message] })
+      const presented = presentError(rpcRevert(data))
+      expect(presented.main).toBe(REVERT_FALLBACK_TEXT)
+      expect(presented.detail).toBeNull()
+      expect(visibleDetail(presented.detail)).toBeNull()
+    }
+    expect(visibleDetail("Details: ")).toBeNull()
+    expect(visibleDetail("Details:")).toBeNull()
+    expect(visibleDetail("   ")).toBeNull()
+    expect(visibleDetail("Details: vault is paused for maintenance")).toBe("Details: vault is paused for maintenance")
   })
 
   it("uses plain English for an Error string that is not in the glossary", () => {
@@ -282,12 +297,17 @@ describe("preflight", () => {
     expect(notice).toContain('role="alert"')
     expect(styles).toContain("overflow-wrap: anywhere")
     expect(styles).toContain(".error-notice")
-    const relayer = source.slice(source.indexOf("async function onRelayer"))
-    const simulate = relayer.indexOf("submitRelayerAfterPreflight")
-    const post = relayer.indexOf("postLiveClaim")
-    expect(simulate).toBeGreaterThan(-1)
+    const relayer = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "relayer.ts"), "utf8")
+    const handler = relayer.slice(relayer.indexOf("export async function runRelayerSubmission"))
+    const claimBody = handler.indexOf("claimBodyFromPreview")
+    const simulate = handler.indexOf("submitRelayerAfterPreflight")
+    const post = handler.indexOf("postLiveClaim")
+    expect(claimBody).toBeGreaterThan(-1)
+    expect(simulate).toBeGreaterThan(claimBody)
     expect(post).toBeGreaterThan(simulate)
-    expect(relayer).toContain("presentRelayerError")
+    expect(handler).toContain("presentRelayerError")
+    expect(source).toContain("runRelayerSubmission")
+    expect(source).toContain("relayerFlight")
   })
 
   it("does not post to the claim relayer when the relayer-wallet simulation reverts", async () => {
@@ -344,24 +364,45 @@ describe("end-user main text", () => {
   ]
 
   it("keeps glossary sentences and fallback messages free of calls and identifiers", () => {
+    const actions = ["createEscrow", "release", "refund", "dispute", "openDispute"]
     const mains = [
       ...ERROR_GLOSSARY.map((entry) => entry.meaning),
       WALLET_CANCEL_TEXT,
       REVERT_FALLBACK_TEXT,
-      ...RELAYER_PLAIN_TEXT,
+      ...RELAYER_USER_TEXT,
+      ...Object.values(FORM_ERRORS),
+      durationValidationMessage(2_592_000),
+      ...actions.map((action) => submitSenderNote(action)),
+      ...actions.map((action) => previewCardCopy(action, true)),
+      ...actions.map((action) => previewCardCopy(action, false)),
       "This check only runs on the Base Sepolia network. Nothing was sent.",
       "The network client isn't ready, so nothing was sent.",
       "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",
       "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
     ]
+    const rejectsCode = (text: string) =>
+      text.includes("()") ||
+      /\b[a-z]+[A-Z][A-Za-z0-9]*\b/.test(text) ||
+      /\b[A-Z][A-Z0-9_]{3,}\b/.test(text) ||
+      /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/.test(text) ||
+      /0x[0-9a-fA-F]+/.test(text) ||
+      identifiers.some((name) => text.includes(name))
+    expect(rejectsCode("The relayer returned broadcast_failed.")).toBe(true)
+    expect(rejectsCode("See 0xabc for the raw payload.")).toBe(true)
+    expect(rejectsCode("dispute() needs escrowId")).toBe(true)
     for (const text of mains) {
       expect(text).not.toContain("()")
       expect(text).not.toMatch(/\b[a-z]+[A-Z][A-Za-z0-9]*\b/)
       expect(text).not.toMatch(/\b[A-Z][A-Z0-9_]{3,}\b/)
+      expect(text).not.toMatch(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/)
+      expect(text).not.toMatch(/0x[0-9a-fA-F]+/)
       for (const name of identifiers) {
         expect(text).not.toContain(name)
       }
+      expect(rejectsCode(text)).toBe(false)
     }
+    expect(REVERT_FALLBACK_TEXT).toContain("No funds moved")
+    expect(RELAYER_RECEIPT_REVERTED_TEXT).not.toContain("No funds moved")
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "not a party")?.meaning).toBe(
       "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",
     )

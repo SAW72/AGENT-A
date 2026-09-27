@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem"
 import { useAccount, usePublicClient, useSendTransaction } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
@@ -17,14 +17,29 @@ import {
   type CallPreview,
 } from "./preview"
 import {
-  claimBodyFromPreview,
-  postLiveClaim,
-  presentRelayerError,
+  readRelayerPaused,
+  RELAYER_CONFIRMED_TEXT,
+  RELAYER_SUBMITTED_TEXT,
+  RELAYER_SUBMITTING_TEXT,
+  RELAYER_TX_LINK_LABEL,
+  RELAYER_WAITING_TEXT,
+  relayerButtonModel,
   relayerConfigFromEnv,
   relayerSubmitAllowed,
+  relayerTxUrl,
+  runRelayerSubmission,
+  type RelayerPhase,
 } from "./relayer"
-import { submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
-import { assertSubmitTarget, evaluateEscrowSubmit, submitControl, submitSenderNote } from "./submit"
+import { submitAfterPreflight } from "./preflight"
+import {
+  assertSubmitTarget,
+  durationValidationMessage,
+  evaluateEscrowSubmit,
+  FORM_ERRORS,
+  previewCardCopy,
+  submitControl,
+  submitSenderNote,
+} from "./submit"
 import { useConnectorChainId } from "./useWalletChain"
 
 function notice(main: string): ErrorPresentation {
@@ -40,16 +55,42 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
   const { sendTransactionAsync, isPending } = useSendTransaction()
   const [txHash, setTxHash] = useState<Hex | null>(null)
   const [submitError, setSubmitError] = useState<ErrorPresentation | null>(null)
-  const [relayerPending, setRelayerPending] = useState(false)
+  const [relayerPhase, setRelayerPhase] = useState<RelayerPhase>("idle")
+  const [relayerPaused, setRelayerPaused] = useState(false)
+  const [pendingHash, setPendingHash] = useState<Hex | null>(null)
+  const [confirmedHash, setConfirmedHash] = useState<Hex | null>(null)
+  const relayerFlight = useRef(false)
   const relayer = relayerConfigFromEnv({
     VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL,
     VITE_CLAIM_API_SECRET: import.meta.env.VITE_CLAIM_API_SECRET,
   })
   const relayerGate = relayerSubmitAllowed({ walletConnected: account.isConnected, walletChainId })
-  const control = submitControl(decision, isPending || relayerPending)
+  const relayerBusy = relayerPhase !== "idle"
+  const control = submitControl(decision, isPending || relayerBusy)
+  const relayerButton = relayerButtonModel({
+    url: relayer.url,
+    secret: relayer.secret,
+    paused: relayerPaused,
+    phase: relayerPhase,
+    gate: relayerGate,
+    action: preview.functionName,
+  })
+
+  useEffect(() => {
+    if (!relayer.url) return
+    let cancelled = false
+    void readRelayerPaused({ url: relayer.url }).then((paused) => {
+      if (!cancelled && paused != null) setRelayerPaused(paused)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [relayer.url])
 
   async function onClick() {
     setSubmitError(null)
+    setConfirmedHash(null)
+    setPendingHash(null)
     const current = evaluateEscrowSubmit({
       walletConnected: account.isConnected,
       walletChainId: account.isConnected ? resolveWalletChainId(account.chainId, connectorChainId) : null,
@@ -89,7 +130,10 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
   }
 
   async function onRelayer() {
+    if (relayerFlight.current) return
     setSubmitError(null)
+    setConfirmedHash(null)
+    setPendingHash(null)
     const gate = relayerSubmitAllowed({
       walletConnected: account.isConnected,
       walletChainId: account.isConnected ? resolveWalletChainId(account.chainId, connectorChainId) : null,
@@ -99,35 +143,43 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       setSubmitError(notice(gate.reason))
       return
     }
-    if (!relayer.url) return
+    if (!relayer.url || !relayer.secret || relayerPaused) return
     if (!publicClient) {
       setTxHash(null)
       setSubmitError(notice("The network client isn't ready, so nothing was sent."))
       return
     }
-    setRelayerPending(true)
+    relayerFlight.current = true
+    setRelayerPhase("submitting")
+    setTxHash(null)
     try {
       assertSubmitTarget(preview.to, [escrow, panel])
       const url = relayer.url
       const secret = relayer.secret
-      const result = await submitRelayerAfterPreflight({
+      const outcome = await runRelayerSubmission({
+        url,
+        secret,
+        preview,
         client: publicClient,
-        to: preview.to,
-        data: preview.calldata,
-        value: preview.valueWei,
-        post: () =>
-          postLiveClaim({
-            url,
-            secret,
-            body: claimBodyFromPreview(preview),
-          }),
+        onPhase: (phase, hash) => {
+          setRelayerPhase(phase)
+          if (hash) setPendingHash(hash)
+        },
       })
-      setTxHash(result.txHash)
+      if (outcome.ok) {
+        setPendingHash(null)
+        setConfirmedHash(outcome.txHash)
+        return
+      }
+      setPendingHash(null)
+      setSubmitError(outcome.presentation)
+      if (outcome.code === "kill_switch") setRelayerPaused(true)
     } catch (cause) {
-      setTxHash(null)
-      setSubmitError(presentRelayerError(cause))
+      setPendingHash(null)
+      setSubmitError(presentError(cause))
     } finally {
-      setRelayerPending(false)
+      relayerFlight.current = false
+      setRelayerPhase("idle")
     }
   }
 
@@ -137,23 +189,55 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       <button type="button" data-testid={control.testId} disabled={control.disabled} onClick={() => void onClick()}>
         {control.label}
       </button>
-      {relayer.url ? (
-        <div>
-          <p>
-            Optional claim relayer on Base Sepolia. A matching VITE_CLAIM_API_SECRET is sent as x-claim-secret. A secret
-            in this static build is a soft deterrent only, not browser security. Render CORS must allow this origin.
-          </p>
+      {relayerButton.visible ? (
+        <div data-testid="relayer-panel">
+          <p>Submit through the claim relayer, or from your wallet.</p>
+          {relayerButton.note ? (
+            <p className="relayer-pending" role="status" data-testid="relayer-note">
+              {relayerButton.note}
+            </p>
+          ) : null}
+          {relayerPhase === "submitting" ? (
+            <p className="relayer-pending" role="status" data-testid="relayer-status">
+              {RELAYER_SUBMITTING_TEXT}
+            </p>
+          ) : null}
+          {relayerPhase === "confirming" && pendingHash ? (
+            <div className="relayer-pending" role="status" data-testid="relayer-status">
+              <p>{RELAYER_WAITING_TEXT}</p>
+              <p>{RELAYER_SUBMITTED_TEXT}</p>
+              <p>
+                <a href={relayerTxUrl(pendingHash)} data-testid="relayer-tx-link">
+                  {RELAYER_TX_LINK_LABEL}
+                </a>
+              </p>
+            </div>
+          ) : null}
           <button
             type="button"
             data-testid="relayer-submit"
-            disabled={!relayerGate.ok || relayerPending || isPending}
+            disabled={relayerButton.disabled || isPending}
+            aria-busy={relayerBusy}
             onClick={() => void onRelayer()}
           >
-            {!relayerGate.ok ? relayerGate.reason : relayerPending ? "Submitting via claim relayer…" : "Submit via claim relayer"}
+            {relayerButton.label}
           </button>
         </div>
       ) : null}
-      {submitError ? <ErrorNotice main={submitError.main} detail={submitError.detail} /> : null}
+      {confirmedHash ? (
+        <div className="relayer-ok" role="status" data-testid="relayer-result">
+          <p>{RELAYER_SUBMITTED_TEXT}</p>
+          <p>{RELAYER_CONFIRMED_TEXT}</p>
+          <p>
+            <a href={relayerTxUrl(confirmedHash)} data-testid="relayer-tx-link">
+              {RELAYER_TX_LINK_LABEL}
+            </a>
+          </p>
+        </div>
+      ) : null}
+      {submitError ? (
+        <ErrorNotice main={submitError.main} detail={submitError.detail} link={submitError.link} />
+      ) : null}
       {txHash ? (
         <p className="mono" data-testid="submit-tx">
           Submitted {txHash}
@@ -177,14 +261,8 @@ function PreviewBlock({
   if (!preview) return null
   return (
     <div className="preview" data-testid="calldata-preview">
-      <p>
-        Calldata for <strong>{preview.functionName}</strong>. Submit sends it from the connected wallet on Base Sepolia
-        only.
-        {relayerConfigured
-          ? " Escrow actions can also be posted live to the Base Sepolia claim relayer."
-          : ""}
-      </p>
-      <p className="mono">to {preview.to}</p>
+      <p>{previewCardCopy(preview.functionName, relayerConfigured)}</p>
+      <p className="mono">{preview.to}</p>
       <p>value {formatEther(preview.valueWei)} ETH</p>
       <pre className="calldata">{preview.calldata}</pre>
       <SepoliaSubmit key={preview.calldata} preview={preview} escrow={escrow} panel={panel} />
@@ -229,10 +307,10 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
 
   return (
     <div>
-      <h3>Calldata preview</h3>
+      <h3>Prepared transaction</h3>
       <p className="muted">
-        Forms build calldata, then the connected wallet can submit on Base Sepolia (chain id {BASE_SEPOLIA_CHAIN_ID}).
-        Ethereum mainnet and Base mainnet are refused. There is no EIP-712 stamp.
+        These forms prepare a transaction, then the connected wallet can submit it on Base Sepolia, chain{" "}
+        {BASE_SEPOLIA_CHAIN_ID}. Ethereum mainnet and Base mainnet are refused.
       </p>
       <CreateForm
         escrow={escrow}
@@ -244,7 +322,9 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
       />
       <IdForm
         idPrefix="release"
-        title="release(escrowId)"
+        title="Release a claim"
+        buttonLabel="Prepare this payout"
+        missingId={FORM_ERRORS.releaseId}
         onSubmit={(escrowId) => show(previewRelease(escrow, escrowId))}
         onError={(message) => {
           setPreview(null)
@@ -253,7 +333,9 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
       />
       <IdForm
         idPrefix="refund"
-        title="refund(escrowId)"
+        title="Refund a claim"
+        buttonLabel="Prepare this refund"
+        missingId={FORM_ERRORS.refundId}
         onSubmit={(escrowId) => show(previewRefund(escrow, escrowId))}
         onError={(message) => {
           setPreview(null)
@@ -317,27 +399,27 @@ function CreateForm({
     const payerBot = parseBytes32(payerBotId)
     const payeeBot = parseBytes32(payeeBotId)
     if (!id || !payerBot || !payeeBot) {
-      onError("createEscrow needs three bytes32 values.")
+      onError(FORM_ERRORS.createIds)
       return
     }
     if (!isAddress(payee)) {
-      onError("payee must be an address.")
+      onError(FORM_ERRORS.payee)
       return
     }
     const durationSeconds = Number(duration)
     if (!Number.isInteger(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_DURATION_SECONDS) {
-      onError(`durationSeconds must be a whole number from 1 through ${MAX_DURATION_SECONDS} (30 days).`)
+      onError(durationValidationMessage(MAX_DURATION_SECONDS))
       return
     }
     let valueWei: bigint
     try {
       valueWei = parseEther(value.trim())
     } catch {
-      onError("value must be an ETH amount, such as 0.01.")
+      onError(FORM_ERRORS.valueFormat)
       return
     }
     if (valueWei <= 0n) {
-      onError("value must be greater than 0. The preview still is not sent.")
+      onError(FORM_ERRORS.valueZero)
       return
     }
     onPreview(
@@ -355,26 +437,26 @@ function CreateForm({
 
   return (
     <form onSubmit={onSubmit}>
-      <h3>createEscrow</h3>
-      <Field id="create-id" label="escrowId" value={escrowId} onChange={setEscrowId} />
-      <Field id="create-payee" label="payee" value={payee} onChange={setPayee} />
-      <Field id="create-payer-bot" label="payerBotId" value={payerBotId} onChange={setPayerBotId} />
-      <Field id="create-payee-bot" label="payeeBotId" value={payeeBotId} onChange={setPayeeBotId} />
+      <h3>Create a claim</h3>
+      <Field id="create-id" label="Claim identifier" value={escrowId} onChange={setEscrowId} />
+      <Field id="create-payee" label="Payee wallet" value={payee} onChange={setPayee} />
+      <Field id="create-payer-bot" label="Payer bot identifier" value={payerBotId} onChange={setPayerBotId} />
+      <Field id="create-payee-bot" label="Payee bot identifier" value={payeeBotId} onChange={setPayeeBotId} />
       <Field
         id="create-duration"
-        label="durationSeconds"
+        label="Time window in seconds"
         value={duration}
         onChange={setDuration}
-        hint={`Greater than 0 and at most ${MAX_DURATION_SECONDS} (30 days).`}
+        hint={`Greater than 0 and at most ${MAX_DURATION_SECONDS}, which is 30 days.`}
       />
       <Field
         id="create-value"
-        label="value (ETH)"
+        label="Amount in ETH"
         value={value}
         onChange={setValue}
-        hint="This is msg.value if you submit on Base Sepolia. The connected wallet must be the payer's Vault operator."
+        hint="This amount is sent with the transaction on Base Sepolia. The connected wallet must be allowed to fund claims for the payer."
       />
-      <button type="submit">Build createEscrow calldata</button>
+      <button type="submit">Prepare this claim</button>
     </form>
   )
 }
@@ -382,11 +464,15 @@ function CreateForm({
 function IdForm({
   idPrefix,
   title,
+  buttonLabel,
+  missingId,
   onSubmit,
   onError,
 }: {
   idPrefix: string
   title: string
+  buttonLabel: string
+  missingId: string
   onSubmit: (escrowId: `0x${string}`) => void
   onError: (message: string) => void
 }) {
@@ -397,15 +483,15 @@ function IdForm({
         event.preventDefault()
         const id = parseBytes32(escrowId)
         if (!id) {
-          onError(`${title} needs a bytes32 escrowId.`)
+          onError(missingId)
           return
         }
         onSubmit(id)
       }}
     >
       <h3>{title}</h3>
-      <Field id={`${idPrefix}-id`} label="escrowId" value={escrowId} onChange={setEscrowId} />
-      <button type="submit">Build {title} calldata</button>
+      <Field id={`${idPrefix}-id`} label="Claim identifier" value={escrowId} onChange={setEscrowId} />
+      <button type="submit">{buttonLabel}</button>
     </form>
   )
 }
@@ -430,28 +516,28 @@ function OpenDisputeForm({
         const id = parseBytes32(disputeId)
         const subject = parseBytes32(subjectHash)
         if (!id || !subject) {
-          onError("openDispute needs disputeId and subjectHash bytes32 values. subjectHash is the escrow id.")
+          onError(FORM_ERRORS.openIds)
           return
         }
         if (reason.trim().length === 0) {
-          onError("openDispute needs a reason string.")
+          onError(FORM_ERRORS.openReason)
           return
         }
         onPreview(previewOpenDispute(panel, id, subject, reason.trim()))
       }}
     >
-      <h3>DisputePanel.openDispute</h3>
-      <Field id="open-dispute-id" label="disputeId" value={disputeId} onChange={setDisputeId} />
+      <h3>Open a dispute</h3>
+      <Field id="open-dispute-id" label="Dispute identifier" value={disputeId} onChange={setDisputeId} />
       <Field
         id="open-subject"
-        label="subjectHash"
+        label="Claim identifier"
         value={subjectHash}
         onChange={setSubjectHash}
-        hint="Use the escrow id. The panel stores this as the subject."
+        hint="Use the claim identifier. The panel stores this as the subject."
       />
-      <Field id="open-reason" label="reason" value={reason} onChange={setReason} />
-      <button type="submit">Build openDispute calldata</button>
-      <p className="hint">Target {panel}</p>
+      <Field id="open-reason" label="Reason" value={reason} onChange={setReason} />
+      <button type="submit">Prepare this dispute</button>
+      <p className="mono">{panel}</p>
     </form>
   )
 }
@@ -473,17 +559,21 @@ function DisputeForm({
         event.preventDefault()
         const id = parseBytes32(escrowId)
         const dispute = parseBytes32(disputeId)
-        if (!id || !dispute) {
-          onError("dispute() needs escrowId and disputeId bytes32 values.")
+        if (!id) {
+          onError(FORM_ERRORS.disputeClaim)
+          return
+        }
+        if (!dispute) {
+          onError(FORM_ERRORS.disputeId)
           return
         }
         onPreview(previewDispute(escrow, id, dispute))
       }}
     >
-      <h3>Escrow.dispute</h3>
-      <Field id="escrow-dispute-id" label="escrowId" value={escrowId} onChange={setEscrowId} />
-      <Field id="escrow-dispute-panel-id" label="disputeId" value={disputeId} onChange={setDisputeId} />
-      <button type="submit">Build dispute calldata</button>
+      <h3>Link a dispute</h3>
+      <Field id="escrow-dispute-id" label="Claim identifier" value={escrowId} onChange={setEscrowId} />
+      <Field id="escrow-dispute-panel-id" label="Dispute identifier" value={disputeId} onChange={setDisputeId} />
+      <button type="submit">Prepare this dispute link</button>
     </form>
   )
 }

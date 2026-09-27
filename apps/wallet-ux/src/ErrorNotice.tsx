@@ -1,8 +1,24 @@
-export function ErrorNotice({ main, detail }: { main: string; detail?: string | null }) {
+import { visibleDetail } from "./revert"
+
+export function ErrorNotice({
+  main,
+  detail,
+  link,
+}: {
+  main: string
+  detail?: string | null
+  link?: { href: string; label: string } | null
+}) {
+  const shown = visibleDetail(detail)
   return (
     <div className="error-notice" role="alert">
       <p className="error-notice-main">{main}</p>
-      {detail ? <p className="error-notice-detail">{detail}</p> : null}
+      {link ? (
+        <p className="error-notice-detail">
+          <a href={link.href}>{link.label}</a>
+        </p>
+      ) : null}
+      {shown ? <p className="error-notice-detail">{shown}</p> : null}
     </div>
   )
 }

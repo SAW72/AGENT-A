@@ -3,6 +3,8 @@ import { ADDRESSES, BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import {
   assertSubmitTarget,
   evaluateEscrowSubmit,
+  FORM_ERRORS,
+  previewCardCopy,
   submitControl,
   submitSenderNote,
 } from "./submit"
@@ -60,8 +62,20 @@ describe("submit target", () => {
     )
   })
 
-  it("states that createEscrow depends on the Vault operator", () => {
-    expect(submitSenderNote("createEscrow")).toMatch(/Vault operator/)
-    expect(submitSenderNote("release")).toMatch(/permissionless/)
+  it("states who sends each prepared transaction in plain English", () => {
+    expect(submitSenderNote("createEscrow")).toMatch(/allowed to fund claims for the payer/)
+    expect(submitSenderNote("release")).toMatch(/Anyone can send a payout or a refund/)
+    expect(submitSenderNote("dispute")).toBe("The payer or the payee has to send this. The connected wallet is the sender.")
+    expect(previewCardCopy("dispute", false)).toBe(
+      "This prepares linking a dispute to a claim. Submit sends it from the connected wallet on Base Sepolia only.",
+    )
+    expect(previewCardCopy("dispute", true)).toMatch(/claim relayer on Base Sepolia/)
+    expect(previewCardCopy("openDispute", true)).not.toMatch(/claim relayer/)
+    expect(FORM_ERRORS.disputeClaim).toBe("Enter the claim identifier before opening a dispute.")
+    for (const text of [submitSenderNote("dispute"), previewCardCopy("dispute", true), FORM_ERRORS.disputeClaim]) {
+      expect(text).not.toMatch(/[()]/)
+      expect(text).not.toMatch(/0x[0-9a-fA-F]+/)
+      expect(text).not.toMatch(/\b[a-z]+[A-Z][A-Za-z0-9]*\b/)
+    }
   })
 })

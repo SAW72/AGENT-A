@@ -2,8 +2,7 @@ import { useEffect, useState, type FormEvent } from "react"
 import { matchLevelLabel, parseBytes32 } from "./bytes32"
 import { errorText } from "./format"
 import { readCheck, readMembership, type Membership, type SepoliaClient } from "./read"
-
-const HASH_HINT = "32-byte hex (64 characters). The 0x prefix is optional."
+import { FORM_ERRORS } from "./submit"
 
 export function DenylistLookup({
   client,
@@ -36,7 +35,7 @@ export function DenylistLookup({
     setError(null)
     const parsed = parseBytes32(hash)
     if (!parsed) {
-      setError(`Enter one bytes32 hash. ${HASH_HINT}`)
+      setError(FORM_ERRORS.denylistHash)
       return
     }
     if (!enabled) {
@@ -61,7 +60,7 @@ export function DenylistLookup({
     const behaviorSig = parseBytes32(signature)
     const promptHash = parseBytes32(prompt)
     if (!weightHash || !behaviorSig || !promptHash) {
-      setError(`check() needs three bytes32 values. ${HASH_HINT}`)
+      setError(FORM_ERRORS.denylistCheck)
       return
     }
     if (!enabled) {
