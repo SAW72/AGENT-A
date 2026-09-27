@@ -8,9 +8,15 @@ Wallet UX is a static Vite app. The claim relayer stays on Render (`claim-relaye
 
 ## Manual deploy
 
-Publish from GitHub with **Actions → Deploy wallet-ux → Run workflow** on `main`. The workflow is [`.github/workflows/deploy-wallet-ux.yml`](../../.github/workflows/deploy-wallet-ux.yml). `on` is `workflow_dispatch` only, so a push or a pull request does not publish. The run deploys the ref it is dispatched on. Choose `main`. Leave the input `embed_claim_secret` at its default, `false`.
+Publish from GitHub with **Actions → Deploy wallet-ux → Run workflow** on `main`. The workflow is [`.github/workflows/deploy-wallet-ux.yml`](../../.github/workflows/deploy-wallet-ux.yml). `on` is `workflow_dispatch` only, so a push or a pull request does not publish. Leave the input `embed_claim_secret` at its default, `false`.
 
-The job uses Node.js 22, the same version as the `wallet-ux` job in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) and as `.node-version` in this directory. It checks out that ref, then in `apps/wallet-ux` runs `npm ci`, `npm test`, and `npm run build`, checks `dist`, and uploads `dist` with `cloudflare/wrangler-action` v3.15.0 (`9acf94ace14e7dc412b076f2c5c20b8ce93c79cd`). That release installs Wrangler 3.90.0. The upload command is `pages deploy dist --project-name=agent-a-wallet-ux --branch=main`, plus the commit hash of the dispatched ref.
+The job runs only when `github.ref` is `refs/heads/main`. Its first step exits with an error if that ref is anything else. The job uses the GitHub Environment `production`. Spencer should restrict that environment's deployment branches to `main`, and can add required reviewers so a run waits for approval before it uploads.
+
+The job token permission is `contents: read`. It uses Node.js 22, from `.node-version` in this directory. There is no `.nvmrc`, and `package.json` has no `engines` field. That is the same major as the `wallet-ux` job in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). The job checks out that ref, then in `apps/wallet-ux` runs `npm ci`, `npm test`, and `npm run build`. Checkout is `actions/checkout` v7.0.1 (`3d3c42e5aac5ba805825da76410c181273ba90b1`). Node setup is `actions/setup-node` v7.0.0 (`820762786026740c76f36085b0efc47a31fe5020`). The job timeout is 15 minutes.
+
+Upload uses `cloudflare/wrangler-action` v4.1.3 (`953926a2e2182532811c01a25e53647d93bf07c0`), the latest v4 release. That release installs Wrangler 4 by default. The action is not given `gitHubToken`, and the workflow does not grant `deployments: write`.
+
+Direct Upload has no native promote. The job first uploads `dist` with `--branch=preview-<run id>`. It downloads that deployment's `index.html` and JavaScript and runs the bundle checks. Only after those checks pass does it upload the same `dist` again with `--branch=main`. That second upload is the production deployment. Both commands also pass the commit hash of the dispatched ref.
 
 The workflow does nothing until Spencer adds `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. If either is empty, the job fails before `npm ci` and does not upload. A default run does not pass `VITE_CLAIM_API_SECRET` into the build.
 
@@ -54,7 +60,7 @@ From `apps/wallet-ux`, with `VITE_CLAIM_RELAYER_URL` set if you want the disable
 npm ci && npm run build && npx wrangler pages deploy dist --project-name=agent-a-wallet-ux --branch=main
 ```
 
-That matches a default workflow run (`embed_claim_secret` false): the upload has no relayer submit. `dist/` is gitignored.
+That matches a default build (`embed_claim_secret` false): the upload has no relayer submit. `dist/` is gitignored. The workflow's own upload is two steps, preview branch then `main`, because direct upload has no promote. A local upload with `--branch=main` publishes production directly and skips the preview checks.
 
 Setting `VITE_CLAIM_API_SECRET` for a local build embeds it in the public bundle, the same as checking `embed_claim_secret`. Leave it unset. Relayer submit comes back with the EIP-712 signed-intent work, tracked separately.
 
@@ -74,11 +80,13 @@ The workflow fails the deploy unless `dist/assets` contains the live BotAttestat
 - `Submitting through the claim relayer` (`src/relayer.ts`)
 - `Submit through the claim relayer, or from your wallet.` (`src/FlowPreview.tsx`)
 
-The retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is intentionally bundled as a blocked/superseded address. The guard does not fail when that address is present.
+When `embed_claim_secret` is false and `VITE_CLAIM_API_SECRET` is non-empty, the job also fails if `dist` or a served bundle contains that secret. The scan uses `grep -F -q` with the value in the environment and does not print it. It checks the raw value and these encodings: standard base64 with and without padding, URL-safe base64 with and without padding, URL-encoding, hex (lowercase and uppercase), and JSON escaping. An empty secret skips that scan. The scan does not run when `embed_claim_secret` is true.
 
-When `embed_claim_secret` is false and `VITE_CLAIM_API_SECRET` is non-empty, the job also fails if `dist` contains that secret. The scan uses `grep -F` with the value in the environment and does not print it. An empty secret skips that scan. The scan does not run when `embed_claim_secret` is true.
+[`scripts/guard-escrow-addresses.mjs`](scripts/guard-escrow-addresses.mjs) imports `ADDRESSES`, `FALLBACK_PIN`, and `SUPERSEDED`. `SUPERSEDED` in [`src/book.ts`](src/book.ts) is the blocked-address list. The script requires `ADDRESSES.botAttestationEscrow` and `FALLBACK_PIN.botAttestationEscrow` to be the live escrow, and `SUPERSEDED.botAttestationEscrow` to be the retired escrow. It fails if any live `ADDRESSES` slot is the retired escrow.
 
-After the upload, the job downloads the deployment URL (`deployment-url` from wrangler-action), fetches `index.html` and each `/assets/*.js` file it references, and runs those same two checks on the served JavaScript. Either check failing fails the job.
+The retired address also appears in the top-level `notes` string of [`src/base-sepolia.json`](src/base-sepolia.json), which records that the previous escrow is retired. That sentence is not the `SUPERSEDED` literal, so the bundle does not contain the address only inside the blocked-list literal. The script allowlists three client sources: the `SUPERSEDED` entry, `retired.BotAttestationEscrow.address`, and that notes sentence. Any other client occurrence fails the job. The built `dist` and each served bundle must contain the retired address exactly as many times as those allowlisted sources. At this commit that count is 3.
+
+After each upload, the job reads the `deployment-url` output, fetches `index.html`, the `/assets/*.js` files it references, and any same-directory `./chunk.js` imports, and runs the live-escrow, phrase, retired-address count, and claim-secret checks on that JavaScript. A failed check stops the job before the production upload, or fails the job if the production upload already happened.
 
 ## Project settings
 
