@@ -3,7 +3,7 @@ import { assertDenylistBucket } from "../denylistBucket.mjs";
 
 /**
  * Business and signal events. topic0 is keccak256 of the canonical signature.
- * Governance-only topics (ownership, live 1-field VaultUpdated) are ignored.
+ * Governance-only topics (ownership, retired 1-field and live 4-field VaultUpdated) are ignored.
  * Indexed flags match contracts/Vault.sol, BotAttestationEscrow.sol, DisputePanel.sol, Denylist.sol
  * and docs/reputation/EVENT_MAP.md in PR #28.
  */

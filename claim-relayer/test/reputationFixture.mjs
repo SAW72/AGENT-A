@@ -2,7 +2,7 @@ import { getAddress } from "viem";
 import { encodeEventData } from "../reputation/codec.mjs";
 
 export const VAULT = "0x1463D664fA467FBCDA4B05443434494f05e565bc";
-export const ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c";
+export const ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
 export const PANEL = "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb";
 export const DENYLIST = "0xeE76876bECcFc1B58fC06fF4E654a517d784B224";
 

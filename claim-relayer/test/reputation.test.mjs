@@ -205,7 +205,7 @@ describe("reputation config", () => {
     assert.equal(raw.floors.o3_min_set_duration_seconds.value, 3600);
     assert.equal(raw.day_implementation.value, "utc_day_by_block_timestamp");
     assert.equal(loaded.latest.contracts.vault.start_block, 47294164);
-    assert.equal(loaded.latest.contracts.escrow.start_block, 47299930);
+    assert.equal(loaded.latest.contracts.escrow.start_block, 47345163);
     assert.equal(loaded.latest.contracts.dispute_panel.start_block, 47253020);
     const book = JSON.parse(readFileSync(new URL("../../deployments/base-sepolia.json", import.meta.url), "utf8"));
     assert.equal(loaded.latest.contracts.vault.address, book.Vault.address);
@@ -796,7 +796,7 @@ describe("dedup, chain, finality, hooks, and separation", () => {
   });
 
   it("ignores governance noise, pre-deploy logs, and denylist listings as points", () => {
-    const liveVaultUpdated = {
+    const retiredVaultUpdated = {
       address: ESCROW,
       topics: ["0x161584aed96e7f34998117c9ad67e2d21ff46d2a42775c22b11ed282f3c7b2cd"],
       data: "0x",
@@ -804,6 +804,16 @@ describe("dedup, chain, finality, hooks, and separation", () => {
       logIndex: 0,
       blockHash: bytes32(0x444),
       transactionHash: bytes32(0x555),
+      blockTimestamp: dayTs(80, 1),
+    };
+    const liveVaultUpdated = {
+      address: ESCROW,
+      topics: ["0x98bd850118a3b2adf2899b547ed110d0a68397fc64ca0b49a55802aeb08a385d"],
+      data: "0x",
+      blockNumber: BLOCK0 + 1,
+      logIndex: 1,
+      blockHash: bytes32(0x444),
+      transactionHash: bytes32(0x556),
       blockTimestamp: dayTs(80, 1),
     };
     const early = operatorSet(1, OPERATOR, 47294163, 0, 1);
@@ -824,6 +834,7 @@ describe("dedup, chain, finality, hooks, and separation", () => {
     });
     const kept = operatorSet(1, OPERATOR, BLOCK0 + 4, 80, 3);
     const result = play([
+      retiredVaultUpdated,
       liveVaultUpdated,
       early,
       listed,

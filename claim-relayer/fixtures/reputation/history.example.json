@@ -18,7 +18,7 @@
         "outcome_code": "O4",
         "points": 0,
         "status": "final",
-        "source_contract": "0x141214f04b0e1d949b6e6bf32d019ad7ab5b284c",
+        "source_contract": "0x1069aa6597f08f1e8b8ad39aa40ede1d0c77298d",
         "event_names": [
           "EscrowCreated",
           "DisputeOpened",
