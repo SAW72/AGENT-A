@@ -3,6 +3,7 @@ import { createClaimRelayer } from "./app.mjs";
 import { createSepoliaBroadcaster } from "./broadcast.mjs";
 import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, loadConfig } from "./config.mjs";
 import { createClaimLog } from "./claimLog.mjs";
+import { createEscrowRpc } from "./escrowExists.mjs";
 import { createKillSwitch } from "./killSwitch.mjs";
 import { createNonceStore } from "./nonceStore.mjs";
 
@@ -15,13 +16,15 @@ export function startServer(env = process.env) {
   const killSwitch = createKillSwitch({ initial: config.killSwitchInitial });
   const nonceStore = createNonceStore();
   const claimLog = createClaimLog({ filePath: config.claimLogPath });
+  const rpcUrl = env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  const rpc = createEscrowRpc({ rpcUrl });
   const broadcaster = config.liveSubmit.allowed
     ? createSepoliaBroadcaster({
-        rpcUrl: env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+        rpcUrl,
         privateKey: env.RELAYER_PRIVATE_KEY,
       })
     : null;
-  const server = createClaimRelayer({ config, killSwitch, nonceStore, claimLog, broadcaster });
+  const server = createClaimRelayer({ config, killSwitch, nonceStore, claimLog, broadcaster, rpc });
   const mode = config.liveSubmit.allowed ? "live" : "fixture";
   server.listen(config.port, config.host, () => {
     console.log(

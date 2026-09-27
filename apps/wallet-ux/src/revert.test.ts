@@ -10,14 +10,28 @@ import {
   RpcRequestError,
   UserRejectedRequestError,
   encodeErrorResult,
+  encodeFunctionData,
   type Hex,
 } from "viem"
 import { describe, expect, it, vi } from "vitest"
 import { escrowAbi } from "./abi"
 import { ADDRESSES } from "./addresses"
 import { errorText, presentError } from "./format"
-import { ERROR_GLOSSARY } from "./preview"
-import { CLAIM_RELAYER_WALLET, submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
+import {
+  previewCreateEscrow,
+  previewDispute,
+  previewOpenDispute,
+  previewRefund,
+  previewRelease,
+  ERROR_GLOSSARY,
+} from "./preview"
+import {
+  CLAIM_RELAYER_WALLET,
+  ESCROW_NOT_FOUND_TEXT,
+  ESCROW_READ_FAILED_TEXT,
+  submitAfterPreflight,
+  submitRelayerAfterPreflight,
+} from "./preflight"
 import { RELAYER_RECEIPT_REVERTED_TEXT, RELAYER_USER_TEXT } from "./relayer"
 import { REVERT_FALLBACK_TEXT, visibleDetail, WALLET_CANCEL_TEXT } from "./revert"
 import { durationValidationMessage, FORM_ERRORS, previewCardCopy, submitSenderNote } from "./submit"
@@ -340,6 +354,125 @@ describe("preflight", () => {
       expect(presentError(cause).main).toBe("This dispute is already resolved, so it can't be linked to this claim.")
     }
   })
+
+  it("blocks release, refund, dispute, and open dispute when the claim id was never created", async () => {
+    const panel = ADDRESSES.disputePanel
+    if (!panel) throw new Error("booked panel missing")
+    const claimId = `0x${"11".repeat(32)}` as Hex
+    const disputeId = `0x${"22".repeat(32)}` as Hex
+    const previews = [
+      previewRelease(escrow, claimId),
+      previewRefund(escrow, claimId),
+      previewDispute(escrow, claimId, disputeId),
+      previewOpenDispute(panel, disputeId, claimId, "late delivery"),
+    ]
+    const usedCall = encodeFunctionData({ abi: escrowAbi, functionName: "usedEscrowIds", args: [claimId] })
+    for (const preview of previews) {
+      const send = vi.fn()
+      const calls: Array<{ to: string; data: Hex; blockTag?: string }> = []
+      const client = {
+        call: vi.fn(async (args: { to: string; data: Hex; blockTag?: string }) => {
+          calls.push(args)
+          return { data: `0x${"0".repeat(64)}` as Hex }
+        }),
+      }
+      await expect(
+        submitAfterPreflight({
+          chainId: 84532,
+          client,
+          account: "0x000000000000000000000000000000000000dEaD",
+          to: preview.to,
+          data: preview.calldata,
+          value: preview.valueWei,
+          escrow,
+          send,
+        }),
+      ).rejects.toThrow(ESCROW_NOT_FOUND_TEXT)
+      expect(send).not.toHaveBeenCalled()
+      expect(calls).toEqual([{ to: escrow, data: usedCall, blockTag: "latest" }])
+      try {
+        await submitAfterPreflight({
+          chainId: 84532,
+          client,
+          to: preview.to,
+          data: preview.calldata,
+          value: preview.valueWei,
+          escrow,
+          send,
+        })
+      } catch (cause) {
+        const presented = presentError(cause)
+        expect(presented.main).toBe(ESCROW_NOT_FOUND_TEXT)
+        expect(presented.detail).toBe("Details: escrow_not_found")
+        expect(presented.main).not.toMatch(/0x/)
+        expect(presented.main).not.toContain("escrow_not_found")
+      }
+    }
+  })
+
+  it("simulates an existing claim and still skips the existence read when creating one", async () => {
+    const claimId = `0x${"11".repeat(32)}` as Hex
+    const disputeId = `0x${"22".repeat(32)}` as Hex
+    const payee = "0x0000000000000000000000000000000000000002" as const
+    const existing = [previewRelease(escrow, claimId), previewRefund(escrow, claimId), previewDispute(escrow, claimId, disputeId)]
+    const usedCall = encodeFunctionData({ abi: escrowAbi, functionName: "usedEscrowIds", args: [claimId] })
+    for (const preview of existing) {
+      const send = vi.fn(async () => "0xabc" as Hex)
+      const calls: Hex[] = []
+      const client = {
+        call: vi.fn(async (args: { data: Hex; blockTag?: string }) => {
+          calls.push(args.data)
+          if (args.blockTag === "latest") return { data: `0x${"0".repeat(63)}1` as Hex }
+          return { data: "0x" as Hex }
+        }),
+      }
+      await expect(
+        submitAfterPreflight({
+          chainId: 84532,
+          client,
+          to: preview.to,
+          data: preview.calldata,
+          value: preview.valueWei,
+          escrow,
+          send,
+        }),
+      ).resolves.toBe("0xabc")
+      expect(calls).toEqual([usedCall, preview.calldata])
+      expect(send).toHaveBeenCalledTimes(1)
+    }
+
+    const created = previewCreateEscrow({
+      escrow,
+      escrowId: claimId,
+      payee,
+      payerBotId: claimId,
+      payeeBotId: disputeId,
+      durationSeconds: 3600n,
+      valueWei: 1000n,
+    })
+    const send = vi.fn(async () => "0xabc" as Hex)
+    const calls: Array<{ data: Hex; blockTag?: string }> = []
+    const client = {
+      call: vi.fn(async (args: { data: Hex; blockTag?: string }) => {
+        calls.push({ data: args.data, blockTag: args.blockTag })
+        return { data: "0x" as Hex }
+      }),
+    }
+    await expect(
+      submitAfterPreflight({
+        chainId: 84532,
+        client,
+        to: created.to,
+        data: created.calldata,
+        value: created.valueWei,
+        escrow,
+        send,
+      }),
+    ).resolves.toBe("0xabc")
+    expect(calls).toEqual([{ data: created.calldata, blockTag: undefined }])
+    expect(calls[0]?.data).not.toBe(usedCall)
+    expect(send).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("end-user main text", () => {
@@ -377,6 +510,8 @@ describe("end-user main text", () => {
       ...actions.map((action) => previewCardCopy(action, false)),
       "This check only runs on the Base Sepolia network. Nothing was sent.",
       "The network client isn't ready, so nothing was sent.",
+      ESCROW_NOT_FOUND_TEXT,
+      ESCROW_READ_FAILED_TEXT,
       "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",
       "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
     ]

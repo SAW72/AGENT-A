@@ -10,6 +10,8 @@ import { createClaimRelayer } from "../app.mjs";
 import { createSepoliaBroadcaster } from "../broadcast.mjs";
 import { createClaimLog } from "../claimLog.mjs";
 import { loadConfig } from "../config.mjs";
+import { selectorFor } from "../escrowCalldata.mjs";
+import { USED_ESCROW_IDS_SIGNATURE } from "../escrowExists.mjs";
 import { createKillSwitch } from "../killSwitch.mjs";
 import { createNonceStore } from "../nonceStore.mjs";
 
@@ -790,6 +792,109 @@ describe("claim relayer HTTP", () => {
       await live.close();
     }
   });
+
+  it("refuses a live release, refund, or dispute when the escrow id was never created", async () => {
+    const sent = [];
+    const rpcCalls = [];
+    const missing = "0x" + "ab".repeat(32);
+    const present = "0x" + "cd".repeat(32);
+    const disputeId = "0x" + "12".repeat(32);
+    const txHash = "0x" + "ef".repeat(32);
+    const usedSelector = selectorFor(USED_ESCROW_IDS_SIGNATURE);
+    const escrow = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
+    const rpc = async ({ method, params }) => {
+      rpcCalls.push({ method, params });
+      if (method !== "eth_call") throw new Error(`unexpected ${method}`);
+      assert.equal(params[1], "latest");
+      assert.equal(String(params[0].to).toLowerCase(), escrow.toLowerCase());
+      const data = String(params[0].data).toLowerCase();
+      assert.equal(data.startsWith(usedSelector), true);
+      const id = "0x" + data.slice(usedSelector.length);
+      if (id === missing) return "0x" + "0".repeat(64);
+      if (id === present) return "0x" + "0".repeat(63) + "1";
+      throw new Error(`unexpected escrow id ${id}`);
+    };
+    const ctx = await boot(
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET },
+      {
+        rpc,
+        broadcaster: {
+          async send(tx) {
+            sent.push(tx);
+            return { txHash };
+          },
+        },
+      },
+    );
+    try {
+      for (const action of ["release", "refund", "dispute"]) {
+        const beforeSent = sent.length;
+        const beforeRpc = rpcCalls.length;
+        const body = {
+          action,
+          claimId: missing,
+          live: true,
+          ...(action === "dispute" ? { disputeId } : {}),
+        };
+        const res = await request(ctx.port, "POST", "/v1/claims", body, claimHeaders);
+        assert.equal(res.status, 404);
+        assert.deepEqual(res.json, { ok: false, error: "escrow_not_found", txHash: null });
+        assert.equal(sent.length, beforeSent);
+        assert.equal(rpcCalls.length, beforeRpc + 1);
+        assert.equal(rpcCalls.at(-1).method, "eth_call");
+        assert.equal(
+          rpcCalls.some((call) => call.method === "eth_estimateGas" || call.method === "eth_sendRawTransaction"),
+          false,
+        );
+      }
+
+      for (const action of ["release", "refund", "dispute"]) {
+        const body = {
+          action,
+          claimId: present,
+          live: true,
+          ...(action === "dispute" ? { disputeId } : {}),
+        };
+        const res = await request(ctx.port, "POST", "/v1/claims", body, claimHeaders);
+        assert.equal(res.status, 200);
+        assert.equal(res.json.ok, true);
+        assert.equal(res.json.mode, "live");
+        assert.equal(res.json.txHash, txHash);
+        assert.equal(res.json.action, action);
+      }
+      assert.equal(sent.length, 3);
+      assert.deepEqual(
+        sent.map((tx) => tx.action),
+        ["release", "refund", "dispute"],
+      );
+
+      const rpcBeforeCreate = rpcCalls.length;
+      const created = await request(
+        ctx.port,
+        "POST",
+        "/v1/claims",
+        {
+          action: "createEscrow",
+          claimId: missing,
+          payee: PAYEE,
+          payerBotId: "0x" + "44".repeat(32),
+          payeeBotId: "0x" + "55".repeat(32),
+          durationSeconds: "3600",
+          amountWei: "1000",
+          live: true,
+        },
+        claimHeaders,
+      );
+      assert.equal(created.status, 200);
+      assert.equal(created.json.txHash, txHash);
+      assert.equal(created.json.action, "createEscrow");
+      assert.equal(sent.length, 4);
+      assert.equal(sent.at(-1).action, "createEscrow");
+      assert.equal(rpcCalls.length, rpcBeforeCreate);
+    } finally {
+      await ctx.close();
+    }
+  });
 });
 
 function sepoliaBlock() {
@@ -827,6 +932,7 @@ async function boot(env = {}, extra = {}) {
     nonceStore: createNonceStore(),
     claimLog: createClaimLog({ filePath: logPath }),
     broadcaster: extra.broadcaster ?? null,
+    rpc: extra.rpc ?? (async () => "0x" + "0".repeat(63) + "1"),
     now: () => Date.parse("2026-09-25T19:00:00.000Z"),
   });
   server.listen(0, "127.0.0.1");

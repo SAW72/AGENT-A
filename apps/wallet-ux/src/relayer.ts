@@ -3,7 +3,12 @@ import { escrowAbi } from "./abi"
 import { BASE_SEPOLIA_CHAIN_ID, SUPERSEDED } from "./addresses"
 import { presentError, presentRevertHex, type ErrorPresentation } from "./format"
 import { BASE_MAINNET_CHAIN_ID, ETHEREUM_MAINNET_CHAIN_ID, type WalletChainId } from "./guard"
-import { CLAIM_RELAYER_WALLET, submitRelayerAfterPreflight, type PreflightClient } from "./preflight"
+import {
+  CLAIM_RELAYER_WALLET,
+  ESCROW_NOT_FOUND_TEXT,
+  submitRelayerAfterPreflight,
+  type PreflightClient,
+} from "./preflight"
 import type { CallPreview } from "./preview"
 import { REVERT_FALLBACK_TEXT } from "./revert"
 import { evaluateEscrowSubmit } from "./submit"
@@ -128,6 +133,7 @@ const RELAYER_PLAIN: Record<string, string> = {
   live_required: "The claim relayer only accepts a live submission. Nothing was sent.",
   missing_tx_hash: "The claim relayer did not confirm a transaction. Nothing was shown as sent.",
   not_found: "The claim relayer could not find that submission path. Nothing was sent.",
+  escrow_not_found: ESCROW_NOT_FOUND_TEXT,
   live_submit_blocked: RELAYER_NOT_LIVE_TEXT,
   escrow_not_booked: "The claim relayer has no escrow configured, so it will not submit. Nothing was sent.",
   escrow_not_booked_sepolia: "The claim relayer is not pointed at the booked escrow, so it will not submit. Nothing was sent.",

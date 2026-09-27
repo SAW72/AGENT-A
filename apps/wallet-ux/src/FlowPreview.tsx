@@ -114,6 +114,7 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
         to: preview.to,
         data: preview.calldata,
         value: preview.valueWei,
+        escrow,
         send: () =>
           sendTransactionAsync({
             to: preview.to,

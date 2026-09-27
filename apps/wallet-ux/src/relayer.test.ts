@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   CallExecutionError,
+  encodeFunctionData,
   ExecutionRevertedError,
   RpcRequestError,
   keccak256,
@@ -11,7 +12,9 @@ import {
   type Hex,
 } from "viem"
 import { describe, expect, it, vi } from "vitest"
-import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRelease } from "./preview"
+import { escrowAbi } from "./abi"
+import { ESCROW_NOT_FOUND_TEXT } from "./preflight"
+import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRefund, previewRelease } from "./preview"
 import {
   claimBodyFromPreview,
   postLiveClaim,
@@ -348,7 +351,10 @@ function relayerDisputeCalldata(body: { claimId: string; disputeId: string }): s
 
 function readyClient(receipt: { status: "success" | "reverted" } | Error) {
   return {
-    call: vi.fn(async () => "0x"),
+    call: vi.fn(async (args?: { blockTag?: string }) => {
+      if (args?.blockTag === "latest") return { data: `0x${"0".repeat(63)}1` as Hex }
+      return "0x"
+    }),
     waitForTransactionReceipt: vi.fn(async () => {
       if (receipt instanceof Error) throw receipt
       return receipt
@@ -442,7 +448,8 @@ describe("dispute submit via the claim relayer", () => {
   it("does not post when the relayer-wallet simulation reverts", async () => {
     let fetches = 0
     const client = {
-      call: vi.fn(async () => {
+      call: vi.fn(async (args?: { blockTag?: string }) => {
+        if (args?.blockTag === "latest") return { data: `0x${"0".repeat(63)}1` as Hex }
         throw rpcRevert("0xf10068b5")
       }),
       waitForTransactionReceipt: vi.fn(),
@@ -462,6 +469,43 @@ describe("dispute submit via the claim relayer", () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.presentation.main).toBe("This dispute is already resolved, so it can't be linked to this claim.")
+    }
+  })
+
+  it("does not post a release, refund, or dispute when the claim id was never created", async () => {
+    const actions = [previewRelease(escrow, id), previewRefund(escrow, id), previewDispute(escrow, id, other)]
+    for (const preview of actions) {
+      let fetches = 0
+      const calls: Array<{ blockTag?: string; data: Hex; to: string }> = []
+      const client = {
+        call: vi.fn(async (args: { blockTag?: string; data: Hex; to: string }) => {
+          calls.push(args)
+          return { data: `0x${"0".repeat(64)}` as Hex }
+        }),
+        waitForTransactionReceipt: vi.fn(),
+      }
+      const result = await runRelayerSubmission({
+        url: relayerUrl,
+        secret: "sepolia-test-secret",
+        preview,
+        client,
+        fetchImpl: async () => {
+          fetches += 1
+          return jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow })
+        },
+      })
+      expect(fetches).toBe(0)
+      expect(client.waitForTransactionReceipt).not.toHaveBeenCalled()
+      expect(calls).toHaveLength(1)
+      expect(calls[0]?.blockTag).toBe("latest")
+      expect(calls[0]?.to).toBe(escrow)
+      expect(calls[0]?.data).toBe(encodeFunctionData({ abi: escrowAbi, functionName: "usedEscrowIds", args: [id] }))
+      expect(result.ok).toBe(false)
+      if (result.ok) continue
+      expect(result.presentation.main).toBe(ESCROW_NOT_FOUND_TEXT)
+      expect(result.presentation.detail).toBe("Details: escrow_not_found")
+      expect(result.presentation.main).not.toMatch(/0x/)
+      expect(result.presentation.main).not.toContain("escrow_not_found")
     }
   })
 
@@ -504,7 +548,8 @@ describe("dispute submit via the claim relayer", () => {
   it("explains a reverted receipt in plain English and keeps the transaction link", async () => {
     let calls = 0
     const client = {
-      call: vi.fn(async () => {
+      call: vi.fn(async (args?: { blockTag?: string }) => {
+        if (args?.blockTag === "latest") return { data: `0x${"0".repeat(63)}1` as Hex }
         calls += 1
         if (calls === 1) return "0x"
         throw rpcRevert("0xf10068b5")
@@ -568,6 +613,12 @@ describe("relayer response copy", () => {
       body: { ok: false, error: "not_found" },
       main: "The claim relayer could not find that submission path. Nothing was sent.",
       detail: "Details: 404 not_found",
+    },
+    {
+      status: 404,
+      body: { ok: false, error: "escrow_not_found", txHash: null },
+      main: "We couldn't find a claim with that identifier on this network. Check the number and try again.",
+      detail: "Details: 404 escrow_not_found",
     },
     {
       status: 409,

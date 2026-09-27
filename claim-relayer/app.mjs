@@ -160,6 +160,7 @@ function rejectQuoteBroadcast(config, body) {
  * @param {{ append: Function }} deps.claimLog
  * @param {() => number} [deps.now]
  * @param {{ send: Function } | null} [deps.broadcaster]
+ * @param {(args: { method: string, params?: unknown[] }) => Promise<unknown>} [deps.rpc]
  */
 export function createClaimRelayer(deps) {
   const config = deps.config;
@@ -167,6 +168,7 @@ export function createClaimRelayer(deps) {
   const nonceStore = deps.nonceStore;
   const claimLog = deps.claimLog;
   const broadcaster = deps.broadcaster || null;
+  const rpc = deps.rpc || null;
   const now = deps.now || Date.now;
   const corsHeaders = createCors(config.corsOrigins);
 
@@ -249,7 +251,7 @@ export function createClaimRelayer(deps) {
             sendJson(res, req, 401, { ok: false, error: "unauthorized" }, corsHeaders);
             return;
           }
-          const result = await submitLiveClaim({ body, config, broadcaster });
+          const result = await submitLiveClaim({ body, config, broadcaster, rpc });
           await claimLog.append({
             event: "claim_live",
             ...result,

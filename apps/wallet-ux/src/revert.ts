@@ -8,6 +8,7 @@ import {
 } from "viem"
 import { disputePanelAbi, escrowAbi } from "./abi"
 import { ERROR_GLOSSARY } from "./preview"
+import { ESCROW_NOT_FOUND_CODE, ESCROW_NOT_FOUND_TEXT, EscrowNotFoundError } from "./preflight"
 
 /** Solidity `Error(string)` and `Panic(uint256)`, alongside the wallet ABIs. */
 const STANDARD_REVERT_ERRORS = [
@@ -270,6 +271,9 @@ function safeShort(error: unknown): string {
 
 export function presentError(error: unknown): ErrorPresentation {
   if (isWalletCancel(error)) return { main: WALLET_CANCEL_TEXT, detail: null }
+  if (error instanceof EscrowNotFoundError) {
+    return { main: ESCROW_NOT_FOUND_TEXT, detail: `Details: ${ESCROW_NOT_FOUND_CODE}` }
+  }
 
   const valid = validRevertData(error)
   if (valid) return presentDecoded(valid)

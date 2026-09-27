@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { BASE_SEPOLIA_CHAIN_ID, ZERO_ADDRESS, httpError, isAddress } from "./config.mjs";
 import { encodeEscrowAction } from "./escrowCalldata.mjs";
+import { actionNeedsEscrow, assertEscrowExists, escrowIdFromEncoded } from "./escrowExists.mjs";
 import { withClaimRetry } from "./retry.mjs";
 import { revertDataFrom } from "./revertData.mjs";
 
@@ -171,8 +172,9 @@ export function buildFixtureClaim(body, config) {
  * @param {object} args.body
  * @param {ReturnType<import('./config.mjs').loadConfig>} args.config
  * @param {{ send: (tx: object) => Promise<{ txHash?: string }> } | null | undefined} args.broadcaster
+ * @param {(args: { method: string, params?: unknown[] }) => Promise<unknown>} [args.rpc]
  */
-export async function submitLiveClaim({ body, config, broadcaster }) {
+export async function submitLiveClaim({ body, config, broadcaster, rpc }) {
   assertBaseSepolia(body);
   if (!config?.liveSubmit?.allowed) throw liveSubmitError(config);
   const encoded = describeCalldata(body);
@@ -190,6 +192,16 @@ export async function submitLiveClaim({ body, config, broadcaster }) {
       : undefined;
   if (payer && payee && payer.toLowerCase() === payee.toLowerCase()) {
     throw httpError(400, "invalid_parties");
+  }
+
+  if (actionNeedsEscrow(encoded.action)) {
+    const escrowId = escrowIdFromEncoded(encoded.calldata);
+    if (!escrowId) throw httpError(400, "invalid_bytes32", { field: "claimId", txHash: null, dryRun: false });
+    await assertEscrowExists({
+      request: rpc,
+      escrowAddress: config.escrowAddress,
+      escrowId,
+    });
   }
 
   const tx = {

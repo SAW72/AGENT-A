@@ -132,6 +132,8 @@ A claim that does not set `live: true`, `liveSubmit: true`, or `mode` to `"live"
 
 A live claim while the gate is closed returns **409** `live_submit_blocked` and `txHash: null`. A live claim while the gate is open signs with `RELAYER_PRIVATE_KEY` and returns `mode: "live"` plus the transaction hash. Quotes never broadcast. A live flag on `POST /v1/claims/quote` is **409** `quote_does_not_broadcast` once the gate is open, and the closed-gate refusal before that. `KILL_SWITCH=1` still returns **503** `kill_switch` for quote and claim before any send.
 
+A live `release`, `refund`, or `dispute` reads `usedEscrowIds(id)` on the booked escrow at block `latest` before any gas estimate or broadcast. `usedEscrowIds` is the contract's replay bit: it is false for an id that was never created, and it stays true after a payout or a refund. A miss returns **404** `escrow_not_found` with `txHash: null`. Nothing is estimated and nothing is broadcast. `createEscrow` is not looked up that way, because that id is new.
+
 ### Live claim auth (`CLAIM_API_SECRET`)
 
 When `liveSubmit` is allowed, `POST /v1/claims` that sets `live: true`, `liveSubmit: true`, or `mode` to `"live"` or `"broadcast"` must present `CLAIM_API_SECRET`. This secret is separate from `ADMIN_SECRET`. Send it as `x-claim-secret` or `Authorization: Bearer <secret>`. The compare is timing-safe.
@@ -167,6 +169,7 @@ CORS preflight allows `content-type`, `x-admin-secret`, `authorization`, and `x-
 | 400 | `invalid_json` | Body is not a JSON object. |
 | 401 | `unauthorized` | Admin route called with the wrong `ADMIN_SECRET`, or a live claim (gate open) without a matching `CLAIM_API_SECRET`. |
 | 404 | `not_found` | Unknown path. |
+| 404 | `escrow_not_found` | Live `release`, `refund`, or `dispute` whose `usedEscrowIds(id)` is false at `latest`. Nothing is estimated or broadcast. |
 
 A live claim that fails while sending returns this body. `revert_data` is always present: a `0x` lowercase hex string of the raw revert bytes, or `null`. Empty `0x`, odd length, non-hex, and payloads larger than 4096 bytes are `null` (they are not truncated). The body does not include the RPC URL, the provider error text, the request body, or the signer key.
 
