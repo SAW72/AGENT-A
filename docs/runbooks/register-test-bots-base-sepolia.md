@@ -4,14 +4,26 @@ This runbook registers two test bots on the live Vault so `createEscrow` on the 
 
 The live Vault has no bots. `BotAttestationEscrow.createEscrow` reads `Vault.operator(botId)` and reverts `InvalidParties` when that address is the zero address. Binding a payer operator and a payee operator, both at Financial tier, is the fix.
 
-Reads below were taken against `https://sepolia.base.org` (chain id `84532`). Owner, tier, and empty-bot reads ran while the head moved through `47391918`–`47392049`. The register gas figures are from block `47392038`. The `Registered` / `OperatorSet` log scan covers the Vault from its deploy block `47294164` through block `47392049`. Nothing in this file was broadcast.
+The first smoke sets the payer operator to Spencer's own wallet. He calls `createEscrow` from that wallet, because `createEscrow` requires `msg.sender == operator(payerBotId)`. The relayer is not the payer operator for this smoke. That mode is optional and later, and only after the two gates in [Optional later mode](#optional-later-mode-relayer-as-payer-operator).
+
+Reads below were taken against `https://sepolia.base.org` (chain id `84532`). Owner, tier, and empty-bot reads ran while the head moved through `47391918`–`47392049`. The payer-wallet simulations in [Simulation-only record](#simulation-only-record) ran at block `47392348`. The `Registered` / `OperatorSet` log scan covers the Vault from its deploy block `47294164` through block `47392049`. Nothing in this file was broadcast.
 
 ## Hard stops
 
-1. Spencer sends the two `cast send` transactions himself, from `0x10CC9474b45625ADfd05C209f2518023484878D9`.
+1. Spencer sends the two `cast send` registration transactions himself, from `0x10CC9474b45625ADfd05C209f2518023484878D9`.
 2. Agent sessions stop after `cast call`, `cast estimate`, `cast code`, `cast storage`, `cast logs`, and `cast calldata`. They do not run `cast send`, `--broadcast`, or any command with a private key.
-3. The send templates use `--account <his-keystore>`. They do not contain `--private-key`.
+3. Every send template uses `--account <his-keystore>`. None of them contain `--private-key`.
 4. The chain is Base Sepolia only. The RPC is `https://sepolia.base.org`.
+5. The first smoke does not register `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` as a Vault operator.
+
+## Prerequisites
+
+Spencer ticks both boxes before any `register` command (steps 3, 4, and 7). Steps 1 and 2 are reads.
+
+- [ ] wallet-ux Pages redeployed without the embedded secret
+- [ ] the claim secret rotated
+
+The live Wallet UX bundle inlines the claim secret. The repo documents that secret as a soft deterrent. Leave the old Pages deploy up, and a later registration of the relayer as a payer operator lets anyone who has that secret move the relayer's test ETH. Tick these before the first `register`, including the Spencer-wallet smoke.
 
 ## What the source and the chain agree on
 
@@ -71,7 +83,7 @@ No bot is registered. `Registered(bytes32,uint8,uint256)` topic `0x2578fc74812af
 
 After that, `_verifyBot` requires each bot to be active, tier `>= Financial` (`3`), `grantAccess(botId, 3) == true`, and `denylist.check` of the stored fingerprint equal to `None`. A Financial bot with max permissions `3` passes `grantAccess(botId, 3)`.
 
-Bot A is the payer bot. Its operator is the address that will send `createEscrow`. Bot B is the payee bot. Its operator is the `payee` argument.
+Bot A is the payer bot. Its operator is Spencer's wallet, and that same wallet sends `createEscrow`. Bot B is the payee bot. Its operator is the `payee` argument.
 
 ## Addresses
 
@@ -80,15 +92,12 @@ Bot A is the payer bot. Its operator is the address that will send `createEscrow
 | Vault | `0x1463D664fA467FBCDA4B05443434494f05e565bc` |
 | Denylist | `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` |
 | BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` |
-| CORE_TIMELOCK (sender) | `0x10CC9474b45625ADfd05C209f2518023484878D9` |
-| Payer operator, relayer variant | `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` |
-| Payee operator | Spencer fills this in. The dry-run stand-in is `0x000000000000000000000000000000000000bEEF`. |
+| CORE_TIMELOCK (registration sender) | `0x10CC9474b45625ADfd05C209f2518023484878D9` |
+| Payer operator, first smoke | `<SPENCER_PAYER_WALLET>` |
+| Payee operator | `<REAL_PAYEE_WALLET>` |
+| Relayer, optional later mode only | `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` |
 
-The relayer address is the public hot wallet in `deployments/base-sepolia.json` (`claimRelayerWallet`), `claim-relayer/.env.example` (`RELAYER_ADDRESS`), and `claim-relayer/README.md`. No private key is stored there.
-
-The payee test wallet is not in the repo. `0x000000000000000000000000000000000000bEEF` is only a non-zero stand-in so the dry-run has an address. Replace it with the real payee wallet before sending. Sending the stand-in binds that address as the payee party.
-
-Spencer may use his own wallet as the payer operator instead of the relayer. `createEscrow` must then be sent from that same wallet. The resolved calldata in this file uses the relayer.
+The relayer address is the public hot wallet in `deployments/base-sepolia.json` (`claimRelayerWallet`), `claim-relayer/.env.example` (`RELAYER_ADDRESS`), and `claim-relayer/README.md`. No private key is stored there. It is not `PAYER_OPERATOR` for the first smoke.
 
 ## Bot id rule
 
@@ -120,7 +129,7 @@ cast keccak "agent-bv:base-sepolia:p1d:bot-b:prompt"     # 0x3f6dbab9b8cf39f0a13
 
 ## Checklist
 
-Set the shell variables, then follow the numbers in order. Steps 1 through 6 are read-only. Step 7 is Spencer's send. Steps 8 and 9 prove the result.
+Replace both angle-bracket tokens with checksummed addresses, then follow the numbers in order. Left as written, this export fails to parse (`<` is a redirection), so an unedited paste sets nothing.
 
 ```bash
 export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
@@ -128,8 +137,8 @@ export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
 export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
 export ESCROW=0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
-export PAYER_OPERATOR=0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861
-export PAYEE_OPERATOR=0x000000000000000000000000000000000000bEEF   # replace before step 7
+export PAYER_OPERATOR=<SPENCER_PAYER_WALLET>
+export PAYEE_OPERATOR=<REAL_PAYEE_WALLET>
 
 export BOT_A=0xa450ef44f1712ad6894a0dabb8a29774918db7452510d9b422e553bdded40532
 export WEIGHT_A=0xf9cc540627d352529a2568a8400427dcce9b68d2c479a1078148868047218a9f
@@ -145,6 +154,8 @@ export ESCROW_ID=0xcf49428f2c5d229ad09cd8c4c343539fa4c80199aa43d6d9c900bfff41026
 ```
 
 `ESCROW_ID` is `cast keccak "agent-bv:base-sepolia:p1d:create-escrow-dry-run"`. It is only for the simulation. `usedEscrowIds` for it was `false` at block `47392038`.
+
+`PAYER_OPERATOR` is the wallet Spencer will use as `msg.sender` on `createEscrow`. `PAYEE_OPERATOR` is the payee test wallet. They are different addresses. The registration transaction is still sent by `CORE_TIMELOCK`, which can be a different account from `PAYER_OPERATOR`.
 
 1. Confirm the chain, the owner, the tier cap, and that these ids are empty.
 
@@ -189,7 +200,7 @@ Observed output, each call:
 0
 ```
 
-3. Dry-run Bot A (payer operator = relayer) from `CORE_TIMELOCK`. `cast call` returns `0x` when the state change succeeds and the function returns nothing. `cast estimate` returns gas. Neither command sends a transaction.
+3. Dry-run Bot A from `CORE_TIMELOCK`. `PAYER_OPERATOR` is Spencer's wallet. `cast call` returns `0x` when the state change succeeds and the function returns nothing. `cast estimate` returns gas. Neither command sends a transaction. Both prerequisite boxes are ticked before this step.
 
 ```bash
 cast call "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
@@ -200,25 +211,24 @@ cast estimate "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)"
   "$BOT_A" "$WEIGHT_A" "$SIG_A" "$PROMPT_A" 3 "$PAYER_OPERATOR" \
   --from "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
-
-Observed at block `47392038`:
-
-```text
-0x
-177888
-```
-
-The same `cast estimate` with `--from` set to the relayer reverts `OwnableUnauthorizedAccount`:
-
-```text
-Error: server returned an error response: error code 3: execution reverted, data: "0x118cdaa70000000000000000000000009d1b3e1400d2632d435cb7c0fc131c4f42b31861"
-```
-
-`0x118cdaa7` is `OwnableUnauthorizedAccount(address)` and the address is the relayer. The registration has to come from `CORE_TIMELOCK`.
 
 A `cast call` of the same register with `--value 1` from `CORE_TIMELOCK` reverts with no revert data. Leave the value off.
 
-4. Dry-run Bot B the same way, after `PAYEE_OPERATOR` is the real payee wallet. The captured run used the `bEEF` stand-in.
+The same register with `--from` set to any account other than `CORE_TIMELOCK` reverts `OwnableUnauthorizedAccount` (`0x118cdaa7`). The registration has to come from `CORE_TIMELOCK`.
+
+4. Run the operator guard, then dry-run Bot B the same way. Paste this block in the same shell. It checks that each operator is a valid checksummed address (`cast to-check-sum-address`, then compare), is not `0x000000000000000000000000000000000000bEEF`, is not the zero address, and that the two operators differ. Otherwise it prints why and exits 1.
+
+```bash
+A=$(cast to-check-sum-address "$PAYER_OPERATOR") || { echo "PAYER_OPERATOR invalid/placeholder"; exit 1; }
+[ "$PAYER_OPERATOR" = "$A" ] || { echo "PAYER_OPERATOR is not checksummed (expected $A)"; exit 1; }
+[ "$A" != 0x000000000000000000000000000000000000bEEF ] || { echo "PAYER_OPERATOR invalid/placeholder"; exit 1; }
+[ "$A" != 0x0000000000000000000000000000000000000000 ] || { echo "PAYER_OPERATOR invalid/placeholder"; exit 1; }
+P=$(cast to-check-sum-address "$PAYEE_OPERATOR") || { echo "PAYEE_OPERATOR invalid/placeholder"; exit 1; }
+[ "$PAYEE_OPERATOR" = "$P" ] || { echo "PAYEE_OPERATOR is not checksummed (expected $P)"; exit 1; }
+P=$(cast to-check-sum-address "$PAYEE_OPERATOR") || exit 1
+[ "$P" != 0x000000000000000000000000000000000000bEEF ] && [ "$P" != 0x0000000000000000000000000000000000000000 ] \
+  && [ "$P" != "$(cast to-check-sum-address "$PAYER_OPERATOR")" ] || { echo "PAYEE_OPERATOR invalid/placeholder"; exit 1; }
+```
 
 ```bash
 cast call "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
@@ -230,42 +240,21 @@ cast estimate "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)"
   --from "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-Observed with `PAYEE_OPERATOR=0x000000000000000000000000000000000000bEEF` at block `47392038`:
+The zero address reverts `zero operator` and stores nothing.
 
-```text
-0x
-177682
-```
-
-Re-run both commands after replacing the stand-in. A non-zero payee that is not the payer operator should succeed the same way. The zero address reverts `zero operator` and stores nothing.
-
-5. Build calldata. Tier stays `3`.
-
-Relayer variant, Bot A. This hex is the full resolved payload (`PAYER_OPERATOR` is the relayer):
+5. Build calldata. Tier stays `3`. Regenerate both payloads after the guard passes. The last 32-byte word of each payload is that bot's operator.
 
 ```bash
 cast calldata "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
   "$BOT_A" "$WEIGHT_A" "$SIG_A" "$PROMPT_A" 3 "$PAYER_OPERATOR"
-```
 
-```text
-0xb4560e96a450ef44f1712ad6894a0dabb8a29774918db7452510d9b422e553bdded40532f9cc540627d352529a2568a8400427dcce9b68d2c479a1078148868047218a9fe863e38846ffd3f86bda77edd9e0d95097057a57d1b6732047546183048f6eddcee6783c2b68ccd68b77fea3b3084b6937c8e881d563a5d72a8c0809b6c49dbb00000000000000000000000000000000000000000000000000000000000000030000000000000000000000009d1b3e1400d2632d435cb7c0fc131c4f42b31861
-```
-
-Bot B, payee placeholder. Regenerate this after `PAYEE_OPERATOR` is real. The hex below is the `bEEF` stand-in, included so the word layout is visible. The last 32-byte word is the operator.
-
-```bash
 cast calldata "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
   "$BOT_B" "$WEIGHT_B" "$SIG_B" "$PROMPT_B" 3 "$PAYEE_OPERATOR"
 ```
 
-```text
-0xb4560e96c84705852089ffaea2c5bda0b1dbcba6aae7f3d876cc4e49dcdf2ea2ff780e94a7b6c55a356a156e98ecf59c2c84c909ff97c5482028fbd8b419d04630409aeaa068a50733d40b7c745e9bb98931dffe295f917d9ae98ee78f8abf3c76aaa7da3f6dbab9b8cf39f0a13b6e8348f3100e05af1d7d53e95f7fd7e52ac629fcdd6d0000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000beef
-```
+The selector on both payloads is `0xb4560e96`.
 
-If the payer operator is Spencer's wallet instead of the relayer, set `PAYER_OPERATOR` to that wallet and run the Bot A `cast calldata` command again. The selector stays `0xb4560e96`.
-
-6. Show that `createEscrow` reverts `InvalidParties` on the live state, before either registration is sent. `--from` is the relayer because that is the payer. `--value 1000` is 1000 wei. This is a simulation.
+6. Show that `createEscrow` reverts `InvalidParties` on the live state, before either registration is sent. `--from` is `$PAYER_OPERATOR`, Spencer's wallet, because that address will be `msg.sender`. `--value 1000` is 1000 wei. This is a simulation.
 
 ```bash
 cast call "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)" \
@@ -277,18 +266,23 @@ cast estimate "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)" 
   --value 1000 --from "$PAYER_OPERATOR" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-Observed:
+On the empty Vault this reverts `InvalidParties` (`0xb6e500fe`). The [simulation-only record](#simulation-only-record) has the exact text.
 
-```text
-Error: execution reverted: InvalidParties
+7. **Stop. Do not send until both prerequisite boxes are ticked and the guard below exits 0. `PAYER_OPERATOR` and `PAYEE_OPERATOR` have to be real checksummed wallets. An unedited export of `<SPENCER_PAYER_WALLET>` or `<REAL_PAYEE_WALLET>` fails in the shell. `0x000000000000000000000000000000000000bEEF`, the zero address, and using one address for both operators are rejected. Sending either stand-in binds that address as a party.**
 
-Context:
-- server returned an error response: error code 3: execution reverted, data: "0xb6e500fe"
+Run the guard again in this shell. Then confirm the registration keystore. `cast wallet address --account <his-keystore>` must print `0x10CC9474b45625ADfd05C209f2518023484878D9`. That keystore is the 7702 EOA. There is no schedule step.
+
+```bash
+A=$(cast to-check-sum-address "$PAYER_OPERATOR") || { echo "PAYER_OPERATOR invalid/placeholder"; exit 1; }
+[ "$PAYER_OPERATOR" = "$A" ] || { echo "PAYER_OPERATOR is not checksummed (expected $A)"; exit 1; }
+[ "$A" != 0x000000000000000000000000000000000000bEEF ] || { echo "PAYER_OPERATOR invalid/placeholder"; exit 1; }
+[ "$A" != 0x0000000000000000000000000000000000000000 ] || { echo "PAYER_OPERATOR invalid/placeholder"; exit 1; }
+P=$(cast to-check-sum-address "$PAYEE_OPERATOR") || { echo "PAYEE_OPERATOR invalid/placeholder"; exit 1; }
+[ "$PAYEE_OPERATOR" = "$P" ] || { echo "PAYEE_OPERATOR is not checksummed (expected $P)"; exit 1; }
+P=$(cast to-check-sum-address "$PAYEE_OPERATOR") || exit 1
+[ "$P" != 0x000000000000000000000000000000000000bEEF ] && [ "$P" != 0x0000000000000000000000000000000000000000 ] \
+  && [ "$P" != "$(cast to-check-sum-address "$PAYER_OPERATOR")" ] || { echo "PAYEE_OPERATOR invalid/placeholder"; exit 1; }
 ```
-
-`cast estimate` returned the same revert data: `0xb6e500fe`.
-
-7. Spencer sends both registrations. Run this on his machine, after `cast wallet address --account <his-keystore>` prints `0x10CC9474b45625ADfd05C209f2518023484878D9`, and after `PAYEE_OPERATOR` is the real payee wallet. The keystore account is the 7702 EOA. There is no schedule step.
 
 ```bash
 cast send "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
@@ -302,7 +296,7 @@ cast send "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
   --account <his-keystore>
 ```
 
-Send Bot A first, wait for the receipt, then send Bot B. Each transaction comes from `0x10CC9474b45625ADfd05C209f2518023484878D9`. Gas near the dry-run figures was `177888` for Bot A and `177682` for the `bEEF` stand-in. Re-estimate Bot B after the real payee is filled in.
+Send Bot A first, wait for the receipt, then send Bot B. Each registration comes from `0x10CC9474b45625ADfd05C209f2518023484878D9`. Re-estimate after the real wallets are filled in. A simulation-only stand-in at block `47392348` used about `177900` gas for each register. That figure is not a substitute for the estimate with Spencer's addresses.
 
 8. Read the bots back. Tier `3` is Financial. `active` is true. `registeredAt` is the block timestamp, non-zero. Operators match the addresses Spencer passed.
 
@@ -318,91 +312,163 @@ cast call "$VAULT" "operator(bytes32)(address)" "$BOT_B" --rpc-url "$BASE_SEPOLI
 cast call "$VAULT" "grantAccess(bytes32,uint8)(bool)" "$BOT_B" 3 --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-Expected shape for Bot A: the three fingerprints above, then `3`, `true`, a non-zero `registeredAt`, operator `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861`, and `grantAccess` `true`. Bot B is the same shape with its fingerprints and `PAYEE_OPERATOR`.
+Expected shape for Bot A: the three fingerprints above, then `3`, `true`, a non-zero `registeredAt`, operator equal to `$PAYER_OPERATOR`, and `grantAccess` `true`. Bot B is the same shape with its fingerprints and `$PAYEE_OPERATOR`.
 
 9. Prove `InvalidParties` is gone.
 
-After both receipts, repeat the step 6 `cast call` and `cast estimate` with no state override. `cast estimate` then returns a gas number. `cast call` returns the escrow id (`bytes32`). That pair is still a simulation: `cast call` and `cast estimate` do not publish the escrow. This runbook does not ask anyone to send `createEscrow`.
+After both receipts, repeat the step 6 `cast call` and `cast estimate` with no state override. `--from` stays `$PAYER_OPERATOR`. `cast estimate` then returns a gas number. `cast call` returns the escrow id (`bytes32`). That pair is still a simulation.
 
-Before those transactions exist, the same proof needs a state override. `cast` 1.8.3 has no `--state-override` flag. `cast call` has `--override-state-diff` (change listed slots, keep the rest) and `--override-state` (replace the account's storage entirely). Use the diff form. Replacing the whole Vault storage would wipe `owner`, `denylist`, and the tier caps. `cast estimate` rejects `--override-state-diff` (`error: unexpected argument '--override-state-diff' found`). The pre-send proof is `cast call`. A gas number for that same overridden state comes from `eth_estimateGas`, below.
+Before those transactions exist, the same proof needs a state override. `cast` 1.8.3 has no `--state-override` flag. `cast call` has `--override-state-diff` (change listed slots, keep the rest) and `--override-state` (replace the account's storage entirely). Use the diff form. Replacing the whole Vault storage would wipe `owner`, `denylist`, and the tier caps. `cast estimate` rejects `--override-state-diff` (`error: unexpected argument '--override-state-diff' found`). The pre-send proof is `cast call`.
 
-The override writes each `BotRecord` and each `operator`. Mapping base slot for `bots` is `3`. Mapping base slot for `operator` is `4`.
+The override writes each `BotRecord` and each `operator`. Mapping base slot for `bots` is `3`. Mapping base slot for `operator` is `4`. Slot numbers come from the bot id. The operator words come from the shell variables. There is no address literal in this override.
 
 ```bash
 cast index bytes32 "$BOT_A" 3   # record base
 cast index bytes32 "$BOT_A" 4   # operator slot
 cast index bytes32 "$BOT_B" 3
 cast index bytes32 "$BOT_B" 4
+
+PAYER_WORD=$(cast abi-encode "f(address)" "$PAYER_OPERATOR")
+PAYEE_WORD=$(cast abi-encode "f(address)" "$PAYEE_OPERATOR")
 ```
 
 `BotRecord` layout from that base: `+0` weight, `+1` behavior, `+2` prompt, `+3` packed `tier` in the low byte and `active` in the next byte, `+4` `registeredAt`. Financial and active pack as `0x0103`. The simulation uses `registeredAt = 1`. The real transaction stores `block.timestamp`. `createEscrow` does not read `registeredAt`.
 
 | Bot | Slot | Value |
 | --- | --- | --- |
-| A weight | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce6` | `WEIGHT_A` |
-| A behavior | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce7` | `SIG_A` |
-| A prompt | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce8` | `PROMPT_A` |
+| A weight | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce6` | `$WEIGHT_A` |
+| A behavior | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce7` | `$SIG_A` |
+| A prompt | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce8` | `$PROMPT_A` |
 | A tier+active | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce9` | `0x0103` |
 | A registeredAt | `0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6cea` | `1` |
-| A operator | `0x316b25c1a55daae1c3e5c1a467c07723b410db69e64fcca70fd9345218789f42` | relayer |
-| B weight | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ca` | `WEIGHT_B` |
-| B behavior | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cb` | `SIG_B` |
-| B prompt | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cc` | `PROMPT_B` |
+| A operator | `0x316b25c1a55daae1c3e5c1a467c07723b410db69e64fcca70fd9345218789f42` | `$PAYER_WORD` |
+| B weight | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ca` | `$WEIGHT_B` |
+| B behavior | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cb` | `$SIG_B` |
+| B prompt | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cc` | `$PROMPT_B` |
 | B tier+active | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cd` | `0x0103` |
 | B registeredAt | `0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ce` | `1` |
-| B operator | `0x7e668be1fdcdb22f1b5523923112ad8ada1b6bf71090e5dde6b1e6d1a7b1c3b5` | `bEEF` stand-in |
-
-A read of `bots(BOT_A)` under those six Bot A slots returns tier `3`, `active = true`, `registeredAt = 1`, and the three fingerprints. `operator(BOT_A)` returns the relayer. `grantAccess(BOT_A, 3)` returns `true`.
-
-The pre-send command, with the `bEEF` stand-in, is:
+| B operator | `0x7e668be1fdcdb22f1b5523923112ad8ada1b6bf71090e5dde6b1e6d1a7b1c3b5` | `$PAYEE_WORD` |
 
 ```bash
 cast call "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)(bytes32)" \
-  "$ESCROW_ID" 0x000000000000000000000000000000000000bEEF "$BOT_A" "$BOT_B" 3600 \
+  "$ESCROW_ID" "$PAYEE_OPERATOR" "$BOT_A" "$BOT_B" 3600 \
   --value 1000 --from "$PAYER_OPERATOR" --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce6:${WEIGHT_A} \
   --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce7:${SIG_A} \
   --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce8:${PROMPT_A} \
   --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce9:0x0000000000000000000000000000000000000000000000000000000000000103 \
   --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6cea:0x0000000000000000000000000000000000000000000000000000000000000001 \
-  --override-state-diff ${VAULT}:0x316b25c1a55daae1c3e5c1a467c07723b410db69e64fcca70fd9345218789f42:0x0000000000000000000000009d1b3e1400d2632d435cb7c0fc131c4f42b31861 \
+  --override-state-diff ${VAULT}:0x316b25c1a55daae1c3e5c1a467c07723b410db69e64fcca70fd9345218789f42:${PAYER_WORD} \
   --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ca:${WEIGHT_B} \
   --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cb:${SIG_B} \
   --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cc:${PROMPT_B} \
   --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cd:0x0000000000000000000000000000000000000000000000000000000000000103 \
   --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ce:0x0000000000000000000000000000000000000000000000000000000000000001 \
-  --override-state-diff ${VAULT}:0x7e668be1fdcdb22f1b5523923112ad8ada1b6bf71090e5dde6b1e6d1a7b1c3b5:0x000000000000000000000000000000000000000000000000000000000000beef
+  --override-state-diff ${VAULT}:0x7e668be1fdcdb22f1b5523923112ad8ada1b6bf71090e5dde6b1e6d1a7b1c3b5:${PAYEE_WORD}
 ```
 
-That `cast call`, with payee `0x000000000000000000000000000000000000bEEF`, duration `3600`, and value `1000` wei, returned:
+A successful simulation returns `ESCROW_ID`. Run the guard before this call so `$PAYER_WORD` and `$PAYEE_WORD` are the real wallets.
+
+When Spencer later sends `createEscrow`, the keystore must be the payer wallet, not the relayer. `cast wallet address --account <his-keystore>` must print `$PAYER_OPERATOR`. If that wallet is also `CORE_TIMELOCK`, it is the same account as step 7. If it is a different wallet, it is a different keystore, still passed only as `--account <his-keystore>`.
+
+```bash
+cast send "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)" \
+  "$ESCROW_ID" "$PAYEE_OPERATOR" "$BOT_A" "$BOT_B" 3600 \
+  --value 1000 \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --account <his-keystore>
+```
+
+That send is Spencer's, after step 8. Agents do not run it. `1000` wei is the simulated smoke value. He can change the value. He cannot change `--from`: the account has to be `$PAYER_OPERATOR`.
+
+## Optional later mode: relayer as payer operator
+
+This mode is not the first smoke. It is allowed only after both of these are true:
+
+1. The claim secret is rotated.
+2. EIP-712 relayer auth or a relayer amount cap has shipped.
+
+Until both are true, `PAYER_OPERATOR` stays `<SPENCER_PAYER_WALLET>`. After both are true, Spencer may set `PAYER_OPERATOR` to `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` and run the same guard, the same register template, and a `createEscrow` whose `msg.sender` is that relayer. The guard still rejects the zero address, the `bEEF` address, and a payee equal to the payer.
+
+The current relayer accepts a positive `amountWei` and does not cap it. `release` is permissionless and pays the payee. Registering the relayer as Bot A's operator before those two gates lets a caller who knows the published claim secret push the relayer balance into escrows.
+
+## Simulation-only record
+
+These calls used throwaway checksummed addresses inside `cast call` and `cast estimate` only. They are not the exports, they are not on the send path, and they were not broadcast. After the calls, `operator(BOT_A)` was still `0x0000000000000000000000000000000000000000`.
+
+```text
+PAYER_OPERATOR stand-in (simulation only) = 0x1111111111111111111111111111111111111111
+PAYEE_OPERATOR stand-in (simulation only) = 0x2222222222222222222222222222222222222222
+block = 47392348
+```
+
+`cast abi-encode "f(address)"` for those two values:
+
+```text
+0x0000000000000000000000001111111111111111111111111111111111111111
+0x0000000000000000000000002222222222222222222222222222222222222222
+```
+
+Register Bot A from `CORE_TIMELOCK` (`cast call`, then `cast estimate`):
+
+```text
+0x
+177900
+```
+
+Register Bot B from `CORE_TIMELOCK`:
+
+```text
+0x
+177900
+```
+
+`createEscrow` on live state, `--from` the throwaway payer, `--value 1000`, no override. `cast call`:
+
+```text
+Error: execution reverted: InvalidParties
+
+Context:
+- server returned an error response: error code 3: execution reverted, data: "0xb6e500fe"
+```
+
+`cast estimate` returned the same revert data: `0xb6e500fe`.
+
+`createEscrow` with `--override-state-diff`, operator words taken from those throwaways, `--from` the throwaway payer:
 
 ```text
 0xcf49428f2c5d229ad09cd8c4c343539fa4c80199aa43d6d9c900bfff4102686b
 ```
 
-That is `ESCROW_ID`. The call returned it, so the simulation passed `InvalidParties` and `_verifyBot`.
-
-`cast rpc eth_estimateGas` with the same `stateDiff` on the Vault returned:
+That is `ESCROW_ID`. Under the same override, `bots(BOT_A)` returned the three Bot A fingerprints, then:
 
 ```text
-"0x495a3"
+3
+true
+1
 ```
 
-`0x495a3` is `300451` gas. This node call does not publish a transaction. After it, `operator(BOT_A)` was still the zero address and `usedEscrowIds(ESCROW_ID)` was still `false`.
+`operator(BOT_A)` returned `0x1111111111111111111111111111111111111111`. `operator(BOT_B)` returned `0x2222222222222222222222222222222222222222`. `grantAccess(BOT_A, 3)` returned `true`.
 
-If the real payee changes, recompute Bot B's operator slot value (the slot number stays the same) and rerun the overridden `cast call` before sending.
+`cast rpc eth_estimateGas` with the same `stateDiff` returned:
+
+```text
+"0x4967d"
+```
+
+`0x4967d` is `300669` gas. This node call does not publish a transaction.
 
 ## Risks
 
-Registering `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` as Bot A's operator makes the relayer the payer party for that bot. Whoever holds the relayer key can call `createEscrow` as that payer and lock ETH under Bot A. The relayer is a party, not only a broadcaster. Using Spencer's own wallet as `PAYER_OPERATOR` keeps that right on his wallet, and `createEscrow` then has to come from that wallet.
+The claim secret is public in the live Wallet UX bundle, and the relayer has no amount cap. Making `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` Bot A's operator would let anyone who can `POST /v1/claims` with that secret push the relayer's roughly 0.41 test ETH into escrows. At block `47392348` that balance was `413437500000000000` wei (about 0.413 ETH). `release` is permissionless and pays the payee. A payee address nobody controls burns those funds. A stale Pages deploy would send that path at the live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` while the stale UI still shows the retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`.
+
+The first smoke therefore sets `PAYER_OPERATOR` to Spencer's own wallet (`<SPENCER_PAYER_WALLET>`). He calls `createEscrow` from that wallet. `msg.sender` has to equal `operator(payerBotId)`. The relayer becomes the payer operator only after both the claim secret is rotated and either EIP-712 relayer auth or a relayer amount cap has shipped.
 
 `CORE_TIMELOCK` has no delay. The 7702 delegation executes the owner call in the same transaction Spencer signs. The same key can `register`, `setOperator`, and `burn` on this Vault, and it owns the Denylist and the escrow. A bad signature is immediate.
 
 `register` is permanent for a `botId`. `burn` clears `active` and does not free the id. A wrong id cannot be registered again. `setOperator` can point a stored bot at a new non-zero account, and that call is also `onlyOwner` from `0x10CC9474b45625ADfd05C209f2518023484878D9`.
 
-The payer operator and the payee operator have to be different addresses. `createEscrow` reverts `InvalidParties` when `msg.sender == payee`.
-
-The `bEEF` address is a placeholder. A send that still contains it binds `0x000000000000000000000000000000000000bEEF` as Bot B's operator.
+The payer operator and the payee operator have to be different addresses. `createEscrow` reverts `InvalidParties` when `msg.sender == payee`. The guard exits 1 when they match.
 
 These ids and fingerprints are the smoke pair. Listing any of the three hashes on the Denylist later makes `_verifyBot` revert `AttestationFailed` even when the operators still match.
 
