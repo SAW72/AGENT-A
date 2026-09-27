@@ -9,7 +9,7 @@ Working Solidity for the on-chain layers. **Testnet only.** Mainnet is refused b
 - `InsuranceFund.sol` — fee-funded backstop. Constructor: `InsuranceFund(liability)` (immutable `onlyLiability` on `payout`).
 - `Liability.sol` — owner → auditor → insurance waterfall. Constructor: `Liability(insuranceFund)` or `Liability(address(0))` then `bindInsurance`.
 - `DisputePanel.sol` — 3-arbitrator **allowlist**. Only `setArbitrator` appointees may vote. `openDispute` reverts until three arbitrators are seated.
-- `BotAttestationEscrow.sol` — bot-to-bot escrow. Release after mutual attestation; an upheld dispute stays releasable after expiry. Panel unwind or an unresolved expiry refunds the payer.
+- `BotAttestationEscrow.sol` — bot-to-bot escrow. Release after mutual attestation; an upheld dispute stays releasable after expiry. Panel unwind or an unresolved expiry refunds the payer. `release` and `refund` credit `pendingWithdrawals` (no ETH push). The recipient calls `withdraw` or `withdrawTo`. Dependency swaps stay gated on `lockedValue` only; `totalOwed` is excluded on purpose.
 
 ## Deploy order (dependency-correct)
 
@@ -42,7 +42,7 @@ Run only after (1), using the deployed addresses. Env (all required, non-zero):
 - `DISPUTE_PANEL`
 - `CORE_TIMELOCK` (≠ deployer)
 
-The script deploys `BotAttestationEscrow(denylist, vault, panel, CORE_TIMELOCK)` and `transferOwnership(CORE_TIMELOCK)`. **Ownable2Step:** the timelock must `acceptOwnership` or the deployer remains owner. `governance` is that timelock. `createEscrow` reverts until the timelock has accepted. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they also revert while `lockedValue != 0`. A denylist swap emits `DenylistUpdated` (previous, new, caller, timestamp). Vault and dispute-panel swaps emit `VaultUpdated` and `DisputePanelUpdated` with that same shape. The constructor emits the initial set with previous `address(0)`. Setting the current address again reverts (`DenylistUnchanged`, `VaultUnchanged`, `DisputePanelUnchanged`). That is a governance event. Production has no hot EOA admin for it. Do not fund before `acceptOwnership`. The script does not redeploy Denylist, Vault, or DisputePanel.
+The script deploys `BotAttestationEscrow(denylist, vault, panel, CORE_TIMELOCK)` and `transferOwnership(CORE_TIMELOCK)`. **Ownable2Step:** the timelock must `acceptOwnership` or the deployer remains owner. `governance` is that timelock. `createEscrow` reverts until the timelock has accepted. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they also revert while `lockedValue != 0`. `totalOwed` (credited, unclaimed ETH) does not keep that gate shut. `release` and `refund` do not transfer ETH; the payee or payer pulls it with `withdraw` / `withdrawTo`. A denylist swap emits `DenylistUpdated` (previous, new, caller, timestamp). Vault and dispute-panel swaps emit `VaultUpdated` and `DisputePanelUpdated` with that same shape. The constructor emits the initial set with previous `address(0)`. Setting the current address again reverts (`DenylistUnchanged`, `VaultUnchanged`, `DisputePanelUnchanged`). That is a governance event. Production has no hot EOA admin for it. Do not fund before `acceptOwnership`. The script does not redeploy Denylist, Vault, or DisputePanel.
 
 ### (3) Optional BVT — `script/DeployBVT.s.sol`
 

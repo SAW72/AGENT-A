@@ -10,6 +10,12 @@ import { DisputePanel } from "../contracts/DisputePanel.sol";
 import { DeployBotAttestationEscrow } from "../script/DeployBotAttestationEscrow.s.sol";
 
 contract EtherSink {
+    function pull(
+        BotAttestationEscrow escrow
+    ) external {
+        escrow.withdraw();
+    }
+
     receive() external payable { }
 }
 
@@ -30,10 +36,15 @@ contract ReenteringPayee {
         escrowId = id;
     }
 
+    function pull() external {
+        escrow.withdraw();
+    }
+
     receive() external payable {
         if (!tried) {
             tried = true;
-            // Reenter should fail: state already Released / nonReentrant.
+            // Reenter should fail: credit already zeroed / nonReentrant.
+            try escrow.withdraw() { } catch { }
             try escrow.release(escrowId) { } catch { }
             try escrow.refund(escrowId) { } catch { }
         }
@@ -101,6 +112,14 @@ contract BotAttestationEscrowTest is Test {
         escrow.createEscrow{ value: amount }(escrowId, payee, payerBot, payeeBot, duration);
     }
 
+    /// @dev Release and refund credit `account`. Pull so balance assertions see the ETH.
+    function _claim(
+        address account
+    ) internal {
+        vm.prank(account);
+        escrow.withdraw();
+    }
+
     function _openPanel(
         bytes32 escrowId,
         bytes32 disputeId
@@ -144,7 +163,12 @@ contract BotAttestationEscrowTest is Test {
         vm.prank(payer);
         escrow.release(escrowId);
         assertEq(escrow.lockedValue(), 0);
+        assertEq(escrow.pendingWithdrawals(payee), amount);
+        assertEq(escrow.totalOwed(), amount);
+        assertEq(payee.balance, before);
+        _claim(payee);
         assertEq(payee.balance, before + amount);
+        assertEq(escrow.totalOwed(), 0);
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
         assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
     }
@@ -162,7 +186,12 @@ contract BotAttestationEscrowTest is Test {
         vm.prank(payer);
         escrow.refund(escrowId);
         assertEq(escrow.lockedValue(), 0);
+        assertEq(escrow.pendingWithdrawals(payer), amount);
+        assertEq(escrow.totalOwed(), amount);
+        assertEq(payer.balance, before);
+        _claim(payer);
         assertEq(payer.balance, before + amount);
+        assertEq(escrow.totalOwed(), 0);
     }
 
     function test_blocksReleaseWhenDenylistedAfterCreate() public {
@@ -269,6 +298,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payer.balance;
         vm.prank(payer);
         escrow.refund(escrowId);
+        _claim(payer);
         assertEq(payer.balance, before + amount);
     }
 
@@ -286,6 +316,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payer.balance;
         vm.prank(payer);
         escrow.refund(escrowId);
+        _claim(payer);
         assertEq(payer.balance, before + amount);
     }
 
@@ -313,6 +344,10 @@ contract BotAttestationEscrowTest is Test {
         uint256 payeeBefore = payee.balance;
         vm.prank(payee);
         escrow.release(escrowId);
+        assertEq(payee.balance, payeeBefore);
+        assertEq(escrow.pendingWithdrawals(payee), amount);
+        assertEq(address(escrow).balance, amount);
+        _claim(payee);
         assertEq(payee.balance, payeeBefore + amount);
         assertEq(address(escrow).balance, 0);
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
@@ -340,11 +375,12 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payer.balance;
         vm.prank(payer);
         escrow.refund(escrowId);
+        _claim(payer);
         assertEq(payer.balance, before + amount);
         assertEq(address(escrow).balance, 0);
     }
 
-    /// @notice H-1 (post-ruling): denylist after uphold must not lock ETH. Release pays e.payee.
+    /// @notice H-1 (post-ruling): denylist after uphold must not lock ETH. Release credits e.payee.
     function test_upheldReleaseSucceedsWhenPayeeDenylisted() public {
         bytes32 escrowId = keccak256("deal-uphold-deny");
         uint256 amount = 1 ether;
@@ -361,6 +397,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payee.balance;
         vm.prank(payer);
         escrow.release(escrowId);
+        _claim(payee);
         assertEq(payee.balance, before + amount);
         assertEq(address(escrow).balance, 0);
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
@@ -379,11 +416,12 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payee.balance;
         vm.prank(payee);
         escrow.release(escrowId);
+        _claim(payee);
         assertEq(payee.balance, before + amount);
         assertEq(address(escrow).balance, 0);
     }
 
-    /// @notice H-1 (post-ruling): operator rotation after uphold pays the original e.payee.
+    /// @notice H-1 (post-ruling): operator rotation after uphold credits the original e.payee.
     function test_upheldReleasePaysOriginalPayeeAfterOperatorRotate() public {
         bytes32 escrowId = keccak256("deal-uphold-rotate");
         uint256 amount = 1 ether;
@@ -397,6 +435,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 rotatedBefore = rotated.balance;
         vm.prank(payer);
         escrow.release(escrowId);
+        _claim(payee);
         assertEq(payee.balance, payeeBefore + amount);
         assertEq(rotated.balance, rotatedBefore);
         assertEq(address(escrow).balance, 0);
@@ -414,6 +453,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payee.balance;
         vm.prank(payee);
         escrow.release(escrowId);
+        _claim(payee);
         assertEq(payee.balance, before + amount);
     }
 
@@ -435,6 +475,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payee.balance;
         vm.prank(payer);
         escrow.release(escrowId);
+        _claim(payee);
         assertEq(payee.balance, before + amount);
     }
 
@@ -559,6 +600,7 @@ contract BotAttestationEscrowTest is Test {
 
         vm.prank(payer);
         escrow.release(escrowId);
+        _claim(payee);
         assertEq(payee.balance, 1 ether);
         assertEq(escrow.lockedValue(), 0);
     }
@@ -574,6 +616,8 @@ contract BotAttestationEscrowTest is Test {
 
         vm.prank(payer);
         escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(address(sink)), amount);
+        sink.pull(escrow);
         assertEq(address(sink).balance, amount);
     }
 
@@ -589,8 +633,13 @@ contract BotAttestationEscrowTest is Test {
 
         vm.prank(payer);
         escrow.release(escrowId);
+        assertEq(address(evil).balance, 0);
+        assertEq(escrow.pendingWithdrawals(address(evil)), amount);
+        evil.pull();
+        assertTrue(evil.tried());
         assertEq(address(evil).balance, amount);
         assertEq(address(escrow).balance, 0);
+        assertEq(escrow.pendingWithdrawals(address(evil)), 0);
     }
 
     function test_doubleReleaseReverts() public {
@@ -776,6 +825,9 @@ contract BotAttestationEscrowTest is Test {
         vm.prank(payer);
         fresh.release(fundedId);
         assertEq(fresh.lockedValue(), 0);
+        // Credited ETH is not an open escrow. Setters ignore totalOwed.
+        assertEq(fresh.totalOwed(), 1 ether);
+        assertEq(fresh.pendingWithdrawals(payee), 1 ether);
 
         vm.prank(gov);
         fresh.setDenylist(address(other));
@@ -826,6 +878,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 before = payer.balance;
         vm.prank(payer);
         escrow.refund(escrowId);
+        _claim(payer);
         assertEq(payer.balance, before + amount);
         assertEq(address(escrow).balance, 0);
     }
