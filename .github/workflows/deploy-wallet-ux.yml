@@ -2,11 +2,18 @@
 # Actions → Deploy wallet-ux → Run workflow, on main.
 # workflow_dispatch only: a push or pull request does not publish.
 # Node.js 22 matches the wallet-ux job in .github/workflows/ci.yml.
+# embed_claim_secret defaults to false, so the claim secret stays out of the bundle.
 
 name: Deploy wallet-ux
 
 on:
   workflow_dispatch:
+    inputs:
+      embed_claim_secret:
+        description: "Embed VITE_CLAIM_API_SECRET in the public JS bundle. Leave this off."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -67,6 +74,25 @@ jobs:
         run: npm test
 
       - name: Build
+        if: ${{ github.event.inputs.embed_claim_secret != 'true' }}
+        run: npm run build
+        env:
+          VITE_CLAIM_RELAYER_URL: ${{ vars.VITE_CLAIM_RELAYER_URL }}
+
+      - name: WARNING claim secret will be public in the bundle
+        if: ${{ github.event.inputs.embed_claim_secret == 'true' }}
+        run: |
+          echo "################################################################"
+          echo "WARNING: embed_claim_secret is true."
+          echo "WARNING: VITE_CLAIM_API_SECRET is being embedded in the public JavaScript bundle."
+          echo "WARNING: Anyone who can load the site can read that value. It is not confidential."
+          echo "WARNING: Do not rely on it as relayer authentication."
+          echo "WARNING: Relayer submit is re-enabled safely by EIP-712 signed intents, tracked separately."
+          echo "################################################################"
+          echo "::warning title=Claim secret will be public::VITE_CLAIM_API_SECRET is embedded in the public JavaScript bundle. It is not confidential and must not be relied on as relayer authentication."
+
+      - name: Build with the claim secret embedded
+        if: ${{ github.event.inputs.embed_claim_secret == 'true' }}
         run: npm run build
         env:
           VITE_CLAIM_RELAYER_URL: ${{ vars.VITE_CLAIM_RELAYER_URL }}
@@ -96,6 +122,27 @@ jobs:
           fi
           if [ "$failed" -ne 0 ]; then
             exit 1
+          fi
+
+      # Default deploys must not ship the claim secret. Skip this scan only
+      # when embed_claim_secret is true. Never print the secret value.
+      - name: Reject a bundled claim secret
+        if: ${{ github.event.inputs.embed_claim_secret != 'true' }}
+        env:
+          VITE_CLAIM_API_SECRET: ${{ secrets.VITE_CLAIM_API_SECRET }}
+        run: |
+          if [ ! -d dist ]; then
+            echo "Bundle guard failed: dist is missing after npm run build."
+            exit 1
+          fi
+          if [ -n "$VITE_CLAIM_API_SECRET" ]; then
+            if grep -R -q -F -- "$VITE_CLAIM_API_SECRET" dist; then
+              echo "Bundle guard failed: dist contains the claim secret while embed_claim_secret is false."
+              exit 1
+            fi
+            echo "Checked dist for the claim secret. It is not present."
+          else
+            echo "VITE_CLAIM_API_SECRET is empty. Skipped the embedded-secret scan."
           fi
 
       # defaults.run.working-directory does not apply to uses steps.
