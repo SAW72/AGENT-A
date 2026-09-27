@@ -16,9 +16,9 @@
   "contracts": {
     "escrow": {
       "name": "BotAttestationEscrow",
-      "address": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c",
-      "start_block": 47299930,
-      "note": "Live code predates PR #23: emits 1-field VaultUpdated(address) and DisputePanelUpdated(address). Accept both shapes."
+      "address": "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
+      "start_block": 47345163,
+      "note": "Live escrow is the ESC-M-1 redeploy from commit 444c427 (deploy block 47345163). It emits 4-field VaultUpdated and DisputePanelUpdated, matching main. The retired escrow 0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c (start block 47299930) emitted the 1-field shapes. Accept both."
     },
     "dispute_panel": {
       "name": "DisputePanel",
@@ -101,7 +101,7 @@
       },
       {
         "role": "escrow",
-        "address": "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c"
+        "address": "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d"
       },
       {
         "role": "dispute_panel",
