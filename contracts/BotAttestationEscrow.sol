@@ -159,6 +159,9 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         address indexed previousPanel, address indexed newPanel, address indexed actor, uint256 timestamp
     );
 
+    /// @notice No `escrows` row was written for `id`.
+    /// @dev `id` is the `bytes32` escrow id. Unset storage is not a valid `Open` escrow.
+    error EscrowNotFound(bytes32 id);
     error EscrowNotOpen();
     error EscrowExpired();
     error AttestationFailed(string reason);
@@ -329,6 +332,22 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         return escrowId;
     }
 
+    /// @dev An id that was never created has `payer == address(0)`. That word is the existence
+    ///      test. Unset storage is otherwise `Open` with `expiresAt == 0` and `amount == 0`, so
+    ///      `refund` would treat it as already expired and credit 0 to `address(0)`.
+    ///      `createEscrow` rejects `msg.value == 0` and stores `msg.sender` as `payer`, but amount
+    ///      is not the test: a created row with a zero amount still has a non-zero payer, and a
+    ///      zero amount must not be reported as missing. `usedEscrowIds` is the same creation
+    ///      fact in another mapping. `refund` and `dispute` already load `payer`, and an open
+    ///      `release` loads it in `_requireBoundOperators`. Reading the replay map as well would
+    ///      add a cold SLOAD on every call.
+    function _requireEscrow(
+        bytes32 escrowId
+    ) internal view returns (Escrow storage e) {
+        e = escrows[escrowId];
+        if (e.payer == address(0)) revert EscrowNotFound(escrowId);
+    }
+
     /// @notice Credit the payee recorded at create time. Does not transfer ETH.
     /// @dev Open (non-disputed) release fails closed: both bots must still be active in
     ///      the Vault, not denylisted, Financial+ tier, and bound to the operators stored
@@ -344,7 +363,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     function release(
         bytes32 escrowId
     ) external nonReentrant {
-        Escrow storage e = escrows[escrowId];
+        Escrow storage e = _requireEscrow(escrowId);
         bool panelUpheld = false;
         if (e.state == EscrowState.Disputed) {
             _requirePanelUpheld(e, escrowId);
@@ -383,7 +402,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     function refund(
         bytes32 escrowId
     ) external nonReentrant {
-        Escrow storage e = escrows[escrowId];
+        Escrow storage e = _requireEscrow(escrowId);
         if (e.state == EscrowState.Open) {
             require(block.timestamp > e.expiresAt, "not expired");
         } else if (e.state == EscrowState.Disputed) {
@@ -461,7 +480,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId,
         bytes32 disputeId
     ) external {
-        Escrow storage e = escrows[escrowId];
+        Escrow storage e = _requireEscrow(escrowId);
         if (e.state != EscrowState.Open) revert EscrowNotOpen();
         require(msg.sender == e.payer || msg.sender == e.payee, "not a party");
         if (disputeId == bytes32(0)) revert InvalidDispute();
