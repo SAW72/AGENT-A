@@ -1,0 +1,165 @@
+# Manual Cloudflare Pages upload for the wallet UX.
+# Actions → Deploy wallet-ux → Run workflow, on main.
+# workflow_dispatch only: a push or pull request does not publish.
+# Node.js 22 matches the wallet-ux job in .github/workflows/ci.yml.
+
+name: Deploy wallet-ux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: deploy-wallet-ux
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/wallet-ux
+    env:
+      # Both phrases are in apps/wallet-ux/src at this commit:
+      # src/relayer.ts exports "Submitting through the claim relayer…"
+      # src/FlowPreview.tsx renders "Submit through the claim relayer, or from your wallet."
+      LIVE_ESCROW: "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d"
+      PHRASE_SUBMITTING: "Submitting through the claim relayer"
+      PHRASE_WALLET_CHOICE: "Submit through the claim relayer, or from your wallet."
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/wallet-ux/package-lock.json
+
+      - name: Require Cloudflare deploy secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=0
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "CLOUDFLARE_API_TOKEN is set."
+          else
+            echo "CLOUDFLARE_API_TOKEN is empty. Add the repository secret (Pages:Edit scope only) before running Deploy wallet-ux."
+            missing=1
+          fi
+          if [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID is set."
+          else
+            echo "CLOUDFLARE_ACCOUNT_ID is empty. Add the repository secret before running Deploy wallet-ux."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_CLAIM_RELAYER_URL: ${{ vars.VITE_CLAIM_RELAYER_URL }}
+          VITE_CLAIM_API_SECRET: ${{ secrets.VITE_CLAIM_API_SECRET }}
+
+      # The retired escrow 0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c is
+      # intentionally bundled as a blocked/superseded address. Do not fail
+      # this guard when that address is present.
+      - name: Guard the built bundle
+        run: |
+          if [ ! -d dist/assets ]; then
+            echo "Bundle guard failed: dist/assets is missing after npm run build."
+            exit 1
+          fi
+          failed=0
+          if grep -R -i -q -F -- "$LIVE_ESCROW" dist/assets; then
+            echo "dist/assets contains the live escrow address."
+          else
+            echo "Bundle guard failed: dist/assets does not contain the live escrow ${LIVE_ESCROW}."
+            failed=1
+          fi
+          if grep -R -q -F -- "$PHRASE_SUBMITTING" dist/assets && grep -R -q -F -- "$PHRASE_WALLET_CHOICE" dist/assets; then
+            echo "dist/assets contains both claim-relayer phrases."
+          else
+            echo "Bundle guard failed: dist/assets is missing a claim-relayer phrase from src/."
+            failed=1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      # defaults.run.working-directory does not apply to uses steps.
+      # cloudflare/wrangler-action v3.15.0 (commit below) installs Wrangler 3.90.0.
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/wallet-ux
+          command: pages deploy dist --project-name=agent-a-wallet-ux --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
+
+      - name: Verify the served bundle
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          if [ -n "$DEPLOYMENT_URL" ]; then
+            base="$(printf '%s' "$DEPLOYMENT_URL" | tr -d '[:space:]')"
+            base="${base%/}"
+            echo "Checking deployment ${base}"
+          else
+            echo "Verify failed: wrangler-action output deployment-url is empty."
+            exit 1
+          fi
+
+          html="${RUNNER_TEMP}/wallet-ux-index.html"
+          bundle="${RUNNER_TEMP}/wallet-ux-served.js"
+          paths="${RUNNER_TEMP}/wallet-ux-asset-paths.txt"
+
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "${base}/" -o "${html}"
+          if grep -oE '/assets/[A-Za-z0-9._-]+\.js' "${html}" | sort -u > "${paths}"; then
+            :
+          else
+            : > "${paths}"
+          fi
+          if [ ! -s "${paths}" ]; then
+            echo "Verify failed: deployed index HTML does not reference /assets/*.js."
+            exit 1
+          fi
+
+          : > "${bundle}"
+          while IFS= read -r asset_path; do
+            echo "Fetching ${asset_path}"
+            if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "${base}${asset_path}" >> "${bundle}"; then
+              echo "Verify failed: could not download ${asset_path}."
+              exit 1
+            fi
+            printf '\n' >> "${bundle}"
+          done < "${paths}"
+
+          failed=0
+          if grep -i -q -F -- "$LIVE_ESCROW" "${bundle}"; then
+            echo "Served bundle contains the live escrow address."
+          else
+            echo "Verify failed: served JavaScript does not contain the live escrow ${LIVE_ESCROW}."
+            failed=1
+          fi
+          if grep -q -F -- "$PHRASE_SUBMITTING" "${bundle}" && grep -q -F -- "$PHRASE_WALLET_CHOICE" "${bundle}"; then
+            echo "Served bundle contains both claim-relayer phrases."
+          else
+            echo "Verify failed: served JavaScript is missing a claim-relayer phrase from src/."
+            failed=1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
