@@ -74,6 +74,10 @@ interface IDisputePanel {
 ///      registry under open funds. `totalOwed` is intentionally excluded from that gate:
 ///      ETH already credited for `withdraw` is not an open escrow, and an unclaimed
 ///      credit must not freeze governance. Invariant: `address(this).balance >= lockedValue + totalOwed`.
+///      A credited balance can be collected only by an account that can call `withdraw` or `withdrawTo`:
+///      an EOA, an EIP-7702 account, or a wallet/contract with that call. A non-upgradeable contract
+///      that cannot call either function strands its own credit. There is no gasless claim yet, so a
+///      payee whose ETH balance is zero still needs gas to withdraw.
 ///      Swaps emit governance events. There is no hot EOA admin.
 contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     /// @notice Timelock that must own this contract before funding or dependency swaps.
@@ -132,11 +136,13 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     );
     event EscrowReleased(bytes32 indexed escrowId, uint256 amount);
     event EscrowRefunded(bytes32 indexed escrowId, uint256 amount);
-    /// @notice `recipient` was credited `amt` to pull later. `isRelease` is true for `release`, false for `refund`.
+    /// @notice `recipient` was credited `amount` to pull later. `isRelease` is true for `release`, false for `refund`.
     /// @dev `EscrowReleased` / `EscrowRefunded` still fire, but they no longer mean ETH was pushed.
-    event Credited(bytes32 indexed escrowId, address indexed recipient, uint256 amt, bool isRelease);
-    /// @notice `account` pulled `amt` of their own credit to `to`.
-    event Withdrawn(address indexed account, address indexed to, uint256 amt);
+    ///      Parameter name is `amount`, matching `EscrowReleased` / `EscrowRefunded`. The topic hash
+    ///      depends on types, not the name.
+    event Credited(bytes32 indexed escrowId, address indexed recipient, uint256 amount, bool isRelease);
+    /// @notice `account` pulled `amount` of their own credit to `to`.
+    event Withdrawn(address indexed account, address indexed to, uint256 amount);
     event EscrowDisputed(bytes32 indexed escrowId, bytes32 disputeId);
     /// @notice Governance record of a denylist swap. `actor` is `governance` after it has accepted ownership.
     event DenylistUpdated(
@@ -333,7 +339,8 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ///      `refund` is closed, so a later denylist hit, burn, tier drop, or operator
     ///      rotation must not strand the locked ETH. The credit is `e.payee` from create,
     ///      not whatever address currently operates the payee bot. This function does not
-    ///      call the payee. The payee pulls the ETH with `withdraw` or `withdrawTo`.
+    ///      call the payee. The payee pulls the ETH with `withdraw` or `withdrawTo`. See `withdraw`
+    ///      for who can collect that credit and why a zero-ETH payee still needs gas.
     function release(
         bytes32 escrowId
     ) external nonReentrant {
@@ -372,6 +379,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ///      An upheld panel ruling closes refund permanently, including after `expiresAt`.
     ///      Expiry remains the backstop only when the panel has not upheld the deal
     ///      (still pending, or resolved as an unwind). Credits `e.payer`. Does not call the payer.
+    ///      The payer collects with `withdraw` or `withdrawTo`. See `withdraw` for the recipient rule.
     function refund(
         bytes32 escrowId
     ) external nonReentrant {
@@ -400,13 +408,20 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Pull the caller's full credit to themselves.
+    /// @dev The caller must accept ETH. A rejecting caller reverts `WithdrawFailed` and keeps the credit.
+    ///      Recipients must be EOAs, EIP-7702 accounts, or wallets/contracts able to call `withdraw` or
+    ///      `withdrawTo`. A non-upgradeable contract that cannot make that call strands its own credit.
+    ///      There is no gasless claim yet, so a payee with 0 ETH needs gas to submit this transaction.
     function withdraw() external nonReentrant {
         _withdraw(msg.sender, msg.sender);
     }
 
     /// @notice Pull the caller's full credit to `to`.
-    /// @dev A recipient whose fallback rejects ETH uses this to send to an address that can accept it.
-    ///      The caller can spend only their own `pendingWithdrawals` balance.
+    /// @dev For a caller whose own address rejects ETH. `to` must accept the transfer.
+    ///      The caller can spend only their own `pendingWithdrawals` balance, and only if that caller
+    ///      can submit the transaction: an EOA, an EIP-7702 account, or a wallet/contract with this call.
+    ///      A non-upgradeable contract that cannot call `withdraw` or `withdrawTo` strands its own credit.
+    ///      There is no gasless claim yet, so a payee with 0 ETH needs gas to submit this transaction.
     /// @param to Destination. Must be non-zero.
     function withdrawTo(
         address to

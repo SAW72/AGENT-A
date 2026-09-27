@@ -6,6 +6,7 @@
 pragma solidity ^0.8.20;
 
 import { Test } from "forge-std/Test.sol";
+import { console } from "forge-std/console.sol";
 import { StdUtils } from "forge-std/StdUtils.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
@@ -145,8 +146,8 @@ error ReentrancyGuardReentrantCall();
 contract BotAttestationEscrowPullTest is Test {
     event EscrowReleased(bytes32 indexed escrowId, uint256 amount);
     event EscrowRefunded(bytes32 indexed escrowId, uint256 amount);
-    event Credited(bytes32 indexed escrowId, address indexed recipient, uint256 amt, bool isRelease);
-    event Withdrawn(address indexed account, address indexed to, uint256 amt);
+    event Credited(bytes32 indexed escrowId, address indexed recipient, uint256 amount, bool isRelease);
+    event Withdrawn(address indexed account, address indexed to, uint256 amount);
 
     Denylist denylist;
     Vault vault;
@@ -702,39 +703,73 @@ contract BotAttestationEscrowPullTest is Test {
     }
 }
 
-/// @dev Stateful fuzz. Ghost `withdrawnSum` plus escrow state is the credit/settled check.
+contract RejectETH2 {
+    receive() external payable {
+        revert("no");
+    }
+}
+
+/// @dev Same-transaction selfdestruct still delivers ETH under Cancun.
+contract ForceSend {
+    constructor(
+        address t
+    ) payable {
+        selfdestruct(payable(t));
+    }
+}
+
+/// @dev SCA pull-payment handler: create, release, refund, dispute, rule, reject, withdraw, force-ETH, setters.
 contract PullPaymentHandler is StdUtils {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     BotAttestationEscrow public escrow;
+    DisputePanel public panel;
     address public payer;
     address public payee;
-    address public sink;
-    bytes32 public payerBot;
-    bytes32 public payeeBot;
-    bytes32[] internal ids;
-    uint256 public withdrawnSum;
-    uint256 internal nextId;
+    address public governance;
+    bytes32 payerBot;
+    bytes32 payeeBot;
+    address[3] arbs;
+    bytes32[] public ids;
+    mapping(bytes32 => bytes32) public did;
+    uint256 public withdrawn;
+    uint256 public forced;
+    uint256 nonce;
+    bool public setterBroken;
+    bool public withdrawBlockedOther;
+    uint256 public callsRelease;
+    uint256 public callsRefund;
+    uint256 public callsDispute;
+    uint256 public callsRule;
+    uint256 public callsWd;
+    uint256 public callsWdFail;
+    uint256 public callsSetter;
+    address public d1;
+    address public d2;
+    bool flip;
 
     constructor(
-        BotAttestationEscrow _escrow,
+        BotAttestationEscrow e,
+        DisputePanel p,
         address _payer,
         address _payee,
-        bytes32 _payerBot,
-        bytes32 _payeeBot
+        address gov,
+        bytes32 a,
+        bytes32 b,
+        address[3] memory _arbs,
+        address _d1,
+        address _d2
     ) {
-        escrow = _escrow;
+        escrow = e;
+        panel = p;
         payer = _payer;
         payee = _payee;
-        payerBot = _payerBot;
-        payeeBot = _payeeBot;
-        sink = address(uint160(uint256(keccak256("pull-sink"))));
-    }
-
-    function idAt(
-        uint256 i
-    ) external view returns (bytes32) {
-        return ids[i];
+        governance = gov;
+        payerBot = a;
+        payeeBot = b;
+        arbs = _arbs;
+        d1 = _d1;
+        d2 = _d2;
     }
 
     function idsLength() external view returns (uint256) {
@@ -742,118 +777,266 @@ contract PullPaymentHandler is StdUtils {
     }
 
     function create(
-        uint96 rawAmt,
-        uint32 rawDur
+        uint96 amt,
+        uint32 dur
     ) external {
-        if (ids.length >= 8) return;
-        uint256 amt = bound(rawAmt, 1, 2 ether);
-        uint256 dur = bound(rawDur, 1, 7 days);
-        bytes32 id = keccak256(abi.encodePacked("inv", nextId));
-        nextId++;
-        vm.deal(payer, payer.balance + amt);
+        if (ids.length >= 12) return;
+        uint256 a = bound(amt, 1, 5 ether);
+        uint256 d = bound(dur, 1, 3 days);
+        bytes32 id = keccak256(abi.encode("s", nonce++));
+        vm.deal(payer, payer.balance + a);
         vm.prank(payer);
-        escrow.createEscrow{ value: amt }(id, payee, payerBot, payeeBot, dur);
+        escrow.createEscrow{ value: a }(id, payee, payerBot, payeeBot, d);
         ids.push(id);
     }
 
-    function releaseOne(
+    function _pick(
         uint256 i
-    ) external {
-        uint256 n = ids.length;
-        if (n == 0) return;
-        bytes32 id = ids[i % n];
-        (,,,,,, uint256 expiresAt, BotAttestationEscrow.EscrowState state,) = escrow.escrows(id);
-        if (state != BotAttestationEscrow.EscrowState.Open) return;
-        if (block.timestamp > expiresAt) return;
-        escrow.release(id);
+    ) internal view returns (bytes32) {
+        return ids[i % ids.length];
     }
 
-    function refundOne(
+    function release(
         uint256 i
     ) external {
-        uint256 n = ids.length;
-        if (n == 0) return;
-        bytes32 id = ids[i % n];
-        (,,,,,, uint256 expiresAt, BotAttestationEscrow.EscrowState state,) = escrow.escrows(id);
-        if (state != BotAttestationEscrow.EscrowState.Open) return;
-        if (block.timestamp <= expiresAt) return;
-        escrow.refund(id);
+        if (ids.length == 0) return;
+        try escrow.release(_pick(i)) {
+            callsRelease++;
+        } catch { }
     }
 
-    function withdrawOne(
-        bool payeeFirst,
-        bool toOther
+    function refund(
+        uint256 i
     ) external {
-        address account = payeeFirst ? payee : payer;
-        if (escrow.pendingWithdrawals(account) == 0) account = payeeFirst ? payer : payee;
-        uint256 amt = escrow.pendingWithdrawals(account);
-        if (amt == 0) return;
-        vm.prank(account);
-        if (toOther) escrow.withdrawTo(sink);
-        else escrow.withdraw();
-        withdrawnSum += amt;
+        if (ids.length == 0) return;
+        try escrow.refund(_pick(i)) {
+            callsRefund++;
+        } catch { }
+    }
+
+    function disputeIt(
+        uint256 i,
+        bool byPayee
+    ) external {
+        if (ids.length == 0) return;
+        bytes32 id = bytes32(0);
+        for (uint256 k; k < ids.length; k++) {
+            bytes32 c = ids[(i % ids.length + k) % ids.length];
+            (,,,,,, uint256 exp, BotAttestationEscrow.EscrowState st,) = escrow.escrows(c);
+            if (st == BotAttestationEscrow.EscrowState.Open && block.timestamp <= exp) {
+                id = c;
+                break;
+            }
+        }
+        if (id == bytes32(0)) return;
+        address who = byPayee ? payee : payer;
+        bytes32 d = keccak256(abi.encode("d", nonce++));
+        vm.prank(who);
+        try panel.openDispute(d, id, "x") { }
+        catch {
+            return;
+        }
+        vm.prank(who);
+        try escrow.dispute(id, d) {
+            did[id] = d;
+            callsDispute++;
+        } catch { }
+    }
+
+    function rule(
+        uint256 i,
+        bool uphold
+    ) external {
+        if (ids.length == 0) return;
+        bytes32 d;
+        for (uint256 k; k < ids.length; k++) {
+            bytes32 c = ids[(i % ids.length + k) % ids.length];
+            (,,,,, bool res,,) = panel.disputes(did[c]);
+            if (did[c] != 0 && !res) {
+                d = did[c];
+                break;
+            }
+        }
+        if (d == 0) return;
+        for (uint256 k; k < 3; k++) {
+            vm.prank(arbs[k]);
+            try panel.vote(d, k < 2 ? uphold : !uphold) { }
+            catch {
+                return;
+            }
+        }
+        callsRule++;
+    }
+
+    function toggleReject(
+        bool whoPayee,
+        bool reject
+    ) external {
+        address a = whoPayee ? payee : payer;
+        vm.etch(a, reject ? type(RejectETH2).runtimeCode : bytes(""));
+    }
+
+    function withdraw(
+        bool whoPayee,
+        bool toSink
+    ) external {
+        address a = whoPayee ? payee : payer;
+        address other = whoPayee ? payer : payee;
+        uint256 amt = escrow.pendingWithdrawals(a);
+        uint256 otherBefore = escrow.pendingWithdrawals(other);
+        vm.prank(a);
+        bool ok;
+        if (toSink) {
+            try escrow.withdrawTo(address(0xBEEF)) {
+                ok = true;
+            } catch { }
+        } else {
+            try escrow.withdraw() {
+                ok = true;
+            } catch { }
+        }
+        if (ok) {
+            withdrawn += amt;
+            callsWd++;
+        } else {
+            callsWdFail++;
+            if (escrow.pendingWithdrawals(a) != amt) withdrawBlockedOther = true;
+        }
+        if (escrow.pendingWithdrawals(other) != otherBefore) withdrawBlockedOther = true;
+        // The other party can still withdraw on its own when it accepts ETH.
+        if (!ok && escrow.pendingWithdrawals(other) > 0 && other.code.length == 0) {
+            uint256 oa = escrow.pendingWithdrawals(other);
+            vm.prank(other);
+            try escrow.withdraw() {
+                withdrawn += oa;
+            } catch {
+                withdrawBlockedOther = true;
+            }
+        }
+    }
+
+    function forceEth(
+        uint96 amt,
+        bool viaSelfdestruct
+    ) external {
+        uint256 a = bound(amt, 1, 1 ether);
+        if (viaSelfdestruct) {
+            vm.deal(address(this), address(this).balance + a);
+            new ForceSend{ value: a }(address(escrow));
+        } else {
+            vm.deal(address(escrow), address(escrow).balance + a);
+        }
+        forced += a;
+    }
+
+    function trySetters() external {
+        if (escrow.lockedValue() != 0) return;
+        flip = !flip;
+        vm.prank(governance);
+        try escrow.setDenylist(flip ? d2 : d1) {
+            callsSetter++;
+        } catch {
+            setterBroken = true;
+        }
     }
 
     function warp(
         uint32 dt
     ) external {
-        vm.warp(block.timestamp + bound(dt, 0, 3 days));
+        vm.warp(block.timestamp + bound(dt, 0, 2 days));
     }
 }
 
-/// forge-config: default.invariant.runs = 32
-/// forge-config: default.invariant.depth = 20
-/// forge-config: default.invariant.fail_on_revert = false
+/// forge-config: default.invariant.runs = 200
+/// forge-config: default.invariant.depth = 300
+/// forge-config: default.invariant.fail_on_revert = true
 contract PullPaymentInvariantTest is Test {
     PullPaymentHandler internal handler;
+    BotAttestationEscrow internal escrow;
+    uint256[8] internal tot;
 
     function setUp() public {
-        Denylist denylist = new Denylist();
-        Vault vault = new Vault(address(denylist));
+        Denylist dl = new Denylist();
+        Denylist dl2 = new Denylist();
+        Vault vault = new Vault(address(dl));
         DisputePanel panel = new DisputePanel();
-        address governance = makeAddr("inv-gov");
-        BotAttestationEscrow escrow =
-            new BotAttestationEscrow(address(denylist), address(vault), address(panel), governance);
-        escrow.transferOwnership(governance);
-        vm.prank(governance);
+        address gov = makeAddr("gov");
+        escrow = new BotAttestationEscrow(address(dl), address(vault), address(panel), gov);
+        escrow.transferOwnership(gov);
+        vm.prank(gov);
         escrow.acceptOwnership();
-
-        address payer = makeAddr("inv-payer");
-        address payee = makeAddr("inv-payee");
-        bytes32 payerBot = keccak256("inv-payer-bot");
-        bytes32 payeeBot = keccak256("inv-payee-bot");
-        vault.register(payerBot, keccak256("iw1"), keccak256("ib1"), keccak256("ip1"), Vault.Tier.Financial, payer);
-        vault.register(payeeBot, keccak256("iw2"), keccak256("ib2"), keccak256("ip2"), Vault.Tier.Financial, payee);
-
-        handler = new PullPaymentHandler(escrow, payer, payee, payerBot, payeeBot);
+        address[3] memory arbs = [makeAddr("a1"), makeAddr("a2"), makeAddr("a3")];
+        for (uint256 k; k < 3; k++) {
+            panel.setArbitrator(arbs[k], true);
+        }
+        address payer = makeAddr("sp");
+        address payee = makeAddr("se");
+        vault.register(keccak256("pb"), keccak256("1"), keccak256("2"), keccak256("3"), Vault.Tier.Financial, payer);
+        vault.register(keccak256("eb"), keccak256("4"), keccak256("5"), keccak256("6"), Vault.Tier.Financial, payee);
+        handler = new PullPaymentHandler(
+            escrow, panel, payer, payee, gov, keccak256("pb"), keccak256("eb"), arbs, address(dl), address(dl2)
+        );
         targetContract(address(handler));
-        bytes4[] memory selectors = new bytes4[](5);
+        // `ids(uint256)` reverts out of range. Fuzz only the handler actions so fail_on_revert stays on.
+        bytes4[] memory selectors = new bytes4[](10);
         selectors[0] = PullPaymentHandler.create.selector;
-        selectors[1] = PullPaymentHandler.releaseOne.selector;
-        selectors[2] = PullPaymentHandler.refundOne.selector;
-        selectors[3] = PullPaymentHandler.withdrawOne.selector;
-        selectors[4] = PullPaymentHandler.warp.selector;
+        selectors[1] = PullPaymentHandler.release.selector;
+        selectors[2] = PullPaymentHandler.refund.selector;
+        selectors[3] = PullPaymentHandler.disputeIt.selector;
+        selectors[4] = PullPaymentHandler.rule.selector;
+        selectors[5] = PullPaymentHandler.toggleReject.selector;
+        selectors[6] = PullPaymentHandler.withdraw.selector;
+        selectors[7] = PullPaymentHandler.forceEth.selector;
+        selectors[8] = PullPaymentHandler.trySetters.selector;
+        selectors[9] = PullPaymentHandler.warp.selector;
         targetSelector(FuzzSelector({ addr: address(handler), selectors: selectors }));
     }
 
-    /// @notice balance >= locked + owed, and credits issued equal settled escrow amounts.
-    function invariant_solvencyAndCredits() public view {
-        BotAttestationEscrow escrow = handler.escrow();
-        uint256 locked = escrow.lockedValue();
-        uint256 owed = escrow.totalOwed();
-        assertGe(address(escrow).balance, locked + owed);
-        assertEq(escrow.pendingWithdrawals(handler.payer()) + escrow.pendingWithdrawals(handler.payee()), owed);
+    function invariant_solvent() public view {
+        assertGe(address(escrow).balance, escrow.lockedValue() + escrow.totalOwed());
+    }
 
+    function invariant_accounting() public view {
+        uint256 open;
         uint256 settled;
         uint256 n = handler.idsLength();
-        for (uint256 i; i < n; ++i) {
-            (,,,, uint256 amount,,, BotAttestationEscrow.EscrowState state,) = escrow.escrows(handler.idAt(i));
-            if (
-                state == BotAttestationEscrow.EscrowState.Released || state == BotAttestationEscrow.EscrowState.Refunded
-            ) {
-                settled += amount;
+        for (uint256 i; i < n; i++) {
+            (,,,, uint256 amt,,, BotAttestationEscrow.EscrowState s,) = escrow.escrows(handler.ids(i));
+            if (s == BotAttestationEscrow.EscrowState.Open || s == BotAttestationEscrow.EscrowState.Disputed) {
+                open += amt;
+            } else {
+                settled += amt;
             }
         }
-        assertEq(owed + handler.withdrawnSum(), settled);
+        assertEq(escrow.lockedValue(), open);
+        assertEq(escrow.totalOwed() + handler.withdrawn(), settled);
+        assertEq(
+            escrow.pendingWithdrawals(handler.payer()) + escrow.pendingWithdrawals(handler.payee()), escrow.totalOwed()
+        );
+        // Deposits minus withdrawals, plus ETH forced in outside the escrow flow.
+        assertEq(address(escrow).balance, open + escrow.totalOwed() + handler.forced());
+    }
+
+    function invariant_noLocks() public view {
+        assertFalse(handler.setterBroken());
+        assertFalse(handler.withdrawBlockedOther());
+    }
+
+    function afterInvariant() public {
+        tot[0] += handler.callsRelease();
+        tot[1] += handler.callsRefund();
+        tot[2] += handler.callsDispute();
+        tot[3] += handler.callsRule();
+        tot[4] += handler.callsWd();
+        tot[5] += handler.callsWdFail();
+        tot[6] += handler.callsSetter();
+        tot[7] += handler.forced();
+        console.log(
+            "rel/ref/disp/rule",
+            handler.callsRelease(),
+            handler.callsRefund(),
+            handler.callsDispute() * 1000 + handler.callsRule()
+        );
+        console.log("wd ok/fail/setterOK", handler.callsWd(), handler.callsWdFail(), handler.callsSetter());
     }
 }
