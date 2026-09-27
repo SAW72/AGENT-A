@@ -9,6 +9,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { BASE_SEPOLIA_CHAIN_ID, BOOKED_SEPOLIA_ESCROW, httpError } from "./config.mjs";
 import { isTransientClaimError } from "./retry.mjs";
+import { extractRevertData, revertDataFrom } from "./revertData.mjs";
 
 if (baseSepolia.id !== BASE_SEPOLIA_CHAIN_ID) {
   throw new Error("base_sepolia_chain_drift");
@@ -100,15 +101,22 @@ function asSendError(err, key) {
   if (err?.status && err?.error) {
     if (typeof err.message === "string") err.message = redact(err.message, key);
     if (typeof err.reason === "string") err.reason = redact(err.reason, key);
+    if (err.status === 502 && err.error === "broadcast_failed") {
+      err.revert_data = revertDataFrom(err, key);
+    }
     return err;
   }
   if (isTransientClaimError(err)) {
     const wrapped = new Error("timeout");
     wrapped.error = "broadcast_failed";
+    wrapped.revert_data = extractRevertData(err, key);
     return wrapped;
   }
-  const reason = redact(err?.shortMessage || err?.message || "broadcast_failed", key).slice(0, 180);
-  return httpError(502, "broadcast_failed", { reason, txHash: null, dryRun: false });
+  return httpError(502, "broadcast_failed", {
+    txHash: null,
+    dryRun: false,
+    revert_data: extractRevertData(err, key),
+  });
 }
 
 function httpRequest(rpcUrl) {
@@ -171,7 +179,7 @@ export function createSepoliaBroadcaster({ rpcUrl, privateKey, request } = {}) {
           value: BigInt(tx.valueWei || "0"),
         });
         if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
-          throw httpError(502, "broadcast_failed", { txHash: null, dryRun: false });
+          throw httpError(502, "broadcast_failed", { txHash: null, dryRun: false, revert_data: null });
         }
         return { txHash };
       } catch (err) {

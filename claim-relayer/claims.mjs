@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { BASE_SEPOLIA_CHAIN_ID, ZERO_ADDRESS, httpError, isAddress } from "./config.mjs";
 import { encodeEscrowAction } from "./escrowCalldata.mjs";
 import { withClaimRetry } from "./retry.mjs";
+import { revertDataFrom } from "./revertData.mjs";
 
 const CLAIM_ID_RE = /^(?:fixture-[0-9a-f]{8,32}|0x[0-9a-fA-F]{64}|[A-Za-z0-9:_-]{1,80})$/;
 
@@ -206,12 +207,18 @@ export async function submitLiveClaim({ body, config, broadcaster }) {
     }
     sent = await withClaimRetry(() => broadcaster.send(tx), { log: () => {} });
   } catch (err) {
-    const wrapped = err?.status ? err : httpError(502, "broadcast_failed", { txHash: null, dryRun: false });
+    const revert_data = revertDataFrom(err);
+    const wrapped = err?.status
+      ? err
+      : httpError(502, "broadcast_failed", { txHash: null, dryRun: false, revert_data });
     wrapped.senderConstraint = encoded.senderConstraint;
     wrapped.senderNote = senderNoteFor(encoded.action);
     wrapped.action = encoded.action;
     wrapped.txHash = null;
     wrapped.dryRun = false;
+    if (Number(wrapped.status) === 502 && wrapped.error === "broadcast_failed") {
+      wrapped.revert_data = revertDataFrom(wrapped);
+    }
     throw wrapped;
   }
 
@@ -220,6 +227,7 @@ export async function submitLiveClaim({ body, config, broadcaster }) {
     throw httpError(502, "broadcast_failed", {
       txHash: null,
       dryRun: false,
+      revert_data: null,
       action: encoded.action,
       senderConstraint: encoded.senderConstraint,
       senderNote: senderNoteFor(encoded.action),

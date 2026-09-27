@@ -33,6 +33,10 @@ describe("config gates", () => {
     assert.equal(config.bvtAddress, null);
     assert.equal(config.liveSubmit.allowed, false);
     assert.equal(config.claimApiSecret, "");
+    assert.equal(
+      config.corsOrigins,
+      "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
+    );
     assert.deepEqual(config.liveSubmit.blockers, ["spencer_run_auth_required", "live_submit_off"]);
     assert.equal(JSON.stringify(config).includes(SECRET), false);
     assert.equal(Object.hasOwn(config, "RELAYER_PRIVATE_KEY"), false);

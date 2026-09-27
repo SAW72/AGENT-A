@@ -5,7 +5,9 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { RpcRequestError } from "viem";
 import { createClaimRelayer } from "../app.mjs";
+import { createSepoliaBroadcaster } from "../broadcast.mjs";
 import { createClaimLog } from "../claimLog.mjs";
 import { loadConfig } from "../config.mjs";
 import { createKillSwitch } from "../killSwitch.mjs";
@@ -357,6 +359,7 @@ describe("claim relayer HTTP", () => {
       );
       assert.equal(missing.status, 502);
       assert.equal(missing.json.txHash, null);
+      assert.equal(missing.json.revert_data, null);
       assert.equal(missing.json.senderConstraint, "permissionless");
 
       const create = await request(
@@ -377,6 +380,7 @@ describe("claim relayer HTTP", () => {
       );
       assert.equal(create.status, 502);
       assert.equal(create.json.txHash, null);
+      assert.equal(create.json.revert_data, null);
       assert.equal(create.json.senderConstraint, "vault_operator_must_send");
       assert.match(create.json.senderNote, /Vault operator/);
       assert.equal(JSON.stringify(create.json).includes(SECRET), false);
@@ -609,7 +613,204 @@ describe("claim relayer HTTP", () => {
       await ctx.close();
     }
   });
+
+  it("allows the Wallet UX Pages origin by default and still requires the claim secret", async () => {
+    const pages = "https://agent-a-wallet-ux.pages.dev";
+    const ctx = await boot({
+      LIVE_SUBMIT: "1",
+      SPENCER_RUN_AUTH: "1",
+      CLAIM_API_SECRET: CLAIM_SECRET,
+    });
+    try {
+      const allowed = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
+        origin: pages,
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type,x-claim-secret",
+      });
+      assert.equal(allowed.status, 204);
+      assert.equal(allowed.headers["access-control-allow-origin"], pages);
+
+      const local = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
+        origin: "http://127.0.0.1:5173",
+      });
+      assert.equal(local.headers["access-control-allow-origin"], "http://127.0.0.1:5173");
+
+      const otherPages = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
+        origin: "https://other.pages.dev",
+      });
+      assert.equal(otherPages.status, 204);
+      assert.equal(otherPages.headers["access-control-allow-origin"], undefined);
+
+      const live = await request(
+        ctx.port,
+        "POST",
+        "/v1/claims",
+        { action: "release", claimId: "0x" + "22".repeat(32), live: true },
+        { origin: pages },
+      );
+      assert.equal(live.status, 401);
+      assert.equal(live.json.error, "unauthorized");
+      assert.equal(live.headers["access-control-allow-origin"], pages);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("returns revert_data on a live 502 and omits the rpc url and provider message", async () => {
+    const revert = "0x" + "aabbccdd" + "ab".repeat(32);
+    const rpcUrl = "https://sepolia.example/v2/secret-rpc-key";
+    const rawMessage = "execution reverted: NotAParty raw-provider-message";
+    const releaseBody = {
+      action: "release",
+      claimId: "0x" + "22".repeat(32),
+      live: true,
+    };
+    let sends = 0;
+    const ctx = await boot(
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET },
+      {
+        broadcaster: {
+          async send() {
+            sends += 1;
+            if (sends === 1) {
+              const err = new Error(rawMessage);
+              err.shortMessage = rawMessage;
+              err.details = rawMessage;
+              err.url = rpcUrl;
+              err.stack = `${rawMessage}\n    at send (${rpcUrl})`;
+              err.data = "0xzz " + rpcUrl;
+              err.cause = { message: rawMessage, data: "0xabc", url: rpcUrl };
+              err.info = {
+                error: {
+                  code: 3,
+                  message: rawMessage,
+                  data: { data: "0x" + revert.slice(2).toUpperCase() },
+                  url: rpcUrl,
+                },
+              };
+              throw err;
+            }
+            if (sends === 2) {
+              const err = new Error(rawMessage);
+              err.url = rpcUrl;
+              err.shortMessage = rawMessage;
+              throw err;
+            }
+            const err = new Error(rawMessage);
+            err.url = rpcUrl;
+            err.data = "not-hex " + rpcUrl + " " + rawMessage;
+            err.raw = "0x" + "aa".repeat(4097);
+            throw err;
+          },
+        },
+      },
+    );
+    try {
+      const decoded = await request(ctx.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      assert.equal(decoded.status, 502);
+      assert.deepEqual(decoded.json, {
+        ok: false,
+        error: "broadcast_failed",
+        txHash: null,
+        dryRun: false,
+        action: "release",
+        senderConstraint: "permissionless",
+        senderNote: "release and refund are permissionless. The relayer signer sends this transaction.",
+        revert_data: revert,
+      });
+      assert.equal(decoded.raw.includes(rpcUrl), false);
+      assert.equal(decoded.raw.includes("raw-provider-message"), false);
+      assert.equal(decoded.raw.includes("NotAParty"), false);
+      assert.equal(decoded.raw.includes("secret-rpc-key"), false);
+      assert.equal(decoded.raw.includes(SECRET), false);
+
+      const missing = await request(ctx.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      assert.equal(missing.status, 502);
+      assert.equal(missing.json.revert_data, null);
+      assert.equal(missing.json.error, "broadcast_failed");
+      assert.equal(missing.raw.includes(rpcUrl), false);
+      assert.equal(missing.raw.includes("raw-provider-message"), false);
+
+      const junk = await request(ctx.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      assert.equal(junk.status, 502);
+      assert.equal(junk.json.revert_data, null);
+      assert.equal(junk.raw.includes(rpcUrl), false);
+      assert.equal(junk.raw.includes("raw-provider-message"), false);
+      assert.equal(junk.raw.includes("0x" + "aa".repeat(8)), false);
+      assert.equal(sends, 3);
+
+      const log = await readFile(ctx.logPath, "utf8");
+      assert.equal(log.includes(rpcUrl), false);
+      assert.equal(log.includes("raw-provider-message"), false);
+      assert.equal(log.includes("secret-rpc-key"), false);
+    } finally {
+      await ctx.close();
+    }
+
+    const viemKey = "0x" + "11".repeat(32);
+    let estimates = 0;
+    const live = await boot(
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET },
+      {
+        broadcaster: createSepoliaBroadcaster({
+          privateKey: viemKey,
+          request: async ({ method }) => {
+            if (method === "eth_chainId") return "0x14a34";
+            if (method === "eth_fillTransaction") throw new Error("eth_fillTransaction is not available");
+            if (method === "eth_getTransactionCount") return "0x0";
+            if (method === "eth_getBlockByNumber") return sepoliaBlock();
+            if (method === "eth_maxPriorityFeePerGas") return "0x59682f00";
+            if (method === "eth_gasPrice") return "0x3b9aca00";
+            if (method === "eth_estimateGas") {
+              estimates += 1;
+              throw new RpcRequestError({
+                body: { method, params: [{ data: "0xdeadbeef" }] },
+                error: { code: 3, message: rawMessage, data: "0x" + revert.slice(2).toUpperCase() },
+                url: rpcUrl,
+              });
+            }
+            throw new Error(`unexpected ${method}`);
+          },
+        }),
+      },
+    );
+    try {
+      const failed = await request(live.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      assert.equal(failed.status, 502);
+      assert.equal(failed.json.revert_data, revert);
+      assert.equal(failed.json.error, "broadcast_failed");
+      assert.equal(failed.json.reason, undefined);
+      assert.equal(failed.raw.includes(rpcUrl), false);
+      assert.equal(failed.raw.includes("raw-provider-message"), false);
+      assert.equal(failed.raw.includes("0xdeadbeef"), false);
+      assert.equal(failed.raw.includes(viemKey.slice(2)), false);
+      assert.equal(failed.raw.includes(SECRET), false);
+      assert.equal(estimates, 1);
+    } finally {
+      await live.close();
+    }
+  });
 });
+
+function sepoliaBlock() {
+  return {
+    baseFeePerGas: "0x3b9aca00",
+    gasLimit: "0x1c9c380",
+    gasUsed: "0x0",
+    number: "0x1",
+    timestamp: "0x65000000",
+    hash: "0x" + "11".repeat(32),
+    parentHash: "0x" + "22".repeat(32),
+    transactions: [],
+    miner: "0x" + "33".repeat(20),
+    difficulty: "0x0",
+    totalDifficulty: "0x0",
+    extraData: "0x",
+    nonce: "0x0000000000000000",
+    size: "0x1",
+    stateRoot: "0x" + "44".repeat(32),
+  };
+}
 
 async function boot(env = {}, extra = {}) {
   const dir = await mkdtemp(join(tmpdir(), "claim-relayer-"));
