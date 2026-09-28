@@ -21,9 +21,9 @@ Reads below were taken against `https://sepolia.base.org` (chain id `84532`). Ow
 Spencer ticks both boxes before any `register` command (steps 3, 4, and 7). Steps 1 and 2 are reads.
 
 - [ ] wallet-ux Pages redeployed without the embedded secret
-- [ ] the claim secret rotated
+- [ ] the claim secret is retired and deleted (#46 removed it), not rotated
 
-The live Wallet UX bundle inlines the claim secret. The repo documents that secret as a soft deterrent. Leave the old Pages deploy up, and a later registration of the relayer as a payer operator lets anyone who has that secret move the relayer's test ETH. Tick these before the first `register`, including the Spencer-wallet smoke.
+#46 removed the claim secret. It is retired and deleted, not rotated. Tick these before the first `register`, including the Spencer-wallet smoke.
 
 ## What the source and the chain agree on
 
@@ -139,7 +139,7 @@ unset PAYER_OPERATOR PAYEE_OPERATOR
 
 Replace both angle-bracket tokens with checksummed addresses, then follow the numbers in order. Left as written, the two operator exports fail to parse (`<` is a redirection).
 
-Bash reads a paste one line at a time, so it reports a syntax error on the angle brackets and does not set the placeholders. zsh rejects that whole paste, so a previous valid address can remain if the clear step above was skipped. `ops_guard` does not rely on that `unset`. It rejects a payer or a payee that matches a known sample or stale address, compared after checksum and ignoring hex case. That list is the `bEEF` placeholder, the zero address, the simulation stand-ins `0x1111111111111111111111111111111111111111` and `0x2222222222222222222222222222222222222222`, the live escrow, the retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`, and the sample senders in `script/` (`0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001`, `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`, `0x0000000000000000000000000000000000000A11`, `0x0000000000000000000000000000000000000A22`, `0x0000000000000000000000000000000000000A33`, and `0x0000000000000000000000000000000000000001`). It also rejects either operator equal to the relayer. Step 7 still prints both values and waits for `YES` before either registration `cast send`. That prompt is what stops a stale address that is not on the list.
+Bash reads a paste one line at a time, so it reports a syntax error on the angle brackets and does not set the placeholders. zsh rejects that whole paste, so a previous valid address can remain if the clear step above was skipped. `ops_guard` does not rely on that `unset`. After checksum, and ignoring hex case, it rejects a payer or a payee that is blocklisted. That list is the `bEEF` placeholder, the zero address, the simulation stand-ins `0x1111111111111111111111111111111111111111` and `0x2222222222222222222222222222222222222222`, the live escrow, the retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`, the sample senders in `script/` (`0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001`, `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`, `0x0000000000000000000000000000000000000A11`, `0x0000000000000000000000000000000000000A22`, `0x0000000000000000000000000000000000000A33`, and `0x0000000000000000000000000000000000000001`), and these book addresses from `deployments/base-sepolia.json`: Vault `Vault.address` `0x1463D664fA467FBCDA4B05443434494f05e565bc`, Denylist `Denylist.address` `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, DisputePanel `DisputePanel.address` `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, and the old Vault `superseded.Vault.address` `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7`. It also rejects either operator equal to the relayer, the two operators equal to each other, and a shell with no `cast`. Step 7 still prints both values and waits for `YES` before either registration `cast send`. That prompt is what stops a stale address that is not on the list. Both send pastes check `cast chain-id` and exit unless it is `84532`.
 
 ```bash
 export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
@@ -226,11 +226,15 @@ A `cast call` of the same register with `--value 1` from `CORE_TIMELOCK` reverts
 
 The same register with `--from` set to any account other than `CORE_TIMELOCK` reverts `OwnableUnauthorizedAccount` (`0x118cdaa7`). The registration has to come from `CORE_TIMELOCK`.
 
-4. Define `ops_guard`, then dry-run Bot B only if it returns 0. Paste this block as one unit. The function checks that each operator is a valid checksummed address (`cast to-check-sum-address`, then compare the shell value to that result) and that the two operators differ. After checksum, and ignoring hex case, it rejects either operator when it is the relayer `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861`, the `bEEF` placeholder, the zero address, a simulation stand-in, the live escrow, the retired escrow, or a sample sender from `script/`. That check does not depend on the earlier `unset`. A failure prints why and `return`s 1. It does not `exit`, so the interactive shell stays open. The dry-run is on the same `&&` chain, so a failure skips both `cast` commands.
+4. Define `ops_guard`, then dry-run Bot B only if it returns 0. Paste this block as one unit. The function checks that `cast` is installed, that each operator is a valid checksummed address (`cast to-check-sum-address`, then compare the shell value to that result), and that the two operators differ. After checksum, and ignoring hex case, it rejects either operator when it is the relayer `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` or when it is blocklisted: the `bEEF` placeholder, the zero address, a simulation stand-in, the live escrow, the retired escrow, a sample sender from `script/`, the live Vault, the live Denylist, DisputePanel, or the old Vault. Those four book addresses are `Vault.address`, `Denylist.address`, `DisputePanel.address`, and `superseded.Vault.address` in `deployments/base-sepolia.json`. That check does not depend on the earlier `unset`. A failure prints why and `return`s 1. It does not `exit`, so the interactive shell stays open. The dry-run is on the same `&&` chain, so a failure skips both `cast` commands. The chain-id abort is on the two send pastes, not on this dry-run.
 
 ```bash
 ops_guard() {
   local payer payee relayer payer_lc payee_lc relayer_lc banned banned_lc
+  if ! command -v cast >/dev/null 2>&1; then
+    echo "cast is not installed"
+    return 1
+  fi
   payer=$(cast to-check-sum-address "${PAYER_OPERATOR-}") || {
     echo "PAYER_OPERATOR invalid/placeholder"
     return 1
@@ -240,7 +244,7 @@ ops_guard() {
     return 1
   }
   relayer=$(cast to-check-sum-address 0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861) || {
-    echo "PAYER_OPERATOR invalid/placeholder"
+    echo "cast to-check-sum-address failed"
     return 1
   }
   payer_lc=$(printf '%s' "$payer" | tr '[:upper:]' '[:lower:]')
@@ -257,16 +261,16 @@ ops_guard() {
   while IFS= read -r banned; do
     [ -n "$banned" ] || continue
     banned=$(cast to-check-sum-address "$banned") || {
-      echo "PAYER_OPERATOR invalid/placeholder"
+      echo "cast to-check-sum-address failed"
       return 1
     }
     banned_lc=$(printf '%s' "$banned" | tr '[:upper:]' '[:lower:]')
     if [ "$payer_lc" = "$banned_lc" ]; then
-      echo "PAYER_OPERATOR is a known sample or stale address"
+      echo "PAYER_OPERATOR is blocklisted"
       return 1
     fi
     if [ "$payee_lc" = "$banned_lc" ]; then
-      echo "PAYEE_OPERATOR is a known sample or stale address"
+      echo "PAYEE_OPERATOR is blocklisted"
       return 1
     fi
   done <<'END_KNOWN'
@@ -282,6 +286,10 @@ ops_guard() {
 0x0000000000000000000000000000000000000A22
 0x0000000000000000000000000000000000000A33
 0x0000000000000000000000000000000000000001
+0x1463D664fA467FBCDA4B05443434494f05e565bc
+0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7
 END_KNOWN
   if [ "$PAYER_OPERATOR" != "$payer" ]; then
     echo "PAYER_OPERATOR is not checksummed (expected $payer)"
@@ -292,7 +300,7 @@ END_KNOWN
     return 1
   fi
   if [ "$payee" = "$payer" ]; then
-    echo "PAYEE_OPERATOR invalid/placeholder"
+    echo "PAYER_OPERATOR and PAYEE_OPERATOR are the same address"
     return 1
   fi
   return 0
@@ -334,13 +342,17 @@ cast estimate "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)" 
 
 On the empty Vault this reverts `InvalidParties` (`0xb6e500fe`). The [simulation-only record](#simulation-only-record) has the exact text.
 
-7. **Stop. Do not send until both prerequisite boxes are ticked, the echoed addresses are the wallets you mean, and you type `YES`. `PAYER_OPERATOR` and `PAYEE_OPERATOR` have to be real checksummed wallets. An unedited export of `<SPENCER_PAYER_WALLET>` or `<REAL_PAYEE_WALLET>` fails in the shell. The guard rejects the `bEEF` placeholder, the zero address, the simulation stand-ins, the live escrow, the retired escrow, the sample senders from `script/`, the relayer as either operator, and using one address for both operators. A known sample or stale address fails here even when the clear step was skipped. Sending a stand-in binds that address as a party.**
+7. **Stop. Do not send until both prerequisite boxes are ticked, the echoed addresses are the wallets you mean, and you type `YES`. `PAYER_OPERATOR` and `PAYEE_OPERATOR` have to be real checksummed wallets. An unedited export of `<SPENCER_PAYER_WALLET>` or `<REAL_PAYEE_WALLET>` fails in the shell. The guard rejects the `bEEF` placeholder, the zero address, the simulation stand-ins, the live escrow, the retired escrow, the sample senders from `script/`, the live Vault, the live Denylist, DisputePanel, the old Vault, the relayer as either operator, and using one address for both operators. A blocklisted address fails here even when the clear step was skipped. Sending a stand-in binds that address as a party.**
 
-Paste this block as one unit. It defines `ops_guard` again so a fresh shell cannot send without it. The two `echo` lines show the addresses that will be bound. The prompt uses `printf` and `read -r`, which behave the same in bash and in zsh. Do not switch it to `read -p`: zsh treats `-p` as a coprocess flag. Type `YES` only after the echoed addresses are right. Any other answer, or a failing guard, skips both `cast send` commands and leaves the shell open. Replace `<his-keystore>` with the `CORE_TIMELOCK` account name before pasting. `cast wallet address` for that account must be `0x10CC9474b45625ADfd05C209f2518023484878D9`. That keystore is the 7702 EOA. There is no schedule step.
+Paste this block as one unit. It defines `ops_guard` again so a fresh shell cannot send without it. The two `echo` lines show the addresses that will be bound. The next line reads `cast chain-id` and exits unless the RPC is Base Sepolia `84532`. The prompt uses `printf` and `read -r`, which behave the same in bash and in zsh. Do not switch it to `read -p`: zsh treats `-p` as a coprocess flag. Type `YES` only after the echoed addresses are right. Any other answer, or a failing guard, skips both `cast send` commands and leaves the shell open. A wrong chain does exit. Replace `<his-keystore>` with the `CORE_TIMELOCK` account name before pasting. `cast wallet address` for that account must be `0x10CC9474b45625ADfd05C209f2518023484878D9`. That keystore is the 7702 EOA. There is no schedule step.
 
 ```bash
 ops_guard() {
   local payer payee relayer payer_lc payee_lc relayer_lc banned banned_lc
+  if ! command -v cast >/dev/null 2>&1; then
+    echo "cast is not installed"
+    return 1
+  fi
   payer=$(cast to-check-sum-address "${PAYER_OPERATOR-}") || {
     echo "PAYER_OPERATOR invalid/placeholder"
     return 1
@@ -350,7 +362,7 @@ ops_guard() {
     return 1
   }
   relayer=$(cast to-check-sum-address 0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861) || {
-    echo "PAYER_OPERATOR invalid/placeholder"
+    echo "cast to-check-sum-address failed"
     return 1
   }
   payer_lc=$(printf '%s' "$payer" | tr '[:upper:]' '[:lower:]')
@@ -367,16 +379,16 @@ ops_guard() {
   while IFS= read -r banned; do
     [ -n "$banned" ] || continue
     banned=$(cast to-check-sum-address "$banned") || {
-      echo "PAYER_OPERATOR invalid/placeholder"
+      echo "cast to-check-sum-address failed"
       return 1
     }
     banned_lc=$(printf '%s' "$banned" | tr '[:upper:]' '[:lower:]')
     if [ "$payer_lc" = "$banned_lc" ]; then
-      echo "PAYER_OPERATOR is a known sample or stale address"
+      echo "PAYER_OPERATOR is blocklisted"
       return 1
     fi
     if [ "$payee_lc" = "$banned_lc" ]; then
-      echo "PAYEE_OPERATOR is a known sample or stale address"
+      echo "PAYEE_OPERATOR is blocklisted"
       return 1
     fi
   done <<'END_KNOWN'
@@ -392,6 +404,10 @@ ops_guard() {
 0x0000000000000000000000000000000000000A22
 0x0000000000000000000000000000000000000A33
 0x0000000000000000000000000000000000000001
+0x1463D664fA467FBCDA4B05443434494f05e565bc
+0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7
 END_KNOWN
   if [ "$PAYER_OPERATOR" != "$payer" ]; then
     echo "PAYER_OPERATOR is not checksummed (expected $payer)"
@@ -402,7 +418,7 @@ END_KNOWN
     return 1
   fi
   if [ "$payee" = "$payer" ]; then
-    echo "PAYEE_OPERATOR invalid/placeholder"
+    echo "PAYER_OPERATOR and PAYEE_OPERATOR are the same address"
     return 1
   fi
   return 0
@@ -410,6 +426,7 @@ END_KNOWN
 
 echo "PAYER_OPERATOR=${PAYER_OPERATOR-UNSET}"
 echo "PAYEE_OPERATOR=${PAYEE_OPERATOR-UNSET}"
+[ "$(cast chain-id --rpc-url "$BASE_SEPOLIA_RPC_URL")" = 84532 ] || { echo 'wrong chain: expected Base Sepolia 84532' >&2; exit 1; }
 ops_guard && printf 'Send with PAYER=%s PAYEE=%s? type YES: ' "$PAYER_OPERATOR" "$PAYEE_OPERATOR" && read -r ok && [ "$ok" = "YES" ] && \
 cast send "$VAULT" "register(bytes32,bytes32,bytes32,bytes32,uint8,address)" \
   "$BOT_A" "$WEIGHT_A" "$SIG_A" "$PROMPT_A" 3 "$PAYER_OPERATOR" \
@@ -480,27 +497,31 @@ PAYEE_WORD=$(cast abi-encode "f(address)" "$PAYEE_OPERATOR")
 ops_guard && cast call "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)(bytes32)" \
   "$ESCROW_ID" "$PAYEE_OPERATOR" "$BOT_A" "$BOT_B" 3600 \
   --value 1000 --from "$PAYER_OPERATOR" --rpc-url "$BASE_SEPOLIA_RPC_URL" \
-  --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce6:${WEIGHT_A} \
-  --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce7:${SIG_A} \
-  --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce8:${PROMPT_A} \
-  --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce9:0x0000000000000000000000000000000000000000000000000000000000000103 \
-  --override-state-diff ${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6cea:0x0000000000000000000000000000000000000000000000000000000000000001 \
-  --override-state-diff ${VAULT}:0x316b25c1a55daae1c3e5c1a467c07723b410db69e64fcca70fd9345218789f42:${PAYER_WORD} \
-  --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ca:${WEIGHT_B} \
-  --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cb:${SIG_B} \
-  --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cc:${PROMPT_B} \
-  --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cd:0x0000000000000000000000000000000000000000000000000000000000000103 \
-  --override-state-diff ${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ce:0x0000000000000000000000000000000000000000000000000000000000000001 \
-  --override-state-diff ${VAULT}:0x7e668be1fdcdb22f1b5523923112ad8ada1b6bf71090e5dde6b1e6d1a7b1c3b5:${PAYEE_WORD}
+  --override-state-diff "${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce6:${WEIGHT_A}" \
+  --override-state-diff "${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce7:${SIG_A}" \
+  --override-state-diff "${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce8:${PROMPT_A}" \
+  --override-state-diff "${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6ce9:0x0000000000000000000000000000000000000000000000000000000000000103" \
+  --override-state-diff "${VAULT}:0xc8e47342222fab89c5946c90ba96ba2b4e8b67bf206532e021487297375c6cea:0x0000000000000000000000000000000000000000000000000000000000000001" \
+  --override-state-diff "${VAULT}:0x316b25c1a55daae1c3e5c1a467c07723b410db69e64fcca70fd9345218789f42:${PAYER_WORD}" \
+  --override-state-diff "${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ca:${WEIGHT_B}" \
+  --override-state-diff "${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cb:${SIG_B}" \
+  --override-state-diff "${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cc:${PROMPT_B}" \
+  --override-state-diff "${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2cd:0x0000000000000000000000000000000000000000000000000000000000000103" \
+  --override-state-diff "${VAULT}:0xa11aaed52a7d90a2124d72664ea7e50991d2257c88aad1e46f098e752e9cf2ce:0x0000000000000000000000000000000000000000000000000000000000000001" \
+  --override-state-diff "${VAULT}:0x7e668be1fdcdb22f1b5523923112ad8ada1b6bf71090e5dde6b1e6d1a7b1c3b5:${PAYEE_WORD}"
 ```
 
 A successful simulation returns `ESCROW_ID`. `$PAYER_WORD` and `$PAYEE_WORD` are the real wallets only when `ops_guard` returns 0.
 
-When Spencer later sends `createEscrow`, paste this block as one unit. It defines `ops_guard` again, then sends only when the guard returns 0 and `cast wallet address --account <his-keystore>` equals `$PAYER_OPERATOR`. That keystore is the payer wallet. If that wallet is also `CORE_TIMELOCK`, it is the same account as step 7. If it is a different wallet, it is a different keystore, still passed only as `--account <his-keystore>`. Replace `<his-keystore>` before pasting.
+When Spencer later sends `createEscrow`, paste this block as one unit. It defines `ops_guard` again. The chain-id line exits unless the RPC is Base Sepolia `84532`. The send runs only when the guard returns 0 and `cast wallet address --account <his-keystore>` equals `$PAYER_OPERATOR`. That keystore is the payer wallet. If that wallet is also `CORE_TIMELOCK`, it is the same account as step 7. If it is a different wallet, it is a different keystore, still passed only as `--account <his-keystore>`. Replace `<his-keystore>` before pasting.
 
 ```bash
 ops_guard() {
   local payer payee relayer payer_lc payee_lc relayer_lc banned banned_lc
+  if ! command -v cast >/dev/null 2>&1; then
+    echo "cast is not installed"
+    return 1
+  fi
   payer=$(cast to-check-sum-address "${PAYER_OPERATOR-}") || {
     echo "PAYER_OPERATOR invalid/placeholder"
     return 1
@@ -510,7 +531,7 @@ ops_guard() {
     return 1
   }
   relayer=$(cast to-check-sum-address 0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861) || {
-    echo "PAYER_OPERATOR invalid/placeholder"
+    echo "cast to-check-sum-address failed"
     return 1
   }
   payer_lc=$(printf '%s' "$payer" | tr '[:upper:]' '[:lower:]')
@@ -527,16 +548,16 @@ ops_guard() {
   while IFS= read -r banned; do
     [ -n "$banned" ] || continue
     banned=$(cast to-check-sum-address "$banned") || {
-      echo "PAYER_OPERATOR invalid/placeholder"
+      echo "cast to-check-sum-address failed"
       return 1
     }
     banned_lc=$(printf '%s' "$banned" | tr '[:upper:]' '[:lower:]')
     if [ "$payer_lc" = "$banned_lc" ]; then
-      echo "PAYER_OPERATOR is a known sample or stale address"
+      echo "PAYER_OPERATOR is blocklisted"
       return 1
     fi
     if [ "$payee_lc" = "$banned_lc" ]; then
-      echo "PAYEE_OPERATOR is a known sample or stale address"
+      echo "PAYEE_OPERATOR is blocklisted"
       return 1
     fi
   done <<'END_KNOWN'
@@ -552,6 +573,10 @@ ops_guard() {
 0x0000000000000000000000000000000000000A22
 0x0000000000000000000000000000000000000A33
 0x0000000000000000000000000000000000000001
+0x1463D664fA467FBCDA4B05443434494f05e565bc
+0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7
 END_KNOWN
   if [ "$PAYER_OPERATOR" != "$payer" ]; then
     echo "PAYER_OPERATOR is not checksummed (expected $payer)"
@@ -562,12 +587,13 @@ END_KNOWN
     return 1
   fi
   if [ "$payee" = "$payer" ]; then
-    echo "PAYEE_OPERATOR invalid/placeholder"
+    echo "PAYER_OPERATOR and PAYEE_OPERATOR are the same address"
     return 1
   fi
   return 0
 }
 
+[ "$(cast chain-id --rpc-url "$BASE_SEPOLIA_RPC_URL")" = 84532 ] || { echo 'wrong chain: expected Base Sepolia 84532' >&2; exit 1; }
 ops_guard && [ "$(cast wallet address --account <his-keystore>)" = "$PAYER_OPERATOR" ] && \
 cast send "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)" \
   "$ESCROW_ID" "$PAYEE_OPERATOR" "$BOT_A" "$BOT_B" 3600 \
@@ -580,14 +606,14 @@ That send is Spencer's, after step 8. Agents do not run it. `1000` wei is the si
 
 ## Optional later mode: relayer as payer operator
 
-This mode is not the first smoke. It is allowed only after both of these are true:
+This mode is not the first smoke. It stays off the send path until both of these are true:
 
-1. The claim secret is rotated.
+1. The claim secret is retired and deleted (#46 removed it), not rotated.
 2. EIP-712 relayer auth or a relayer amount cap has shipped.
 
-Until both are true, `PAYER_OPERATOR` stays Spencer's wallet. `ops_guard` rejects the relayer as the payer on purpose for this smoke, including a lowercase copy of that address. A payee equal to the relayer is always rejected, in this smoke and after it. After both gates are true, delete only the payer comparison inside `ops_guard` (the block that prints `PAYER_OPERATOR is the relayer`) in the step 4, step 7, and `createEscrow` pastes. Leave the block that prints `PAYEE_OPERATOR is the relayer`. Then set `PAYER_OPERATOR` to `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` and use the same register and `createEscrow` templates. `createEscrow`'s `msg.sender` is that relayer. The rest of the guard still rejects the zero address, the `bEEF` address, the known sample and stale addresses, and a payee equal to the payer.
+Until then, `PAYER_OPERATOR` stays Spencer's wallet. `ops_guard` rejects the relayer as the payer, including a lowercase copy of that address. A payee equal to the relayer is always rejected. The function CI checks is the one in the pastes.
 
-The current relayer accepts a positive `amountWei` and does not cap it. `release` is permissionless and pays the payee. Registering the relayer as Bot A's operator before those two gates lets a caller who knows the published claim secret push the relayer balance into escrows.
+The current relayer accepts a positive `amountWei` and does not cap it. `release` is permissionless and pays the payee. Registering the relayer as Bot A's operator is not part of these pastes.
 
 ## Simulation-only record
 
@@ -657,15 +683,15 @@ true
 
 ## Risks
 
-The claim secret is public in the live Wallet UX bundle, and the relayer has no amount cap. Making `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` Bot A's operator would let anyone who can `POST /v1/claims` with that secret push the relayer's roughly 0.41 test ETH into escrows. At block `47392348` that balance was `413437500000000000` wei (about 0.413 ETH). `release` is permissionless and pays the payee. A payee address nobody controls burns those funds. A stale Pages deploy would send that path at the live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` while the stale UI still shows the retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`.
+#46 retired and deleted the claim secret. It is not rotated. The relayer still has no amount cap. At block `47392348` that balance was `413437500000000000` wei (about 0.413 ETH). `release` is permissionless and pays the payee. A payee address nobody controls burns those funds. A stale Pages deploy would send that path at the live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` while the stale UI still shows the retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`.
 
-The first smoke therefore sets `PAYER_OPERATOR` to Spencer's own wallet (`<SPENCER_PAYER_WALLET>`). He calls `createEscrow` from that wallet. `msg.sender` has to equal `operator(payerBotId)`. The relayer becomes the payer operator only after both the claim secret is rotated and either EIP-712 relayer auth or a relayer amount cap has shipped.
+The first smoke therefore sets `PAYER_OPERATOR` to Spencer's own wallet (`<SPENCER_PAYER_WALLET>`). He calls `createEscrow` from that wallet. `msg.sender` has to equal `operator(payerBotId)`. The pasted guard rejects the relayer as either operator. The claim secret is retired and deleted (#46 removed it), not rotated.
 
 `CORE_TIMELOCK` has no delay. The 7702 delegation executes the owner call in the same transaction Spencer signs. The same key can `register`, `setOperator`, and `burn` on this Vault, and it owns the Denylist and the escrow. A bad signature is immediate.
 
 `register` is permanent for a `botId`. `burn` clears `active` and does not free the id. A wrong id cannot be registered again. `setOperator` can point a stored bot at a new non-zero account, and that call is also `onlyOwner` from `0x10CC9474b45625ADfd05C209f2518023484878D9`.
 
-The payer operator and the payee operator have to be different addresses. `createEscrow` reverts `InvalidParties` when `msg.sender == payee`. `ops_guard` returns 1 when they match, when either one is the relayer, and when either one is a known sample or stale address. The shell stays open.
+The payer operator and the payee operator have to be different addresses. `createEscrow` reverts `InvalidParties` when `msg.sender == payee`. `ops_guard` returns 1 when they match, when either one is the relayer, when either one is blocklisted, and when `cast` is missing. Those failures leave the shell open. A chain id other than `84532` exits before either send.
 
 These ids and fingerprints are the smoke pair. Listing any of the three hashes on the Denylist later makes `_verifyBot` revert `AttestationFailed` even when the operators still match.
 
