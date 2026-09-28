@@ -108,26 +108,37 @@ Then look at both Production and Preview in the dashboard again.
 3. After the deploy finishes, `GET /health` must show `"killSwitch": true` when step 0 set `KILL_SWITCH=1`. If the alternate (`LIVE_SUBMIT=0`) was used, expect `"liveSubmit": false` and `"mode": "fixture"` instead of `"killSwitch": true`. `liveSubmitBlockers` contains `live_submit_off`. If the fallback (`CLAIM_API_SECRET` deleted) was used, this deploy of `a66ef64` comes up open, so `"killSwitch"` is false unless `KILL_SWITCH` was already set. That open process is harmless: `a66ef64` ignores the old secret, and old-bundle requests get **400** `intent_required`. The Render deploy view shows the relayer commit `a66ef64`. That is not the Pages commit. `/health` has no commit field and no build field. Do not look for either in the JSON.
 4. Publish Pages from `main` at or after the PR #53 merge. #53 is not merged yet. Do not publish from `10d021323bd9faa75481a9692625c9ba43ba9aad`. That SHA is the #41 merge (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow). It is already on `main`, and it is not the Pages commit for this step. The Pages commit is not `a66ef64`.
 
-   After #53 merges, set `PR53_MERGE_SHA` to that merge commit. Copy it from `git log` on `main` or from the PR page. Check out the `main` commit you will publish, so `HEAD` is that commit or a later one. Then run the gate. The assignment below is a comment, so sourcing the snippet does not set an empty value. `${PR53_MERGE_SHA:-}` is safe when the variable is unset, including under `set -u`. `git merge-base --is-ancestor` sits inside an `if`, and the whole check is one `( ... )` subshell. `exit` stays inside that subshell, so a skip does not close your shell when you paste the snippet or source it. If the gate prints `SKIP`, do not dispatch the workflow and do not run the local publish in step 5. If it prints `OK`, publish this `HEAD`.
+   `PR53_MERGE_SHA` must be the exact full 40-character lowercase merge commit SHA of PR #53 on `main`. The gate checks `^[0-9a-f]{40}$` and rejects anything else. Uppercase hex is rejected. `HEAD`, a branch name, any other ref, and a short SHA are rejected. Set the variable in your shell before the gate. Interactive zsh does not treat a `#` line as a comment unless `interactive_comments` is set, so this runbook keeps those notes here instead of inside the fence. After #53 merges, read the oid without changing the repo. `git log` on `main` and the PR page show the same commit. This command prints only the merge oid:
 
 ```bash
-# Fill PR53_MERGE_SHA after #53 merges. Copy the merge commit from git log or the PR page.
-# PR53_MERGE_SHA=
-(
-  if [ -z "${PR53_MERGE_SHA:-}" ]; then
-    echo 'SKIP: PR53_MERGE_SHA is unset or empty. Fill it after #53 merges (git log or the PR page).'
-    exit 0
-  fi
-  if git merge-base --is-ancestor "$PR53_MERGE_SHA" HEAD; then
-    echo 'OK: HEAD contains PR53_MERGE_SHA. Publish Pages from this main commit.'
-  else
-    echo 'SKIP: HEAD does not contain PR53_MERGE_SHA. Publish Pages from main at or after the #53 merge.'
-    exit 0
-  fi
-)
+gh pr view 53 --repo SAW72/AGENT-B.V. --json mergeCommit -q .mergeCommit.oid
 ```
 
-5. Publish that Pages commit only after the gate prints `OK`. Either path uses the build env from CI or from the local shell, never from Pages env vars.
+   Until #53 merges, that oid is empty. Leave `PR53_MERGE_SHA` unset until the command prints 40 lowercase hex characters, then set `PR53_MERGE_SHA` to that exact string. Check out the `main` commit you will publish, so `HEAD` is that commit or a later one. Then paste the gate. `${PR53_MERGE_SHA:-}` is safe when the variable is unset, including under `set -u`. The check is one `( ... )` subshell, so `exit` stays inside it. Each rejection prints its own `SKIP` line and that subshell exits 1. Only the `OK` path exits 0. The trailing `&& :` publishes nothing. It leaves `$?` at 1 after a `SKIP`, and a shell with `set -eu` stays open, because the failing subshell is not the last command of that `&&` list. Publish as `gate && publish`: paste this subshell as `gate` and put the wrangler command in place of `:`. A `SKIP` blocks the publish. Do not dispatch the workflow when the gate prints `SKIP`.
+
+```bash
+(
+  if [ -z "${PR53_MERGE_SHA:-}" ]; then
+    echo 'SKIP: PR53_MERGE_SHA is unset or empty.'
+    exit 1
+  fi
+  if ! printf '%s\n' "$PR53_MERGE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+    echo 'SKIP: PR53_MERGE_SHA must be exactly 40 lowercase hex characters.'
+    exit 1
+  fi
+  if ! git cat-file -e "$PR53_MERGE_SHA^{commit}" 2>/dev/null; then
+    echo 'SKIP: PR53_MERGE_SHA does not resolve to a commit object.'
+    exit 1
+  fi
+  if ! git merge-base --is-ancestor "$PR53_MERGE_SHA" HEAD; then
+    echo 'SKIP: PR53_MERGE_SHA is not an ancestor of HEAD.'
+    exit 1
+  fi
+  echo 'OK: HEAD contains PR53_MERGE_SHA. Publish Pages from this main commit.'
+) && :
+```
+
+5. Publish that Pages commit only as `gate && publish`, after the gate prints `OK` and exits 0. Either path uses the build env from CI or from the local shell, never from Pages env vars.
    - GitHub: Actions → Deploy wallet-ux → Run workflow, on `main`, only after #53 is on that `main` and the gate prints `OK`. `on` is `workflow_dispatch` only, and the job runs only for `refs/heads/main`. The build receives `VITE_CLAIM_RELAYER_URL` from the `production` environment variable. It must not receive `VITE_CLAIM_API_SECRET`. The workflow uploads with `wrangler pages deploy` twice: first `--branch=preview-<run_id>`, then `--branch=main` with `--commit-hash` set to that `main` commit. That commit must contain `PR53_MERGE_SHA`.
    - Or, from a shell where `VITE_CLAIM_API_SECRET` is unset, on the same `HEAD` the gate accepted:
 
@@ -200,7 +211,7 @@ ENDJS
 npx wrangler pages deploy dist --project-name=agent-a-wallet-ux --branch=main --commit-hash=<pages-main-sha> --commit-dirty=false
 ```
 
-A local `--branch=main` upload publishes production directly. The workflow's preview branch is the path that runs `verify-served-bundle.mjs` before production. `<pages-main-sha>` is the `HEAD` the gate above accepted: `main` at or after the #53 merge. It is not `10d021323bd9faa75481a9692625c9ba43ba9aad`, and it is not the Render commit `a66ef64`.
+A local `--branch=main` upload publishes production directly. Run it as `gate && publish`. Paste the gate subshell above and replace the trailing `&& :` with `&&` plus the wrangler command above. A `SKIP` exits 1, so wrangler does not run. The workflow's preview branch is the path that runs `verify-served-bundle.mjs` before production. `<pages-main-sha>` is the `HEAD` the gate accepted: `main` at or after the #53 merge. It is not `10d021323bd9faa75481a9692625c9ba43ba9aad`, and it is not the Render commit `a66ef64`.
 
 Keep `KILL_SWITCH=1` through this publish and the leak checks below when that is the step 0 stop. Step 7 is the first step that sets it to `0`. While it is on, quote and claim return **503** `kill_switch` before any of the split-version behavior below. If the alternate (`LIVE_SUBMIT=0`) was used, the health check stays `"liveSubmit": false` instead of `"killSwitch": true`, and a live claim stays **409** `live_submit_blocked`. If the fallback was used, the `a66ef64` process is open and an old-bundle live claim is **400** `intent_required`.
 
