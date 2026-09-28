@@ -28,8 +28,26 @@ describe("forge ABIs", () => {
     for (const name of ["owner", "arbitratorCount", "PANEL_SIZE"]) {
       expect(names(disputePanelAbi).has(name)).toBe(true)
     }
-    for (const name of ["owner", "pendingOwner", "governance", "disputePanel", "lockedValue", "escrows", "createEscrow", "release", "refund", "dispute"]) {
+    for (const name of [
+      "owner",
+      "pendingOwner",
+      "governance",
+      "disputePanel",
+      "lockedValue",
+      "totalOwed",
+      "pendingWithdrawals",
+      "escrows",
+      "createEscrow",
+      "release",
+      "refund",
+      "dispute",
+      "withdraw",
+      "withdrawTo",
+    ]) {
       expect(names(escrowAbi).has(name)).toBe(true)
+    }
+    for (const name of ["Credited", "Withdrawn"]) {
+      expect(names(escrowAbi, "event").has(name)).toBe(true)
     }
     for (const name of [
       "DisputeAlreadyResolved",
@@ -37,6 +55,8 @@ describe("forge ABIs", () => {
       "DisputePredatesEscrow",
       "DisputeChallengerNotParty",
       "DisputeAfterExpiry",
+      "EscrowNotFound",
+      "WithdrawFailed",
     ]) {
       expect(names(escrowAbi, "error").has(name)).toBe(true)
     }

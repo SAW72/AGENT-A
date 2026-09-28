@@ -33,6 +33,13 @@ jobs:
         run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts --no-commit
       - name: Build
         run: forge build
+      - name: Wallet-ux escrow ABI matches forge artifact
+        run: |
+          ./scripts/gen-escrow-abi.sh
+          if ! git diff --exit-code -- apps/wallet-ux/src/abi/BotAttestationEscrow.json; then
+            echo "::error::apps/wallet-ux/src/abi/BotAttestationEscrow.json drifted from the forge artifact for contracts/BotAttestationEscrow.sol:BotAttestationEscrow. Regenerate and commit it with: forge build && ./scripts/gen-escrow-abi.sh"
+            exit 1
+          fi
       - name: Test
         run: forge test
 
