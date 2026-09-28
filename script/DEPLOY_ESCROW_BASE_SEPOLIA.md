@@ -38,7 +38,7 @@ Retired history, not the live escrow: Gate B was seated (block 47299643), then t
 | 2 | `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30` | `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6` |
 | 3 | `0xB87Ed5F74276AC6172ef53fE866675093F75936E` | `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3` |
 
-Live escrow create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block), from commit `444c427`. `transferOwnership` tx `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. Constructor args: denylist `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, vault `0x1463D664fA467FBCDA4B05443434494f05e565bc`, panel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, governance `0x10CC9474b45625ADfd05C209f2518023484878D9`. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON, shanghai): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
+Live escrow create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block), from commit `444c427`. `transferOwnership` tx `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. Constructor args: denylist `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, vault `0x1463D664fA467FBCDA4B05443434494f05e565bc`, panel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, governance `0x10CC9474b45625ADfd05C209f2518023484878D9`. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON; Basescan recorded evm version shanghai for this already-verified contract. Repo `foundry.toml` `evm_version` is `cancun`): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
 
 Retired escrow (ESC-M-1 redeploy, retired 2026-09-26): create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` tx `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. Its `acceptOwnership` tx `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` is block 47300275. That contract is `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. It is history, not the book address.
 
@@ -180,7 +180,7 @@ forge verify-contract \
   contracts/BotAttestationEscrow.sol:BotAttestationEscrow
 ```
 
-The live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` is already verified on Basescan (Pass - Verified) via Etherscan v2: solc `v0.8.20+commit.a1b79de6`, standard JSON, shanghai. Link: `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. solc 0.8.20 compiles shanghai when the flag says cancun.
+The already-verified live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` was recorded on Basescan (Pass - Verified) via Etherscan v2 as solc `v0.8.20+commit.a1b79de6`, standard JSON, evm version shanghai: `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. That shanghai label is Basescan metadata for `0x1069…` only. This repo compiles with `foundry.toml` `evm_version = "cancun"` (solc `0.8.20`, optimizer 200 runs). The pull-payment deploy in [Deploy and retire](#deploy-and-retire) is verified with `--evm-version cancun`, the same flag as the commands above.
 
 ### Read-only smoke checks
 
@@ -333,6 +333,131 @@ A direct `cast send` of `setArbitrator` is not part of this escrow redeploy. Age
 | `panel not seated` | `openDispute` while `arbitratorCount < 3` |
 | `FundingBeforeGovernance` | `createEscrow` before `acceptOwnership` |
 
+## Deploy and retire
+
+This pull-payment cutover ships as a **new** `BotAttestationEscrow` on Base Sepolia (chainid `84532`). It is not an upgrade of `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Spencer runs the broadcast himself, using the simulate-then-broadcast steps already in this file (`script/DeployBotAttestationEscrow.s.sol`, same constructor args: live Denylist, Vault, DisputePanel, and `CORE_TIMELOCK`). Agents never pass `--broadcast` or `--resume`. No signing key goes in the repo, in this file, or in the PR.
+
+Deploy stays on hold until Spencer broadcasts. Do not paste a simulation address into the book.
+
+`renounceOwnership()` does not read `lockedValue`. The read below is the gate. If the returned `uint256` is not 0, stop. Do not send `renounceOwnership`. Open escrows would stay locked with no owner left to change Denylist, Vault, or DisputePanel. `totalOwed` may be nonzero when `lockedValue` is 0: credited accounts still call `withdraw` / `withdrawTo` after the owner is gone.
+
+`CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA with EIP-7702 delegation to `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b` (`EIP7702StatelessDeleGator` 1.3.0). It is not an OpenZeppelin `TimelockController`. `getMinDelay()` reverts. There is no `schedule` or `execute` on that account. `onlyOwner` is `msg.sender == owner()`. The retirement transaction is a transaction whose sender is `CORE_TIMELOCK`, whose `to` is the escrow, and whose `data` is `renounceOwnership()` (`0x715018a6`). Spencer signs it. The schedule and execute blobs below are the OpenZeppelin `TimelockController` encoding of that same inner call, with placeholder predecessor, salt, and delay. They are not submitted to `0x10CC…`.
+
+### Check `lockedValue` first
+
+Read-only. No key. No `--broadcast`.
+
+```bash
+export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
+
+# Current book escrow. Retire only when this prints 0.
+cast call 0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d \
+  "lockedValue()(uint256)" \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL"
+
+# Pre-fix escrow. Still usable, still owned by CORE_TIMELOCK. Same gate.
+cast call 0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c \
+  "lockedValue()(uint256)" \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
+
+Selector `lockedValue()` is `0xd2c46932`.
+
+### `renounceOwnership` calldata
+
+```bash
+cast sig "renounceOwnership()"
+cast calldata "renounceOwnership()"
+```
+
+Both print `0x715018a6`. After cutover, and only while that contract's `lockedValue()` is 0, Spencer sends one transaction per escrow:
+
+| Field | Current book escrow | Pre-fix escrow |
+| --- | --- | --- |
+| from | `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9` | same |
+| to | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` |
+| value | `0` | `0` |
+| data | `0x715018a6` | `0x715018a6` |
+| chainid | `84532` | `84532` |
+
+After each call, `owner()` is the zero address. `onlyGovernance` then stays closed, because it requires `owner() == governance`. `release`, `refund`, and `withdraw` do not use the owner.
+
+### Timelock `schedule` / `execute` calldata
+
+Placeholders only: `value` `0`, `predecessor` `bytes32(0)`, `salt` `bytes32(0)`, `delay` `0`. Inner `data` is `renounceOwnership()` (`0x715018a6`). No key. These `cast calldata` commands do not reach a node.
+
+```bash
+INNER=0x715018a6
+PREDECESSOR=0x0000000000000000000000000000000000000000000000000000000000000000
+SALT=0x0000000000000000000000000000000000000000000000000000000000000000
+DELAY=0
+
+# Current book escrow 0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d
+cast calldata "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
+  0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d 0 "$INNER" "$PREDECESSOR" "$SALT" "$DELAY"
+cast calldata "execute(address,uint256,bytes,bytes32,bytes32)" \
+  0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d 0 "$INNER" "$PREDECESSOR" "$SALT"
+
+# Pre-fix escrow 0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c
+cast calldata "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
+  0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c 0 "$INNER" "$PREDECESSOR" "$SALT" "$DELAY"
+cast calldata "execute(address,uint256,bytes,bytes32,bytes32)" \
+  0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c 0 "$INNER" "$PREDECESSOR" "$SALT"
+```
+
+`schedule(address,uint256,bytes,bytes32,bytes32,uint256)` selector `0x01d5062a`. `execute(address,uint256,bytes,bytes32,bytes32)` selector `0x134008d3`.
+
+Encoded with those placeholders (delay word is zero):
+
+Current escrow `schedule`:
+
+```
+0x01d5062a0000000000000000000000001069aa6597f08f1e8b8ad39aa40ede1d0c77298d000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004715018a600000000000000000000000000000000000000000000000000000000
+```
+
+Current escrow `execute`:
+
+```
+0x134008d30000000000000000000000001069aa6597f08f1e8b8ad39aa40ede1d0c77298d000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004715018a600000000000000000000000000000000000000000000000000000000
+```
+
+Pre-fix escrow `schedule`:
+
+```
+0x01d5062a000000000000000000000000141214f04b0e1d949b6e6bf32d019ad7ab5b284c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004715018a600000000000000000000000000000000000000000000000000000000
+```
+
+Pre-fix escrow `execute`:
+
+```
+0x134008d3000000000000000000000000141214f04b0e1d949b6e6bf32d019ad7ab5b284c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004715018a600000000000000000000000000000000000000000000000000000000
+```
+
+### After the new escrow is live
+
+Update the address book and the consumers that pin it. Do that in a follow-up commit after the deploy transaction exists. This section does not change those files.
+
+Address book:
+
+- `deployments/base-sepolia.json`
+  - `BotAttestationEscrow.address` (today `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`), plus `deployTx`, `deployBlock`, `startBlock`, `commit`, `deployer`, `transferOwnershipTx`, `constructorArgs`, `owner`, `pendingOwner`, `acceptOwnership`, `acceptOwnershipTx`, `acceptOwnershipBlock`, `sourcify`, `blockscout`, `basescan`, `basescanUrl`, `notes`
+  - Move the current object to `retired`. The slot `retired.BotAttestationEscrow` is already the pre-fix escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` (`address`, `supersededBy`, `status`, `retiredOn`, `reason`, `owner`). Keep that record and record `0x1069…` as retired once `renounceOwnership` has landed. `supersededBy` on `0x1069…` becomes the new address.
+  - Top-level `notes` names the live escrow. `coreTimelock` stays `0x10CC9474b45625ADfd05C209f2518023484878D9`.
+- Wallet copy of the same JSON: `apps/wallet-ux/src/base-sepolia.json` (same `BotAttestationEscrow` keys).
+- README tables and prose that repeat the live address: `contracts/README.md` (BotAttestationEscrow row), `deployments/README.md`, `apps/wallet-ux/README.md`, `apps/wallet-ux/CLOUDFLARE_PAGES.md`, `claim-relayer/README.md`, `GO_LIVE.md`.
+
+Wallet-ux escrow address config:
+
+- `apps/wallet-ux/src/book.ts`: `FALLBACK_PIN.botAttestationEscrow` (today `0x1069…`) and `SUPERSEDED.botAttestationEscrow` (today `0x141214…`).
+- `apps/wallet-ux/src/addresses.ts` reads `ADDRESSES.botAttestationEscrow` from that book. It has no separate address literal.
+- Tests that pin `0x1069…`: `apps/wallet-ux/src/book.test.ts`, `addresses.test.ts`, `submit.test.ts`, `relayer.test.ts`, `preview.test.ts`.
+
+Claim-relayer escrow address config:
+
+- `claim-relayer/config.mjs`: `BOOKED_SEPOLIA_ESCROW` and `BOOKED_SEPOLIA_ESCROW_START_BLOCK` (today `47345163`). Env overrides are `ESCROW_ADDRESS` and `ESCROW_START_BLOCK`.
+- `claim-relayer/addressBook.mjs`: reads `BotAttestationEscrow.address`, then `deployBlock` or `startBlock`. `SUPERSEDED.botAttestationEscrow` is the pre-fix pin.
+- `claim-relayer/broadcast.mjs` refuses any `to` that is not `BOOKED_SEPOLIA_ESCROW`.
+
 ## Checklist
 
 - [x] Gate B seated (`arbitratorCount` is 3; seat txs in block 47299643)
@@ -341,4 +466,4 @@ A direct `cast send` of `setArbitrator` is not part of this escrow redeploy. Age
 - [x] Live escrow address and txs are in `deployments/base-sepolia.json` and `contracts/README.md` (`0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, block 47345163, commit `444c427`)
 - [x] Agents do not `--broadcast` and do not touch mainnet
 - [x] ESC-M-1 escrow-only redeploy landed (deploy tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa`)
-- [x] Wiring records the live escrow and retires the previous one. `acceptOwnership` on the live escrow is complete (`0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442). Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON, shanghai): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`.
+- [x] Wiring records the live escrow and retires the previous one. `acceptOwnership` on the live escrow is complete (`0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442). Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON; Basescan recorded evm version shanghai for this already-verified contract. Repo `foundry.toml` `evm_version` is `cancun`): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`.

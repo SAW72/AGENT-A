@@ -71,7 +71,14 @@ interface IDisputePanel {
 ///      (`setDenylist`, `setVault`, `setDisputePanel`) run only while `owner() == governance`,
 ///      which means the timelock has accepted Ownable2Step ownership. Swaps also revert
 ///      while `lockedValue != 0`, so an owner cannot point `_verifyBot` at an empty
-///      registry under open funds. Swaps emit governance events. There is no hot EOA admin.
+///      registry under open funds. `totalOwed` is intentionally excluded from that gate:
+///      ETH already credited for `withdraw` is not an open escrow, and an unclaimed
+///      credit must not freeze governance. Invariant: `address(this).balance >= lockedValue + totalOwed`.
+///      A credited balance can be collected only by an account that can call `withdraw` or `withdrawTo`:
+///      an EOA, an EIP-7702 account, or a wallet/contract with that call. A non-upgradeable contract
+///      that cannot call either function strands its own credit. There is no gasless claim yet, so a
+///      payee whose ETH balance is zero still needs gas to withdraw.
+///      Swaps emit governance events. There is no hot EOA admin.
 contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     /// @notice Timelock that must own this contract before funding or dependency swaps.
     /// @dev Production value is CORE_TIMELOCK. A later owner who is not this address
@@ -80,6 +87,13 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
 
     /// @notice ETH still held for Open or Disputed escrows. Not the raw contract balance.
     uint256 public lockedValue;
+
+    /// @notice Sum of `pendingWithdrawals`. ETH credited by `release` or `refund` and not yet pulled.
+    /// @dev Intentionally excluded from `whileUnfunded`. Setters stay locked only while
+    ///      `lockedValue != 0` (an escrow is still Open or Disputed). A recipient who never
+    ///      calls `withdraw` must not freeze `setDenylist`, `setVault`, or `setDisputePanel`.
+    ///      Invariant: `address(this).balance >= lockedValue + totalOwed`.
+    uint256 public totalOwed;
 
     IDenylist public denylist;
     IVault public vault;
@@ -107,6 +121,10 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     mapping(bytes32 => Escrow) public escrows; // keyed by escrowId
     mapping(bytes32 => bool) public usedEscrowIds; // replay protection
 
+    /// @notice Claimable ETH for `account`. `release` credits `payee`; `refund` credits `payer`.
+    /// @dev Public getter is the view. The account pulls it with `withdraw` or `withdrawTo`.
+    mapping(address => uint256) public pendingWithdrawals;
+
     event EscrowCreated(
         bytes32 indexed escrowId,
         address indexed payer,
@@ -118,6 +136,13 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     );
     event EscrowReleased(bytes32 indexed escrowId, uint256 amount);
     event EscrowRefunded(bytes32 indexed escrowId, uint256 amount);
+    /// @notice `recipient` was credited `amount` to pull later. `isRelease` is true for `release`, false for `refund`.
+    /// @dev `EscrowReleased` / `EscrowRefunded` still fire, but they no longer mean ETH was pushed.
+    ///      Parameter name is `amount`, matching `EscrowReleased` / `EscrowRefunded`. The topic hash
+    ///      depends on types, not the name.
+    event Credited(bytes32 indexed escrowId, address indexed recipient, uint256 amount, bool isRelease);
+    /// @notice `account` pulled `amount` of their own credit to `to`.
+    event Withdrawn(address indexed account, address indexed to, uint256 amount);
     event EscrowDisputed(bytes32 indexed escrowId, bytes32 disputeId);
     /// @notice Governance record of a denylist swap. `actor` is `governance` after it has accepted ownership.
     event DenylistUpdated(
@@ -154,6 +179,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     error DenylistUnchanged();
     error VaultUnchanged();
     error DisputePanelUnchanged();
+    error WithdrawFailed();
 
     /// @param _governance CORE_TIMELOCK in production. Must be non-zero and must not be the deployer.
     constructor(
@@ -176,6 +202,9 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ///      An owner who is not `governance` cannot call this either.
     ///      When: only while `lockedValue == 0`. A swap under an open escrow would let
     ///      `release` read a registry that does not list the locked bots.
+    ///      `totalOwed` is intentionally not part of this check. Credited ETH is already
+    ///      settled and waiting on `withdraw`; including it would let a 1-wei unclaimed
+    ///      credit freeze governance the same way a reverting recipient used to.
     ///      The `DenylistUpdated` event (previous, new, caller, timestamp) is the
     ///      governance record. Production has no separate hot EOA admin.
     function setDenylist(
@@ -186,7 +215,8 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
 
     /// @notice Re-point the vault. Same authority and funded-lock as `setDenylist`.
     /// @dev Who: `governance`, and only while that address is the Ownable2Step owner.
-    ///      When: only while `lockedValue == 0`.
+    ///      When: only while `lockedValue == 0`. `totalOwed` is intentionally excluded;
+    ///      see `setDenylist`.
     ///      `VaultUpdated` records previous, new, caller, and timestamp.
     ///      The same address reverts `VaultUnchanged`.
     function setVault(
@@ -197,7 +227,8 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
 
     /// @notice Re-point the dispute panel. Same authority and funded-lock as `setDenylist`.
     /// @dev Who: `governance`, and only while that address is the Ownable2Step owner.
-    ///      When: only while `lockedValue == 0`.
+    ///      When: only while `lockedValue == 0`. `totalOwed` is intentionally excluded;
+    ///      see `setDenylist`.
     ///      `DisputePanelUpdated` records previous, new, caller, and timestamp.
     ///      The same address reverts `DisputePanelUnchanged`.
     function setDisputePanel(
@@ -211,6 +242,8 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         _;
     }
 
+    /// @dev Open or disputed escrows only. `totalOwed` is intentionally excluded so a
+    ///      credited-but-unclaimed balance cannot lock the owner setters.
     modifier whileUnfunded() {
         if (lockedValue != 0) revert DependencyChangeWhileFunded();
         _;
@@ -296,7 +329,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         return escrowId;
     }
 
-    /// @notice Release funds to the payee recorded at create time.
+    /// @notice Credit the payee recorded at create time. Does not transfer ETH.
     /// @dev Open (non-disputed) release fails closed: both bots must still be active in
     ///      the Vault, not denylisted, Financial+ tier, and bound to the operators stored
     ///      on the escrow (`_verifyBot` and `_requireBoundOperators`).
@@ -304,8 +337,10 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ///      That upheld path stays open after `expiresAt` and skips re-attestation and
     ///      operator rebinding by design. The panel already ruled the deal stands, and
     ///      `refund` is closed, so a later denylist hit, burn, tier drop, or operator
-    ///      rotation must not strand the locked ETH. Payment is `e.payee` from create,
-    ///      not whatever address currently operates the payee bot.
+    ///      rotation must not strand the locked ETH. The credit is `e.payee` from create,
+    ///      not whatever address currently operates the payee bot. This function does not
+    ///      call the payee. The payee pulls the ETH with `withdraw` or `withdrawTo`. See `withdraw`
+    ///      for who can collect that credit and why a zero-ETH payee still needs gas.
     function release(
         bytes32 escrowId
     ) external nonReentrant {
@@ -321,26 +356,30 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         if (!panelUpheld && block.timestamp > e.expiresAt) revert EscrowExpired();
 
         // Post-ruling attestation and operator checks can both fail after an uphold
-        // while refund is already closed. Pay the create-time payee without re-checking.
-        // Open deals still fail closed.
+        // while refund is already closed. Credit the create-time payee without re-checking.
+        // Open deals still fail closed. No external call: a reverting payee must not roll this back.
         if (!panelUpheld) {
             _requireBoundOperators(e);
             _verifyBot(e.payerBotId, "payer");
             _verifyBot(e.payeeBotId, "payee");
         }
 
+        uint256 amt = e.amount;
+        address recipient = e.payee;
         e.state = EscrowState.Released;
-        lockedValue -= e.amount;
-        (bool ok,) = e.payee.call{ value: e.amount }("");
-        require(ok, "transfer failed");
-        emit EscrowReleased(escrowId, e.amount);
+        lockedValue -= amt;
+        pendingWithdrawals[recipient] += amt;
+        totalOwed += amt;
+        emit EscrowReleased(escrowId, amt);
+        emit Credited(escrowId, recipient, amt, true);
     }
 
-    /// @notice Refund the payer if the escrow expires or the panel rules an unwind.
+    /// @notice Credit the payer if the escrow expires or the panel rules an unwind. Does not transfer ETH.
     /// @dev `Disputed` alone is not enough — that would let either party unwind unilaterally.
     ///      An upheld panel ruling closes refund permanently, including after `expiresAt`.
     ///      Expiry remains the backstop only when the panel has not upheld the deal
-    ///      (still pending, or resolved as an unwind).
+    ///      (still pending, or resolved as an unwind). Credits `e.payer`. Does not call the payer.
+    ///      The payer collects with `withdraw` or `withdrawTo`. See `withdraw` for the recipient rule.
     function refund(
         bytes32 escrowId
     ) external nonReentrant {
@@ -358,11 +397,59 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
             revert EscrowNotOpen();
         }
 
+        uint256 amt = e.amount;
+        address recipient = e.payer;
         e.state = EscrowState.Refunded;
-        lockedValue -= e.amount;
-        (bool ok,) = e.payer.call{ value: e.amount }("");
-        require(ok, "refund failed");
-        emit EscrowRefunded(escrowId, e.amount);
+        lockedValue -= amt;
+        pendingWithdrawals[recipient] += amt;
+        totalOwed += amt;
+        emit EscrowRefunded(escrowId, amt);
+        emit Credited(escrowId, recipient, amt, false);
+    }
+
+    /// @notice Pull the caller's full credit to themselves.
+    /// @dev The caller must accept ETH. A rejecting caller reverts `WithdrawFailed` and keeps the credit.
+    ///      Recipients must be EOAs, EIP-7702 accounts, or wallets/contracts able to call `withdraw` or
+    ///      `withdrawTo`. A non-upgradeable contract that cannot make that call strands its own credit.
+    ///      There is no gasless claim yet, so a payee with 0 ETH needs gas to submit this transaction.
+    function withdraw() external nonReentrant {
+        _withdraw(msg.sender, msg.sender);
+    }
+
+    /// @notice Pull the caller's full credit to `to`.
+    /// @dev For a caller whose own address rejects ETH. `to` must accept the transfer.
+    ///      The caller can spend only their own `pendingWithdrawals` balance, and only if that caller
+    ///      can submit the transaction: an EOA, an EIP-7702 account, or a wallet/contract with this call.
+    ///      A non-upgradeable contract that cannot call `withdraw` or `withdrawTo` strands its own credit.
+    ///      There is no gasless claim yet, so a payee with 0 ETH needs gas to submit this transaction.
+    /// @param to Destination. Must be non-zero.
+    function withdrawTo(
+        address to
+    ) external nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        _withdraw(msg.sender, to);
+    }
+
+    /// @dev Checks-effects-interactions. The ETH send uses `call` with an empty returndata
+    ///      region so a recipient cannot force the caller to copy a returndata bomb.
+    function _withdraw(
+        address account,
+        address to
+    ) internal {
+        uint256 amt = pendingWithdrawals[account];
+        // Caller can pull only their own credit, and only when it is non-zero.
+        require(amt > 0, "nothing to withdraw");
+        pendingWithdrawals[account] = 0;
+        totalOwed -= amt;
+
+        bool ok;
+        assembly {
+            // gas, to, value, in-offset, in-size, out-offset, out-size.
+            // out-size 0: do not copy returndata into memory.
+            ok := call(gas(), to, amt, 0, 0, 0, 0)
+        }
+        if (!ok) revert WithdrawFailed();
+        emit Withdrawn(account, to, amt);
     }
 
     /// @notice Flag an escrow for dispute. Does not authorize a refund.
