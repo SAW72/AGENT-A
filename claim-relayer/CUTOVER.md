@@ -90,7 +90,7 @@ Then look at both Production and Preview in the dashboard again.
 1. PR #46 is already squash-merged. `main` is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`. It was merged from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. Do not merge it again.
 2. If Auto-Deploy is on, leave `KILL_SWITCH=1` and leave `ADMIN_SECRET` unset through that deploy. The new process reads `KILL_SWITCH` at start, so the deploy comes up paused. If Auto-Deploy is off, the merge does not deploy. Use Manual Deploy of `a66ef64`, still with `KILL_SWITCH=1` and `ADMIN_SECRET` unset.
 3. After the deploy finishes, `GET /health` must show `"killSwitch": true`. The Render deploy view shows the relayer commit `a66ef64`. That is not the Pages commit. `/health` has no commit field and no build field. Do not look for either in the JSON.
-4. Done by Builder. The rebase of PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) onto `main` is a PR update, in progress or already done, and it is re-gated. It conflicts in `apps/wallet-ux/CLOUDFLARE_PAGES.md`. Spencer does not rebase #41 by hand. Wait until that PR is merged, then publish Pages from that `main` commit. The Pages commit is not `a66ef64`.
+4. Done by Builder. PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) is rebased onto `a66ef64`. Its head is `c6b4a844378a95f74a575e213991cfac248ef3fc`. QA and Verifier both passed it there. Spencer does not rebase #41 by hand. Wait until that PR is merged, then publish Pages from that `main` commit. The Pages commit is not `a66ef64`.
 5. Publish that Pages commit. Either path uses the build env from CI or from the local shell, never from Pages env vars.
    - GitHub: Actions → Deploy wallet-ux → Run workflow. `on` is `workflow_dispatch` only, and the job runs only for `refs/heads/main`. The build receives `VITE_CLAIM_RELAYER_URL` from the `production` environment variable. It must not receive `VITE_CLAIM_API_SECRET`. The workflow uploads with `wrangler pages deploy` twice: first `--branch=preview-<run_id>`, then `--branch=main` with `--commit-hash` set to that commit.
    - Or, from a shell where `VITE_CLAIM_API_SECRET` is unset:
@@ -200,7 +200,7 @@ ENDASSETS
 echo CLEAN
 ```
 
-After #41 merges, the new deployment is also checked by `apps/wallet-ux/scripts/verify-served-bundle.mjs` on `cursor/wallet-ux-pages-deploy-e3f5`. The workflow runs `node scripts/verify-served-bundle.mjs` from `apps/wallet-ux`. That file is on the #41 branch. It is not on `main` until #41 merges, so run this snippet yourself on any upload before that. `scripts/guard-claim-secret.mjs` rejects the header name and `VITE_CLAIM_API_SECRET`, including base64, hex, and URL encodings of those names. It does not read a secret from the environment.
+After #41 merges, the new deployment is also checked by `apps/wallet-ux/scripts/verify-served-bundle.mjs` at `c6b4a844378a95f74a575e213991cfac248ef3fc` on `cursor/wallet-ux-pages-deploy-e3f5`. The workflow runs `node scripts/verify-served-bundle.mjs` from `apps/wallet-ux` on the preview deployment, then again after the production upload. That file is on the #41 branch. It is not on `main` until #41 merges, so run this snippet yourself on any upload before that. `scripts/guard-claim-secret.mjs` rejects the header name and `VITE_CLAIM_API_SECRET`, including base64, hex, and URL encodings of those names. It does not read a secret from the environment.
 
 ### Health check after both sides are up
 
@@ -258,7 +258,7 @@ The Pages preview docs still say the latest deployment on a branch cannot be del
 
 The Deploy wallet-ux workflow (PR #41) uploads `--branch=preview-<run_id>` and then tries to delete that deployment with `--force`. `preview-<run_id>` has only that one deployment, so it is the latest on its branch. The workflow marks that step `continue-on-error`. Pages does not expire those previews. Each dispatch can leave one behind, and they pile up.
 
-If a preview still cannot be deleted, Cloudflare Access on preview URLs remains the fallback (Zero Trust → Access, or the Pages project's Access policy). Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable. Disabling preview deployments (Workers & Pages → `agent-a-wallet-ux` → Settings) stops later uploads from adding public previews. Neither Access nor that setting is a relayer code path.
+If a preview still cannot be deleted, Cloudflare Access on preview URLs remains the fallback (Zero Trust → Access, or the Pages project's Access policy). Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable. Leave preview deployments enabled. On `c6b4a84` the workflow uploads `--branch=preview-<run_id>`, runs `scripts/verify-served-bundle.mjs` on that preview, and only then uploads `--branch=main`. Turning preview deployments off stops that check before production.
 
 ## 4. Rotate ADMIN_SECRET only if admin routes are needed later
 
@@ -391,4 +391,4 @@ Unpause was checked on the pre-merge process `da47d9a` (`claim-relayer/app.mjs` 
 - There is no broadcast mutex and no viem `nonceManager` anywhere under `claim-relayer/`. `already known` and `nonce too low` are transient markers in `claim-relayer/retry.mjs` (lines 56 and 52). `withClaimRetry` retries them (lines 101–124). `broadcast.mjs` applies that retry only to the already-signed `eth_sendRawTransaction` (lines 183–189). The relayer does not call `eth_getTransactionByHash`.
 - There is no fee bump, and no Render Key Value nonce store.
 - `claim-relayer/render.yaml` does not set `autoDeploy`, and merging it does not toggle auto-deploy on the existing service.
-- Disabling preview deployments and Cloudflare Access are dashboard controls. The relayer does not implement them.
+- Cloudflare Access on preview URLs is a dashboard control. The relayer does not implement it. Preview deployments stay enabled so the Deploy wallet-ux workflow can verify the preview before it uploads production.
