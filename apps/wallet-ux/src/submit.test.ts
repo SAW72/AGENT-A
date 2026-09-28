@@ -71,6 +71,7 @@ describe("submit target", () => {
     )
     expect(previewCardCopy("dispute", true)).toMatch(/claim relayer on Base Sepolia/)
     expect(previewCardCopy("openDispute", true)).not.toMatch(/claim relayer/)
+    expect(previewCardCopy("createEscrow", true)).not.toMatch(/claim relayer/)
     expect(FORM_ERRORS.disputeClaim).toBe("Enter the claim identifier before opening a dispute.")
     for (const text of [submitSenderNote("dispute"), previewCardCopy("dispute", true), FORM_ERRORS.disputeClaim]) {
       expect(text).not.toMatch(/[()]/)

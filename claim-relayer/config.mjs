@@ -149,6 +149,37 @@ function resolveEscrow(env) {
   };
 }
 
+function positiveInt(value, fallback) {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(String(value).trim());
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw httpError(400, "invalid_abuse_limit");
+  }
+  return parsed;
+}
+
+function parseWei(value, fallback, error) {
+  const text = value === undefined || value === null || String(value).trim() === "" ? fallback : String(value).trim();
+  if (!/^[0-9]+$/.test(text)) throw httpError(400, error);
+  return BigInt(text);
+}
+
+/**
+ * Safe defaults. Counts are per window, not authentication.
+ * sender: 5 / minute. IP: 30 / minute. escrow: 8 / day. gas: 0.01 ETH / day at 1 gwei.
+ */
+export function loadAbuseLimits(env) {
+  return {
+    senderLimit: positiveInt(env.CLAIM_RATE_SENDER, 5),
+    ipLimit: positiveInt(env.CLAIM_RATE_IP, 30),
+    windowMs: positiveInt(env.CLAIM_RATE_WINDOW_SEC, 60) * 1000,
+    escrowCap: positiveInt(env.CLAIM_ESCROW_CAP, 8),
+    escrowWindowMs: positiveInt(env.CLAIM_ESCROW_WINDOW_SEC, 86400) * 1000,
+    dailyGasBudgetWei: parseWei(env.DAILY_GAS_BUDGET_WEI, "10000000000000000", "invalid_gas_budget").toString(),
+    gasPriceWei: parseWei(env.CLAIM_GAS_PRICE_WEI, "1000000000", "invalid_gas_price").toString(),
+  };
+}
+
 export function loadConfig(env = process.env) {
   if (env.RELAYER_KEY_FILE || env.RELAYER_PRIVATE_KEY_FILE) {
     throw httpError(500, "key_file_forbidden");
@@ -182,6 +213,7 @@ export function loadConfig(env = process.env) {
 
   const ttlRaw = Number(env.QUOTE_TTL_MS || 30 * 60 * 1000);
   const quoteTtlMs = Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : 30 * 60 * 1000;
+  const abuse = loadAbuseLimits(env);
 
   return {
     chainId: BASE_SEPOLIA_CHAIN_ID,
@@ -199,9 +231,11 @@ export function loadConfig(env = process.env) {
     escrowOwner: escrow.escrowOwner,
     bvtAddress: escrow.bvtAddress,
     adminSecret: String(env.ADMIN_SECRET || "").trim(),
-    claimApiSecret: String(env.CLAIM_API_SECRET || "").trim(),
     killSwitchInitial: parseEnvFlag(env.KILL_SWITCH),
     claimLogPath: String(env.CLAIM_LOG_PATH || "./data/claims.jsonl"),
+    intentNoncePath: String(env.INTENT_NONCE_PATH || "./data/intent-nonces.jsonl"),
+    erc1271Enabled: parseEnvFlag(env.ERC1271_ENABLED),
+    abuse,
     quoteTtlMs,
     liveSubmit: liveSubmitStatus(env, {
       escrowBooked: escrow.escrowBooked,

@@ -1,4 +1,12 @@
-import { decodeFunctionData, type Address, type Hex } from "viem"
+import { decodeFunctionData, keccak256, type Address, type Hex } from "viem"
+import {
+  CLAIM_DEADLINE_SKEW_SECONDS,
+  CLAIM_INTENT_DOMAIN_NAME,
+  CLAIM_INTENT_DOMAIN_VERSION,
+  CLAIM_INTENT_PRIMARY_TYPE,
+  CLAIM_INTENT_TYPES,
+  claimActionIndex,
+} from "./claimIntent"
 import { escrowAbi } from "./abi"
 import { BASE_SEPOLIA_CHAIN_ID, SUPERSEDED } from "./addresses"
 import { presentError, presentRevertHex, type ErrorPresentation } from "./format"
@@ -14,7 +22,41 @@ export type RelayerAction = (typeof RELAYER_ACTIONS)[number]
 
 export type RelayerConfig = {
   url: string | null
-  secret: string | null
+}
+
+export type ClaimSignArgs = {
+  domain: {
+    name: typeof CLAIM_INTENT_DOMAIN_NAME
+    version: typeof CLAIM_INTENT_DOMAIN_VERSION
+    chainId: number
+    verifyingContract: Address
+  }
+  types: typeof CLAIM_INTENT_TYPES
+  primaryType: typeof CLAIM_INTENT_PRIMARY_TYPE
+  message: {
+    action: number
+    escrowId: Hex
+    calldataHash: Hex
+    sender: Address
+    nonce: bigint
+    deadline: bigint
+  }
+}
+
+export type SignedLiveClaim = {
+  live: true
+  calldata: Hex
+  signature: Hex
+  intent: {
+    action: RelayerAction
+    escrowId: Hex
+    calldataHash: Hex
+    sender: Address
+    nonce: string
+    deadline: string
+    chainId: number
+    verifyingContract: Address
+  }
 }
 
 export type LiveClaimBody = {
@@ -47,8 +89,9 @@ export const RELAYER_CONFIRMED_TEXT = "The transaction is confirmed."
 export const RELAYER_TX_LINK_LABEL = "View this transaction on Base Sepolia"
 export const RELAYER_CHECK_WALLET_LABEL = "Check the relayer wallet on Base Sepolia"
 export const RELAYER_PAUSED_NOTE = "The claim relayer is paused. Use your wallet to submit instead."
-export const RELAYER_SECRET_NOTE =
-  "This app is missing the claim secret, so the claim relayer stays off. Use your wallet to submit instead."
+export const RELAYER_CHECKING_NOTE = "Checking whether the claim relayer is available."
+export const RELAYER_DOWN_NOTE = "The claim relayer is unavailable. Use your wallet to submit instead."
+export const RELAYER_CONNECT_NOTE = "Connect a wallet on Base Sepolia to sign this claim."
 export const RELAYER_TIMEOUT_TEXT =
   "The claim relayer didn't answer in time. It may still have submitted this transaction. Check the relayer wallet on Base Sepolia before you try again."
 export const RELAYER_RECEIPT_UNKNOWN_TEXT =
@@ -57,6 +100,8 @@ export const RELAYER_RECEIPT_REVERTED_TEXT =
   "The transaction was sent but the contract rejected it. Network fees may have been charged; no escrow funds moved."
 
 export type RelayerPhase = "idle" | "submitting" | "confirming"
+
+export type RelayerHealth = "unknown" | "ok" | "paused" | "down"
 
 export type RelayerButtonModel =
   | { visible: false }
@@ -103,6 +148,18 @@ const RELAYER_RETIRED_SENT_TEXT =
 const RELAYER_PLAIN: Record<string, string> = {
   unauthorized: "The claim relayer refused this request. Nothing was sent.",
   forbidden: "The claim relayer refused this request. Nothing was sent.",
+  invalid_signature: "The wallet signature was not accepted. Nothing was sent.",
+  intent_required: "The claim relayer needs a signed approval from your wallet. Nothing was sent.",
+  not_a_party: "Only the payer or the payee on this claim can ask the relayer to submit it. Nothing was sent.",
+  escrow_not_found: "That claim is not on the escrow yet, so nothing was sent.",
+  deadline_expired: "This approval has expired. Sign it again. Nothing was sent.",
+  deadline_too_far: "This approval lasts too long. Nothing was sent.",
+  calldata_hash_mismatch: "The prepared transaction does not match the signed approval. Nothing was sent.",
+  selector_not_allowed: "This step has to be sent from your wallet, not the claim relayer.",
+  domain_mismatch: "This approval is for a different escrow than the one this relayer uses. Nothing was sent.",
+  gas_budget_exhausted: "The claim relayer has reached its daily limit. Try again later. Nothing was sent.",
+  escrow_cap: "This claim has reached the relayer limit for now. Nothing was sent.",
+  nonce_in_flight: "This approval is already being submitted. Wait for it to finish.",
   claim_api_secret_required: "The claim relayer is not ready to submit claims yet. Nothing was sent.",
   relayer_key_missing: "The claim relayer is not ready to submit claims yet. Nothing was sent.",
   kill_switch: "The claim relayer is paused. Nothing was sent.",
@@ -151,30 +208,25 @@ export const RELAYER_USER_TEXT = [
   RELAYER_TX_LINK_LABEL,
   RELAYER_CHECK_WALLET_LABEL,
   RELAYER_PAUSED_NOTE,
-  RELAYER_SECRET_NOTE,
+  RELAYER_CHECKING_NOTE,
+  RELAYER_DOWN_NOTE,
+  RELAYER_CONNECT_NOTE,
   RELAYER_RECEIPT_UNKNOWN_TEXT,
   RELAYER_RECEIPT_REVERTED_TEXT,
   RELAYER_RETIRED_SENT_TEXT,
 ]
 
-export function relayerConfigFromEnv(env: {
-  VITE_CLAIM_RELAYER_URL?: string
-  VITE_CLAIM_API_SECRET?: string
-}): RelayerConfig {
+export function relayerConfigFromEnv(env: { VITE_CLAIM_RELAYER_URL?: string }): RelayerConfig {
   const url = String(env.VITE_CLAIM_RELAYER_URL ?? "").trim().replace(/\/$/, "")
-  const secret = String(env.VITE_CLAIM_API_SECRET ?? "").trim()
-  return {
-    url: url.length > 0 ? url : null,
-    secret: secret.length > 0 ? secret : null,
-  }
+  return { url: url.length > 0 ? url : null }
 }
 
-/** Connected wallets must already be on Base Sepolia. A disconnected wallet can still use the relayer. */
+/** The relayer spends gas only after the connected wallet signs. The wallet must be on Base Sepolia. */
 export function relayerSubmitAllowed(input: {
   walletConnected: boolean
   walletChainId: WalletChainId
 }): { ok: true } | { ok: false; reason: string } {
-  if (!input.walletConnected) return { ok: true }
+  if (!input.walletConnected) return { ok: false, reason: RELAYER_CONNECT_NOTE }
   const decision = evaluateEscrowSubmit(input)
   if (!decision.ok) return { ok: false, reason: decision.reason }
   return { ok: true }
@@ -202,13 +254,14 @@ function isRelayerAction(name: string): name is RelayerAction {
 }
 
 export function previewSupportsRelayer(functionName: string): boolean {
-  return isRelayerAction(functionName)
+  // A new escrow is not on chain yet, so the relayer's existence check refuses it.
+  // Create stays on the connected wallet. Release, refund, and dispute can be signed.
+  return functionName !== "createEscrow" && isRelayerAction(functionName)
 }
 
 export function relayerButtonModel(input: {
   url: string | null
-  secret: string | null
-  paused: boolean
+  health: RelayerHealth
   phase: RelayerPhase
   gate: { ok: true } | { ok: false; reason: string }
   action: string
@@ -221,11 +274,14 @@ export function relayerButtonModel(input: {
   if (input.phase === "confirming") {
     return { visible: true, disabled: true, label: RELAYER_WAITING_TEXT, note: null }
   }
-  if (input.paused) {
+  if (input.health === "paused") {
     return { visible: true, disabled: true, label: "Submit via claim relayer", note: RELAYER_PAUSED_NOTE }
   }
-  if (!input.secret) {
-    return { visible: true, disabled: true, label: "Submit via claim relayer", note: RELAYER_SECRET_NOTE }
+  if (input.health === "down") {
+    return { visible: true, disabled: true, label: "Submit via claim relayer", note: RELAYER_DOWN_NOTE }
+  }
+  if (input.health !== "ok") {
+    return { visible: true, disabled: true, label: "Submit via claim relayer", note: RELAYER_CHECKING_NOTE }
   }
   return { visible: true, disabled: false, label: "Submit via claim relayer", note: null }
 }
@@ -336,17 +392,9 @@ function errorFromResponse(status: number, body: Record<string, unknown> | null)
   const reason = typeof body?.reason === "string" ? body.reason : ""
   if (status === 401 || error === "unauthorized") {
     return new RelayerRequestError(
-      "Claim relayer refused the live claim (401 unauthorized). Check VITE_CLAIM_API_SECRET against CLAIM_API_SECRET on the relayer.",
+      "Claim relayer refused the live claim (401 unauthorized).",
       401,
-      "unauthorized",
-      body,
-    )
-  }
-  if (status === 503 && error === "claim_api_secret_required") {
-    return new RelayerRequestError(
-      "Claim relayer live submit is allowed but CLAIM_API_SECRET is unset (503 claim_api_secret_required). The claim was not broadcast.",
-      503,
-      "claim_api_secret_required",
+      error === "request_failed" ? "unauthorized" : error,
       body,
     )
   }
@@ -490,8 +538,8 @@ export function relayerErrorText(error: unknown): string {
 }
 
 /**
- * POST /v1/claims with live:true. Sends x-claim-secret only when a secret is set.
- * Chain id must be Base Sepolia (84532). Mainnet is refused before fetch.
+ * POST /v1/claims with a signed intent. Chain id must be Base Sepolia (84532).
+ * Mainnet is refused before fetch. No shared secret is sent.
  */
 function isAbort(error: unknown): boolean {
   if (!error || typeof error !== "object" || !("name" in error)) return false
@@ -530,19 +578,16 @@ function addressOrNull(value: unknown): Address | null {
 
 export async function postLiveClaim(input: {
   url: string
-  secret?: string | null
-  body: LiveClaimBody
+  body: SignedLiveClaim
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }): Promise<LiveClaimResult> {
-  assertRelayerChain(input.body.chainId)
+  assertRelayerChain(input.body.intent.chainId)
   if (input.body.live !== true) {
     throw new RelayerRequestError("Relayer submits must set live: true.", null, "live_required")
   }
   const endpoint = claimsEndpoint(input.url)
   const headers: Record<string, string> = { "content-type": "application/json" }
-  const secret = String(input.secret ?? "").trim()
-  if (secret) headers["x-claim-secret"] = secret
   const fetchImpl = input.fetchImpl ?? fetch
   let response: Response
   try {
@@ -566,7 +611,7 @@ export async function postLiveClaim(input: {
       )
     }
     throw new RelayerRequestError(
-      "Could not reach the claim relayer. If this is the Pages site, CORS on Render must allow this origin (https://agent-a-wallet-ux.pages.dev) and the x-claim-secret header.",
+      "Could not reach the claim relayer. If this is the Pages site, CORS on Render must allow this origin (https://agent-a-wallet-ux.pages.dev).",
       null,
       "cors_or_network",
     )
@@ -589,19 +634,19 @@ export async function postLiveClaim(input: {
   return { txHash: txHash as Hex, mode: "live", escrowAddress }
 }
 
-export async function readRelayerPaused(input: {
+export async function readRelayerHealth(input: {
   url: string
   fetchImpl?: typeof fetch
   timeoutMs?: number
-}): Promise<boolean | null> {
+}): Promise<RelayerHealth> {
   let endpoint: string
   try {
     const parsed = new URL(input.url)
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null
-    if (parsed.username || parsed.password) return null
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "down"
+    if (parsed.username || parsed.password) return "down"
     endpoint = `${parsed.origin}/health`
   } catch {
-    return null
+    return "down"
   }
   try {
     const response = await fetchWithTimeout(
@@ -610,13 +655,24 @@ export async function readRelayerPaused(input: {
       { method: "GET" },
       input.timeoutMs ?? RELAYER_HEALTH_TIMEOUT_MS,
     )
-    if (!response.ok) return null
+    if (!response.ok) return "down"
     const json = await readJson(response)
-    if (!json || typeof json.killSwitch !== "boolean") return null
-    return json.killSwitch
+    if (!json || json.ok !== true || typeof json.killSwitch !== "boolean") return "down"
+    return json.killSwitch ? "paused" : "ok"
   } catch {
-    return null
+    return "down"
   }
+}
+
+export async function readRelayerPaused(input: {
+  url: string
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+}): Promise<boolean | null> {
+  const health = await readRelayerHealth(input)
+  if (health === "down") return null
+  if (health === "unknown") return null
+  return health === "paused"
 }
 
 export type RelayerReceiptClient = {
@@ -675,20 +731,97 @@ export async function confirmRelayerReceipt(input: {
  * wallet, POST /v1/claims, and wait for the receipt. A timed-out POST does
  * not claim that nothing was broadcast.
  */
+function randomNonce(): bigint {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  let value = 0n
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte)
+  return value === 0n ? 1n : value
+}
+
+export function claimSignArgs(input: {
+  preview: CallPreview
+  sender: Address
+  verifyingContract: Address
+  nowSeconds?: number
+  nonce?: bigint
+}): ClaimSignArgs {
+  const previewBody = claimBodyFromPreview(input.preview)
+  const nonce = input.nonce ?? randomNonce()
+  const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000)
+  const deadline = BigInt(nowSeconds + CLAIM_DEADLINE_SKEW_SECONDS)
+  return {
+    domain: {
+      name: CLAIM_INTENT_DOMAIN_NAME,
+      version: CLAIM_INTENT_DOMAIN_VERSION,
+      chainId: BASE_SEPOLIA_CHAIN_ID,
+      verifyingContract: input.verifyingContract,
+    },
+    types: CLAIM_INTENT_TYPES,
+    primaryType: CLAIM_INTENT_PRIMARY_TYPE,
+    message: {
+      action: claimActionIndex(previewBody.action),
+      escrowId: previewBody.claimId,
+      calldataHash: keccak256(input.preview.calldata),
+      sender: input.sender,
+      nonce,
+      deadline,
+    },
+  }
+}
+
+export function signedClaimFromPreview(input: {
+  preview: CallPreview
+  sender: Address
+  verifyingContract: Address
+  signature: Hex
+  nowSeconds?: number
+  nonce?: bigint
+}): SignedLiveClaim {
+  const args = claimSignArgs(input)
+  const previewBody = claimBodyFromPreview(input.preview)
+  return {
+    live: true,
+    calldata: input.preview.calldata,
+    signature: input.signature,
+    intent: {
+      action: previewBody.action,
+      escrowId: args.message.escrowId,
+      calldataHash: args.message.calldataHash,
+      sender: args.message.sender,
+      nonce: args.message.nonce.toString(),
+      deadline: args.message.deadline.toString(),
+      chainId: BASE_SEPOLIA_CHAIN_ID,
+      verifyingContract: input.verifyingContract,
+    },
+  }
+}
+
 export async function runRelayerSubmission(input: {
   url: string
-  secret?: string | null
   preview: CallPreview
+  sender: Address
+  verifyingContract: Address
+  signTypedData: (args: ClaimSignArgs) => Promise<Hex>
   client: PreflightClient & RelayerReceiptClient
   fetchImpl?: typeof fetch
   fetchTimeoutMs?: number
   receiptTimeoutMs?: number
+  nowSeconds?: number
+  nonce?: bigint
   onPhase?: (phase: RelayerPhase, txHash?: Hex) => void
 }): Promise<RelayerRunResult> {
   input.onPhase?.("submitting")
-  let body: LiveClaimBody
+  let signArgs: ClaimSignArgs
   try {
-    body = claimBodyFromPreview(input.preview)
+    claimBodyFromPreview(input.preview)
+    signArgs = claimSignArgs({
+      preview: input.preview,
+      sender: input.sender,
+      verifyingContract: input.verifyingContract,
+      nowSeconds: input.nowSeconds,
+      nonce: input.nonce,
+    })
   } catch (cause) {
     return {
       ok: false,
@@ -704,14 +837,22 @@ export async function runRelayerSubmission(input: {
       to: input.preview.to,
       data: input.preview.calldata,
       value: input.preview.valueWei,
-      post: () =>
-        postLiveClaim({
+      post: async () => {
+        const signature = await input.signTypedData(signArgs)
+        return postLiveClaim({
           url: input.url,
-          secret: input.secret,
-          body,
+          body: signedClaimFromPreview({
+            preview: input.preview,
+            sender: input.sender,
+            verifyingContract: input.verifyingContract,
+            signature,
+            nowSeconds: input.nowSeconds,
+            nonce: input.nonce ?? signArgs.message.nonce,
+          }),
           fetchImpl: input.fetchImpl,
           timeoutMs: input.fetchTimeoutMs,
-        }),
+        })
+      },
     })
   } catch (cause) {
     return {

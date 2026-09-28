@@ -6,18 +6,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { RpcRequestError } from "viem";
+import { createAbuseGuard } from "../abuseLimits.mjs";
 import { createClaimRelayer } from "../app.mjs";
 import { createSepoliaBroadcaster } from "../broadcast.mjs";
 import { createClaimLog } from "../claimLog.mjs";
 import { loadConfig } from "../config.mjs";
+import { createMemoryIntentNonceStore } from "../intentNonceStore.mjs";
 import { createKillSwitch } from "../killSwitch.mjs";
 import { createNonceStore } from "../nonceStore.mjs";
+import { deadlineAt, signedLiveBody, testAccounts, trackingChain } from "./liveIntent.mjs";
 
 const PAYER = "0x1111111111111111111111111111111111111111";
 const PAYEE = "0x2222222222222222222222222222222222222222";
 const SECRET = "0x" + "cd".repeat(32);
 const CLAIM_SECRET = "claim-api-test-secret";
-const claimHeaders = { "x-claim-secret": CLAIM_SECRET };
 
 describe("claim relayer HTTP", () => {
   it("serves fixture health, quote, and claim without leaking a key", async () => {
@@ -216,9 +218,18 @@ describe("claim relayer HTTP", () => {
   it("broadcasts a Sepolia escrow action when Spencer unlocks live submit", async () => {
     const sent = [];
     const txHash = "0x" + "ab".repeat(32);
+    const accounts = testAccounts();
+    const escrowId = "0x" + "11".repeat(32);
+    const createId = "0x" + "33".repeat(32);
+    const chain = trackingChain({
+      payer: accounts.payer.address,
+      payee: accounts.payee.address,
+      missingIds: new Set([createId.toLowerCase()]),
+    });
     const ctx = await boot(
-      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", RELAYER_PRIVATE_KEY: SECRET, CLAIM_API_SECRET: CLAIM_SECRET },
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", RELAYER_PRIVATE_KEY: SECRET },
       {
+        chain,
         broadcaster: {
           async send(tx) {
             sent.push(tx);
@@ -227,7 +238,6 @@ describe("claim relayer HTTP", () => {
         },
       },
     );
-    const escrowId = "0x" + "11".repeat(32);
     try {
       const health = await request(ctx.port, "GET", "/health");
       assert.equal(health.json.liveSubmit, true);
@@ -237,17 +247,14 @@ describe("claim relayer HTTP", () => {
       assert.deepEqual(health.json.liveSubmitBlockers, []);
       assert.equal(JSON.stringify(health.json).includes(SECRET), false);
 
-      const claim = await request(
-        ctx.port,
-        "POST",
-        "/v1/claims",
-        {
-          action: "release",
-          claimId: escrowId,
-          live: true,
-        },
-        claimHeaders,
-      );
+      const releaseBody = await signedLiveBody({
+        account: accounts.payer,
+        action: "release",
+        escrowId,
+        nonce: "11",
+        deadline: deadlineAt(120),
+      });
+      const claim = await request(ctx.port, "POST", "/v1/claims", releaseBody);
       assert.equal(claim.status, 200);
       assert.equal(claim.json.ok, true);
       assert.equal(claim.json.mode, "live");
@@ -301,26 +308,25 @@ describe("claim relayer HTTP", () => {
         ctx.port,
         "POST",
         "/v1/claims",
-        {
+        await signedLiveBody({
+          account: accounts.payer,
           action: "createEscrow",
-          claimId: "0x" + "33".repeat(32),
-          payee: PAYEE,
-          payerBotId: "0x" + "44".repeat(32),
-          payeeBotId: "0x" + "55".repeat(32),
-          durationSeconds: "3600",
-          amountWei: "1000",
-          live: true,
-        },
-        claimHeaders,
+          escrowId: createId,
+          nonce: "12",
+          deadline: deadlineAt(120),
+          fields: {
+            payee: PAYEE,
+            payerBotId: "0x" + "44".repeat(32),
+            payeeBotId: "0x" + "55".repeat(32),
+            durationSeconds: "3600",
+            amountWei: "1000",
+          },
+        }),
       );
-      assert.equal(created.status, 200);
-      assert.equal(created.json.txHash, txHash);
-      assert.equal(created.json.valueWei, "1000");
-      assert.equal(created.json.senderConstraint, "vault_operator_must_send");
-      assert.match(created.json.senderNote, /Vault operator/);
-      assert.equal(sent.at(-1).action, "createEscrow");
-      assert.equal(sent.at(-1).valueWei, "1000");
-      assert.equal(sent.at(-1).chainId, 84532);
+      assert.equal(created.status, 404);
+      assert.equal(created.json.error, "escrow_not_found");
+      assert.equal(created.json.txHash, null);
+      assert.equal(sent.length, 1);
 
       const log = await readFile(ctx.logPath, "utf8");
       assert.equal(log.includes(SECRET), false);
@@ -331,9 +337,17 @@ describe("claim relayer HTTP", () => {
   });
 
   it("does not invent a tx hash when createEscrow cannot be sent", async () => {
+    const accounts = testAccounts();
+    const releaseId = "0x" + "22".repeat(32);
+    const createId = "0x" + "33".repeat(32);
     const ctx = await boot(
-      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET },
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1" },
       {
+        chain: trackingChain({
+          payer: accounts.payer.address,
+          payee: accounts.payee.address,
+          missingIds: new Set([createId.toLowerCase()]),
+        }),
         broadcaster: {
           async send() {
             throw Object.assign(new Error("execution reverted"), {
@@ -350,12 +364,13 @@ describe("claim relayer HTTP", () => {
         ctx.port,
         "POST",
         "/v1/claims",
-        {
+        await signedLiveBody({
+          account: accounts.payer,
           action: "release",
-          claimId: "0x" + "22".repeat(32),
-          liveSubmit: true,
-        },
-        claimHeaders,
+          escrowId: releaseId,
+          nonce: "21",
+          deadline: deadlineAt(120),
+        }),
       );
       assert.equal(missing.status, 502);
       assert.equal(missing.json.txHash, null);
@@ -366,23 +381,24 @@ describe("claim relayer HTTP", () => {
         ctx.port,
         "POST",
         "/v1/claims",
-        {
+        await signedLiveBody({
+          account: accounts.payer,
           action: "createEscrow",
-          claimId: "0x" + "33".repeat(32),
-          payee: PAYEE,
-          payerBotId: "0x" + "44".repeat(32),
-          payeeBotId: "0x" + "55".repeat(32),
-          durationSeconds: "3600",
-          amountWei: "1000",
-          mode: "live",
-        },
-        claimHeaders,
+          escrowId: createId,
+          nonce: "22",
+          deadline: deadlineAt(120),
+          fields: {
+            payee: PAYEE,
+            payerBotId: "0x" + "44".repeat(32),
+            payeeBotId: "0x" + "55".repeat(32),
+            durationSeconds: "3600",
+            amountWei: "1000",
+          },
+        }),
       );
-      assert.equal(create.status, 502);
+      assert.equal(create.status, 404);
+      assert.equal(create.json.error, "escrow_not_found");
       assert.equal(create.json.txHash, null);
-      assert.equal(create.json.revert_data, null);
-      assert.equal(create.json.senderConstraint, "vault_operator_must_send");
-      assert.match(create.json.senderNote, /Vault operator/);
       assert.equal(JSON.stringify(create.json).includes(SECRET), false);
     } finally {
       await ctx.close();
@@ -415,18 +431,23 @@ describe("claim relayer HTTP", () => {
       await paused.close();
     }
 
-    const unsigned = await boot({ LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET });
+    const accounts = testAccounts();
+    const unsigned = await boot(
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1" },
+      { chain: trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address }) },
+    );
     try {
       const claim = await request(
         unsigned.port,
         "POST",
         "/v1/claims",
-        {
+        await signedLiveBody({
+          account: accounts.payer,
           action: "refund",
-          claimId: "0x" + "66".repeat(32),
-          live: true,
-        },
-        claimHeaders,
+          escrowId: "0x" + "66".repeat(32),
+          nonce: "31",
+          deadline: deadlineAt(120),
+        }),
       );
       assert.equal(claim.status, 503);
       assert.equal(claim.json.error, "relayer_key_missing");
@@ -436,7 +457,7 @@ describe("claim relayer HTTP", () => {
     }
   });
 
-  it("requires CLAIM_API_SECRET for live claims and leaves fixtures and quotes open", async () => {
+  it("requires a signed intent for live claims and leaves fixtures and quotes open", async () => {
     const sent = [];
     const txHash = "0x" + "ab".repeat(32);
     const escrowId = "0x" + "11".repeat(32);
@@ -446,16 +467,18 @@ describe("claim relayer HTTP", () => {
         return { txHash };
       },
     };
-    const closed = await boot({ LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1" }, { broadcaster });
+    const accounts = testAccounts();
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const closed = await boot({ LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1" }, { broadcaster, chain });
     try {
       const live = await request(closed.port, "POST", "/v1/claims", {
         action: "release",
         claimId: escrowId,
         live: true,
       });
-      assert.equal(live.status, 503);
+      assert.equal(live.status, 400);
       assert.equal(live.json.ok, false);
-      assert.equal(live.json.error, "claim_api_secret_required");
+      assert.equal(live.json.error, "intent_required");
       assert.equal(sent.length, 0);
 
       const fixture = await request(closed.port, "POST", "/v1/claims", {
@@ -488,7 +511,7 @@ describe("claim relayer HTTP", () => {
         CLAIM_API_SECRET: CLAIM_SECRET,
         ADMIN_SECRET: "admin-test",
       },
-      { broadcaster },
+      { broadcaster, chain },
     );
     try {
       const missing = await request(ctx.port, "POST", "/v1/claims", {
@@ -496,8 +519,8 @@ describe("claim relayer HTTP", () => {
         claimId: escrowId,
         live: true,
       });
-      assert.equal(missing.status, 401);
-      assert.deepEqual(missing.json, { ok: false, error: "unauthorized" });
+      assert.equal(missing.status, 400);
+      assert.equal(missing.json.error, "intent_required");
 
       const wrong = await request(
         ctx.port,
@@ -506,8 +529,8 @@ describe("claim relayer HTTP", () => {
         { action: "release", claimId: escrowId, live: true },
         { "x-claim-secret": "nope" },
       );
-      assert.equal(wrong.status, 401);
-      assert.deepEqual(wrong.json, { ok: false, error: "unauthorized" });
+      assert.equal(wrong.status, 400);
+      assert.equal(wrong.json.error, "intent_required");
 
       const adminHeader = await request(
         ctx.port,
@@ -516,7 +539,8 @@ describe("claim relayer HTTP", () => {
         { action: "release", claimId: escrowId, mode: "broadcast" },
         { "x-admin-secret": "admin-test" },
       );
-      assert.equal(adminHeader.status, 401);
+      assert.equal(adminHeader.status, 400);
+      assert.equal(adminHeader.json.error, "intent_required");
       assert.equal(sent.length, 0);
 
       const bearerWrong = await request(
@@ -526,15 +550,21 @@ describe("claim relayer HTTP", () => {
         { action: "release", claimId: escrowId, live: true },
         { authorization: "Bearer nope" },
       );
-      assert.equal(bearerWrong.status, 401);
+      assert.equal(bearerWrong.status, 400);
+      assert.equal(bearerWrong.json.error, "intent_required");
       assert.equal(sent.length, 0);
 
       const ok = await request(
         ctx.port,
         "POST",
         "/v1/claims",
-        { action: "release", claimId: escrowId, live: true },
-        claimHeaders,
+        await signedLiveBody({
+          account: accounts.payer,
+          action: "release",
+          escrowId,
+          nonce: "41",
+          deadline: deadlineAt(120),
+        }),
       );
       assert.equal(ok.status, 200);
       assert.equal(ok.json.ok, true);
@@ -547,7 +577,13 @@ describe("claim relayer HTTP", () => {
         ctx.port,
         "POST",
         "/v1/claims",
-        { action: "refund", claimId: "0x" + "77".repeat(32), liveSubmit: true },
+        await signedLiveBody({
+          account: accounts.payee,
+          action: "refund",
+          escrowId: "0x" + "77".repeat(32),
+          nonce: "42",
+          deadline: deadlineAt(120),
+        }),
         { authorization: `Bearer ${CLAIM_SECRET}` },
       );
       assert.equal(bearer.status, 200);
@@ -572,7 +608,7 @@ describe("claim relayer HTTP", () => {
       assert.equal(quote.json.reason, "quote_does_not_broadcast");
       assert.equal(sent.length, 2);
 
-      const pause = await request(ctx.port, "POST", "/v1/admin/pause", {}, claimHeaders);
+      const pause = await request(ctx.port, "POST", "/v1/admin/pause", {}, { "x-claim-secret": CLAIM_SECRET });
       assert.equal(pause.status, 401);
       const paused = await request(ctx.port, "POST", "/v1/admin/pause", {}, { "x-admin-secret": "admin-test" });
       assert.equal(paused.status, 200);
@@ -587,7 +623,7 @@ describe("claim relayer HTTP", () => {
     }
   });
 
-  it("advertises x-claim-secret on CORS preflight for the Pages origin", async () => {
+  it("does not treat CORS or x-claim-secret as claim auth", async () => {
     const ctx = await boot({
       CORS_ORIGINS: "https://agent-a-wallet-ux.pages.dev,http://localhost:5173",
     });
@@ -602,19 +638,19 @@ describe("claim relayer HTTP", () => {
       assert.match(String(allowed.headers["access-control-allow-headers"]), /content-type/);
       assert.match(String(allowed.headers["access-control-allow-headers"]), /x-admin-secret/);
       assert.match(String(allowed.headers["access-control-allow-headers"]), /authorization/);
-      assert.match(String(allowed.headers["access-control-allow-headers"]), /x-claim-secret/);
+      assert.doesNotMatch(String(allowed.headers["access-control-allow-headers"]), /x-claim-secret/);
 
       const other = await request(ctx.port, "OPTIONS", "/v1/claims", undefined, {
         origin: "https://evil.example",
       });
       assert.equal(other.headers["access-control-allow-origin"], undefined);
-      assert.match(String(other.headers["access-control-allow-headers"]), /x-claim-secret/);
+      assert.doesNotMatch(String(other.headers["access-control-allow-headers"]), /x-claim-secret/);
     } finally {
       await ctx.close();
     }
   });
 
-  it("allows the Wallet UX Pages origin by default and still requires the claim secret", async () => {
+  it("allows the Wallet UX Pages origin by default and still requires a signed intent", async () => {
     const pages = "https://agent-a-wallet-ux.pages.dev";
     const ctx = await boot({
       LIVE_SUBMIT: "1",
@@ -648,8 +684,8 @@ describe("claim relayer HTTP", () => {
         { action: "release", claimId: "0x" + "22".repeat(32), live: true },
         { origin: pages },
       );
-      assert.equal(live.status, 401);
-      assert.equal(live.json.error, "unauthorized");
+      assert.equal(live.status, 400);
+      assert.equal(live.json.error, "intent_required");
       assert.equal(live.headers["access-control-allow-origin"], pages);
     } finally {
       await ctx.close();
@@ -660,15 +696,26 @@ describe("claim relayer HTTP", () => {
     const revert = "0x" + "aabbccdd" + "ab".repeat(32);
     const rpcUrl = "https://sepolia.example/v2/secret-rpc-key";
     const rawMessage = "execution reverted: NotAParty raw-provider-message";
-    const releaseBody = {
-      action: "release",
-      claimId: "0x" + "22".repeat(32),
-      live: true,
-    };
+    const accounts = testAccounts();
+    const escrowId = "0x" + "22".repeat(32);
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const releaseBodies = [];
+    for (const nonce of ["51", "52", "53", "54"]) {
+      releaseBodies.push(
+        await signedLiveBody({
+          account: accounts.payer,
+          action: "release",
+          escrowId,
+          nonce,
+          deadline: deadlineAt(120),
+        }),
+      );
+    }
     let sends = 0;
     const ctx = await boot(
-      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET },
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1" },
       {
+        chain,
         broadcaster: {
           async send() {
             sends += 1;
@@ -706,7 +753,7 @@ describe("claim relayer HTTP", () => {
       },
     );
     try {
-      const decoded = await request(ctx.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      const decoded = await request(ctx.port, "POST", "/v1/claims", releaseBodies[0]);
       assert.equal(decoded.status, 502);
       assert.deepEqual(decoded.json, {
         ok: false,
@@ -724,14 +771,14 @@ describe("claim relayer HTTP", () => {
       assert.equal(decoded.raw.includes("secret-rpc-key"), false);
       assert.equal(decoded.raw.includes(SECRET), false);
 
-      const missing = await request(ctx.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      const missing = await request(ctx.port, "POST", "/v1/claims", releaseBodies[1]);
       assert.equal(missing.status, 502);
       assert.equal(missing.json.revert_data, null);
       assert.equal(missing.json.error, "broadcast_failed");
       assert.equal(missing.raw.includes(rpcUrl), false);
       assert.equal(missing.raw.includes("raw-provider-message"), false);
 
-      const junk = await request(ctx.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      const junk = await request(ctx.port, "POST", "/v1/claims", releaseBodies[2]);
       assert.equal(junk.status, 502);
       assert.equal(junk.json.revert_data, null);
       assert.equal(junk.raw.includes(rpcUrl), false);
@@ -750,8 +797,9 @@ describe("claim relayer HTTP", () => {
     const viemKey = "0x" + "11".repeat(32);
     let estimates = 0;
     const live = await boot(
-      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1", CLAIM_API_SECRET: CLAIM_SECRET },
+      { LIVE_SUBMIT: "1", SPENCER_RUN_AUTH: "1" },
       {
+        chain,
         broadcaster: createSepoliaBroadcaster({
           privateKey: viemKey,
           request: async ({ method }) => {
@@ -775,7 +823,7 @@ describe("claim relayer HTTP", () => {
       },
     );
     try {
-      const failed = await request(live.port, "POST", "/v1/claims", releaseBody, claimHeaders);
+      const failed = await request(live.port, "POST", "/v1/claims", releaseBodies[3]);
       assert.equal(failed.status, 502);
       assert.equal(failed.json.revert_data, revert);
       assert.equal(failed.json.error, "broadcast_failed");
@@ -815,6 +863,7 @@ function sepoliaBlock() {
 async function boot(env = {}, extra = {}) {
   const dir = await mkdtemp(join(tmpdir(), "claim-relayer-"));
   const logPath = join(dir, "claims.jsonl");
+  const nowMs = Date.parse("2026-09-25T19:00:00.000Z");
   const config = loadConfig({
     CLAIM_LOG_PATH: logPath,
     QUOTE_TTL_MS: "60000",
@@ -825,9 +874,12 @@ async function boot(env = {}, extra = {}) {
     config,
     killSwitch: createKillSwitch({ initial: config.killSwitchInitial }),
     nonceStore: createNonceStore(),
+    intentNonces: extra.intentNonces || createMemoryIntentNonceStore({ now: () => nowMs }),
+    abuse: extra.abuse || createAbuseGuard(config.abuse, { now: () => nowMs }),
+    chain: extra.chain || trackingChain({ exists: false }),
     claimLog: createClaimLog({ filePath: logPath }),
     broadcaster: extra.broadcaster ?? null,
-    now: () => Date.parse("2026-09-25T19:00:00.000Z"),
+    now: () => nowMs,
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

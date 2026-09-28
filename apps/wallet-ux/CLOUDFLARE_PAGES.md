@@ -38,17 +38,14 @@ Set variables for **Production** and **Preview**. Vite inlines `VITE_*` during `
 | Variable | Go-live value |
 | --- | --- |
 | `VITE_BASE_SEPOLIA_RPC_URL` | Optional. Leave unset to use `https://sepolia.base.org`. Any URL must answer `eth_chainId` with `84532`. |
-| `VITE_CLAIM_RELAYER_URL` | Optional. Public Base Sepolia claim-relayer URL, for example `https://bot-verifier-claim-relayer.onrender.com`. Leave unset to keep submits wallet-direct. |
-| `VITE_CLAIM_API_SECRET` | Optional. Sent as `x-claim-secret` on live `POST /v1/claims`. Must match `CLAIM_API_SECRET` on Render. |
+| `VITE_CLAIM_RELAYER_URL` | Optional. Public Base Sepolia claim-relayer URL, for example `https://bot-verifier-claim-relayer.onrender.com`. Leave unset to keep submits wallet-direct. The relayer button stays off until `GET /health` is up and not paused. The connected wallet signs the claim. Do not set a claim secret. |
 | `SKIP_DEPENDENCY_INSTALL` | `1`. Pages would otherwise run its own `npm install` before the build command. `npm ci` is the install. |
 
 Pages must not have `PRIVATE_KEY`, `RELAYER_PRIVATE_KEY`, `SPENCER_RUN_AUTH`, `LIVE_SUBMIT`, or `ADMIN_SECRET`. Those belong to Foundry or the Render claim relayer, not this static app.
 
-`VITE_CLAIM_API_SECRET` is not `ADMIN_SECRET` and it is not the relayer private key. Vite inlines it into the static bundle. That is a soft deterrent for a Base Sepolia test, not real browser security: anyone who can load the site can read the built JavaScript.
-
 `BASE_SEPOLIA_RPC_URL` at the repo root is for Foundry and the claim relayer. This app does not read it.
 
-When `VITE_CLAIM_RELAYER_URL` is set, the Render service must allow the Pages origin in `CORS_ORIGINS` (`https://agent-a-wallet-ux.pages.dev`, or the custom domain) and must allow the `x-claim-secret` request header. The claim-relayer Blueprint example includes that Pages origin. Live claims are Base Sepolia (chain id 84532) only. Ethereum mainnet and Base mainnet are refused before the request is sent.
+When `VITE_CLAIM_RELAYER_URL` is set, the Render service must allow the Pages origin in `CORS_ORIGINS` (`https://agent-a-wallet-ux.pages.dev`, or the custom domain). The claim-relayer Blueprint example includes that Pages origin. Live claims are Base Sepolia (chain id 84532) only. Ethereum mainnet and Base mainnet are refused before the request is sent. The page does not embed a claim secret.
 
 ## Address book
 
@@ -77,10 +74,10 @@ Live slots:
 5. Output directory: `dist` (also `pages_build_output_dir` in `wrangler.toml`).
 6. Node `22` (`.node-version` or `NODE_VERSION=22`).
 7. SPA: `/* /index.html 200` is already in `public/_redirects` for routes added later.
-8. Env: optional `VITE_BASE_SEPOLIA_RPC_URL` (default `https://sepolia.base.org`, chain id `84532`). Optional `VITE_CLAIM_RELAYER_URL` for the Base Sepolia relayer, and optional `VITE_CLAIM_API_SECRET` (soft deterrent only; same value as Render `CLAIM_API_SECRET`). Set `SKIP_DEPENDENCY_INSTALL=1`.
+8. Env: optional `VITE_BASE_SEPOLIA_RPC_URL` (default `https://sepolia.base.org`, chain id `84532`). Optional `VITE_CLAIM_RELAYER_URL` for the Base Sepolia relayer. Do not set a claim secret on Pages. Set `SKIP_DEPENDENCY_INSTALL=1`.
 9. Do not set `PRIVATE_KEY`, `RELAYER_PRIVATE_KEY`, `SPENCER_RUN_AUTH`, `LIVE_SUBMIT`, or `ADMIN_SECRET` on Pages.
 10. Hostname: `agent-a-wallet-ux.pages.dev` until a custom domain is added in the dashboard. This repo does not attach a domain.
-11. Leave claim-relayer on Render (`bot-verifier-claim-relayer`). If Wallet UX calls it, set `CORS_ORIGINS` on that service to include `https://agent-a-wallet-ux.pages.dev` and set `CLAIM_API_SECRET` before live submit is unlocked.
+11. Leave claim-relayer on Render (`bot-verifier-claim-relayer`). If Wallet UX calls it, set `CORS_ORIGINS` on that service to include `https://agent-a-wallet-ux.pages.dev`. Live submit is authorized by the wallet signature, not a shared secret.
 
 Optional build watch paths: `apps/wallet-ux/**` and `deployments/base-sepolia.json`. A watch list that omits the deployment book will skip a publish when only the canonical addresses change, until `src/base-sepolia.json` is updated in this directory.
 

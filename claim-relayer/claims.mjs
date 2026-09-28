@@ -172,14 +172,14 @@ export function buildFixtureClaim(body, config) {
  * @param {ReturnType<import('./config.mjs').loadConfig>} args.config
  * @param {{ send: (tx: object) => Promise<{ txHash?: string }> } | null | undefined} args.broadcaster
  */
-export async function submitLiveClaim({ body, config, broadcaster }) {
+export async function submitLiveClaim({ body, config, broadcaster, prepared }) {
   assertBaseSepolia(body);
   if (!config?.liveSubmit?.allowed) throw liveSubmitError(config);
-  const encoded = describeCalldata(body);
+  const encoded = prepared?.encoded || describeCalldata(body);
   if (encoded.calldataStatus !== "encoded" || !encoded.calldata) {
     throw httpError(400, "action_required", { txHash: null, dryRun: false });
   }
-  const claimId = parseClaimId(body.claimId);
+  const claimId = parseClaimId(prepared?.claimId || body.claimId);
   const payer =
     body.payer !== undefined && body.payer !== null && String(body.payer).trim() !== ""
       ? requireAddress(body.payer, "payer")

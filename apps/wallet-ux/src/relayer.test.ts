@@ -7,22 +7,35 @@ import {
   RpcRequestError,
   keccak256,
   parseEther,
+  recoverTypedDataAddress,
   toBytes,
   type Hex,
 } from "viem"
+import { mnemonicToAccount } from "viem/accounts"
 import { describe, expect, it, vi } from "vitest"
+import {
+  CLAIM_INTENT_ACTIONS,
+  CLAIM_INTENT_DOMAIN_NAME,
+  CLAIM_INTENT_DOMAIN_VERSION,
+  CLAIM_INTENT_PRIMARY_TYPE,
+  CLAIM_INTENT_TYPE_STRING,
+  CLAIM_INTENT_TYPES,
+} from "./claimIntent"
 import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRelease } from "./preview"
 import {
   claimBodyFromPreview,
   postLiveClaim,
   presentRelayerError,
+  readRelayerHealth,
   readRelayerPaused,
   RELAYER_CHECK_WALLET_LABEL,
+  RELAYER_CHECKING_NOTE,
+  RELAYER_CONNECT_NOTE,
   RELAYER_COULD_NOT_SUBMIT,
+  RELAYER_DOWN_NOTE,
   RELAYER_PAUSED_NOTE,
   RELAYER_RECEIPT_REVERTED_TEXT,
   RELAYER_RECEIPT_UNKNOWN_TEXT,
-  RELAYER_SECRET_NOTE,
   RELAYER_TIMEOUT_TEXT,
   relayerButtonModel,
   relayerConfigFromEnv,
@@ -31,7 +44,8 @@ import {
   relayerTxUrl,
   relayerWalletUrl,
   runRelayerSubmission,
-  type LiveClaimBody,
+  type ClaimSignArgs,
+  type SignedLiveClaim,
 } from "./relayer"
 
 const escrow = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d" as const
@@ -41,6 +55,36 @@ const other = `0x${"cd".repeat(32)}` as const
 const payee = "0x0000000000000000000000000000000000000002" as const
 const txHash = `0x${"ef".repeat(32)}` as const
 const relayerUrl = "https://bot-verifier-claim-relayer.onrender.com"
+const TEST_MNEMONIC = "test test test test test test test test test test test junk"
+const payerAccount = mnemonicToAccount(TEST_MNEMONIC)
+const CLAIM_INTENT_TYPEHASH = "0x34ba3a41e51e53513e455b5e4bc91be46317c71f0430096556c954dc76195242"
+
+function signerInput(sign?: (args: ClaimSignArgs) => Promise<Hex>) {
+  return {
+    sender: payerAccount.address,
+    verifyingContract: escrow,
+    signTypedData: sign ?? ((args: ClaimSignArgs) => payerAccount.signTypedData(args)),
+  }
+}
+
+function liveBody(preview: ReturnType<typeof previewRelease>, chainId = 84532): SignedLiveClaim {
+  const claim = claimBodyFromPreview(preview)
+  return {
+    live: true,
+    calldata: preview.calldata,
+    signature: `0x${"11".repeat(65)}`,
+    intent: {
+      action: claim.action,
+      escrowId: claim.claimId,
+      calldataHash: keccak256(preview.calldata),
+      sender: payerAccount.address,
+      nonce: "7",
+      deadline: "1893456000",
+      chainId,
+      verifyingContract: escrow,
+    },
+  }
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -51,26 +95,20 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe("relayer config", () => {
   it("stays unset when the URL is missing so submits stay wallet-direct", () => {
-    expect(relayerConfigFromEnv({})).toEqual({ url: null, secret: null })
-    expect(relayerConfigFromEnv({ VITE_CLAIM_RELAYER_URL: "  ", VITE_CLAIM_API_SECRET: "  " })).toEqual({
-      url: null,
-      secret: null,
-    })
+    expect(relayerConfigFromEnv({})).toEqual({ url: null })
+    expect(relayerConfigFromEnv({ VITE_CLAIM_RELAYER_URL: "  " })).toEqual({ url: null })
   })
 
-  it("keeps the public URL and an optional secret", () => {
-    expect(
-      relayerConfigFromEnv({
-        VITE_CLAIM_RELAYER_URL: `${relayerUrl}/`,
-        VITE_CLAIM_API_SECRET: " sepolia-test-secret ",
-      }),
-    ).toEqual({ url: relayerUrl, secret: "sepolia-test-secret" })
+  it("keeps the public URL and does not read a claim secret", () => {
+    expect(relayerConfigFromEnv({ VITE_CLAIM_RELAYER_URL: `${relayerUrl}/` })).toEqual({ url: relayerUrl })
+    expect(relayerConfigFromEnv({ VITE_CLAIM_RELAYER_URL: relayerUrl })).not.toHaveProperty("secret")
   })
 })
 
 describe("relayer chain guard", () => {
-  it("allows a disconnected wallet and a Base Sepolia wallet", () => {
-    expect(relayerSubmitAllowed({ walletConnected: false, walletChainId: null })).toEqual({ ok: true })
+  it("requires a connected Base Sepolia wallet so the claim can be signed", () => {
+    const disconnected = relayerSubmitAllowed({ walletConnected: false, walletChainId: null })
+    expect(disconnected).toEqual({ ok: false, reason: RELAYER_CONNECT_NOTE })
     expect(relayerSubmitAllowed({ walletConnected: true, walletChainId: 84532 })).toEqual({ ok: true })
   })
 
@@ -85,13 +123,13 @@ describe("relayer chain guard", () => {
 })
 
 describe("postLiveClaim", () => {
-  const release = claimBodyFromPreview(previewRelease(escrow, id))
+  const releasePreview = previewRelease(escrow, id)
+  const release = liveBody(releasePreview)
 
-  it("posts live:true with x-claim-secret and chain 84532", async () => {
+  it("posts a signed intent on chain 84532 and does not send a claim secret", async () => {
     const captured: { url: string; init: RequestInit } = { url: "", init: {} }
     const result = await postLiveClaim({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
       body: release,
       fetchImpl: async (url, init) => {
         captured.url = String(url)
@@ -102,32 +140,21 @@ describe("postLiveClaim", () => {
     expect(result).toEqual({ txHash, mode: "live", escrowAddress: null })
     expect(captured.url).toBe(`${relayerUrl}/v1/claims`)
     const headers = new Headers(captured.init.headers)
-    expect(headers.get("x-claim-secret")).toBe("sepolia-test-secret")
+    expect(headers.get("x-claim-secret")).toBeNull()
+    expect(headers.get("authorization")).toBeNull()
     expect(headers.get("content-type")).toBe("application/json")
-    const body = JSON.parse(String(captured.init.body)) as LiveClaimBody
+    const body = JSON.parse(String(captured.init.body)) as SignedLiveClaim
     expect(body.live).toBe(true)
-    expect(body.chainId).toBe(84532)
-    expect(body.action).toBe("release")
-    expect(body.claimId).toBe(id)
-  })
-
-  it("omits the claim header when no secret is configured", async () => {
-    let header: string | null = "unset"
-    await postLiveClaim({
-      url: relayerUrl,
-      body: release,
-      fetchImpl: async (_url, init) => {
-        header = new Headers(init?.headers).get("x-claim-secret")
-        return jsonResponse(200, { ok: true, mode: "live", txHash })
-      },
-    })
-    expect(header).toBeNull()
+    expect(body.calldata).toBe(releasePreview.calldata)
+    expect(body.intent.chainId).toBe(84532)
+    expect(body.intent.action).toBe("release")
+    expect(body.intent.escrowId).toBe(id)
+    expect(body.intent.sender).toBe(payerAccount.address)
   })
 
   it("surfaces 401, 503, and CORS without calling a mainnet chain", async () => {
     const unauthorized = postLiveClaim({
       url: relayerUrl,
-      secret: "wrong",
       body: release,
       fetchImpl: async () => jsonResponse(401, { ok: false, error: "unauthorized" }),
     })
@@ -137,14 +164,13 @@ describe("postLiveClaim", () => {
     const closed = postLiveClaim({
       url: relayerUrl,
       body: release,
-      fetchImpl: async () => jsonResponse(503, { ok: false, error: "claim_api_secret_required" }),
+      fetchImpl: async () => jsonResponse(503, { ok: false, error: "relayer_key_missing" }),
     })
-    await expect(closed).rejects.toMatchObject({ status: 503, code: "claim_api_secret_required" })
-    await expect(closed).rejects.toThrow(/CLAIM_API_SECRET is unset/)
+    await expect(closed).rejects.toMatchObject({ status: 503, code: "relayer_key_missing" })
+    await expect(closed).rejects.toThrow(/503 relayer_key_missing/)
 
     const cors = postLiveClaim({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
       body: release,
       fetchImpl: async () => {
         throw new TypeError("Failed to fetch")
@@ -153,13 +179,12 @@ describe("postLiveClaim", () => {
     await expect(cors).rejects.toMatchObject({ code: "cors_or_network", status: null })
     await expect(cors).rejects.toThrow(/CORS/)
     await expect(cors).rejects.toThrow(/agent-a-wallet-ux\.pages\.dev/)
-    await expect(cors).rejects.toThrow(/x-claim-secret/)
+    await expect(cors).rejects.not.toThrow(/x-claim-secret/)
 
     let fetches = 0
     const mainnet = postLiveClaim({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
-      body: { ...release, chainId: 1 } as unknown as LiveClaimBody,
+      body: liveBody(releasePreview, 1),
       fetchImpl: async () => {
         fetches += 1
         return jsonResponse(200, { ok: true, mode: "live", txHash })
@@ -168,7 +193,7 @@ describe("postLiveClaim", () => {
     await expect(mainnet).rejects.toMatchObject({ code: "mainnet_refused" })
     const baseMainnet = postLiveClaim({
       url: relayerUrl,
-      body: { ...release, chainId: 8453 } as unknown as LiveClaimBody,
+      body: liveBody(releasePreview, 8453),
       fetchImpl: async () => {
         fetches += 1
         return jsonResponse(200, { ok: true, mode: "live", txHash })
@@ -184,7 +209,7 @@ describe("postLiveClaim", () => {
     await expect(
       postLiveClaim({
         url: "https://user:secret@bot-verifier-claim-relayer.onrender.com",
-        body: release,
+        body: liveBody(releasePreview),
         fetchImpl: async () => {
           fetches += 1
           return jsonResponse(200, { ok: true, mode: "live", txHash })
@@ -218,7 +243,7 @@ describe("postLiveClaim", () => {
 
 describe("relayer broadcast failures", () => {
   it("shows plain English for 502 broadcast_failed and keeps the raw status in the details", async () => {
-    const body = claimBodyFromPreview(previewRelease(escrow, id))
+    const body = liveBody(previewRelease(escrow, id))
     const failed = postLiveClaim({
       url: relayerUrl,
       body,
@@ -239,7 +264,7 @@ describe("relayer broadcast failures", () => {
   })
 
   it("decodes revert_data on a 502 and still works when that field is absent", async () => {
-    const body = claimBodyFromPreview(previewRelease(escrow, id))
+    const body = liveBody(previewRelease(escrow, id))
     const withData = await postLiveClaim({
       url: relayerUrl,
       body,
@@ -313,6 +338,10 @@ describe("wallet submit stays direct unless the UI opts in", () => {
     expect(flow).toContain("RELAYER_WAITING_TEXT")
     expect(flow).toContain("relayerFlight")
     expect(flow).toContain("if (relayerFlight.current) return")
+    expect(flow).toContain("signTypedData")
+    expect(flow).toContain("readRelayerHealth")
+    expect(flow).not.toContain("VITE_CLAIM_API_SECRET")
+    expect(flow).not.toContain("x-claim-secret")
   })
 })
 
@@ -337,8 +366,8 @@ function relayerDisputeCalldata(body: { claimId: string; disputeId: string }): s
   expect(calldataSource).toMatch(/if \(action === "dispute"\) \{[\s\S]*assertNoValue\(body\)[\s\S]*bytes32Word\(body\.disputeId, "disputeId"\)/)
   expect(calldataSource).toContain("return bytes32Word(body.claimId, \"claimId\")")
   expect(claimsSource).toContain("return body.live === true || body.liveSubmit === true")
-  expect(claimsSource).toContain("const encoded = describeCalldata(body)")
-  expect(claimsSource).toContain("const claimId = parseClaimId(body.claimId)")
+  expect(claimsSource).toContain("const encoded = prepared?.encoded || describeCalldata(body)")
+  expect(claimsSource).toContain("const claimId = parseClaimId(prepared?.claimId || body.claimId)")
   if (!/^0x[0-9a-fA-F]{64}$/.test(body.claimId) || !/^0x[0-9a-fA-F]{64}$/.test(body.disputeId)) {
     throw new Error("relayer dispute body failed bytes32 validation")
   }
@@ -368,7 +397,7 @@ describe("dispute submit via the claim relayer", () => {
     const client = readyClient({ status: "success" })
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client,
       onPhase: (phase) => phases.push(phase),
@@ -390,18 +419,19 @@ describe("dispute submit via the claim relayer", () => {
     expect(phases).toEqual(["submitting", "confirming"])
     expect(method).toBe("POST")
     expect(target).toBe(`${relayerUrl}/v1/claims`)
-    expect(secretHeader).toBe("sepolia-test-secret")
-    const body = JSON.parse(posted) as LiveClaimBody
-    expect(body).toEqual({
-      action: "dispute",
-      claimId: id,
-      disputeId: other,
-      chainId: 84532,
-      live: true,
-    })
-    expect(Object.keys(body)).toEqual(["action", "claimId", "disputeId", "chainId", "live"])
+    expect(secretHeader).toBeNull()
+    const body = JSON.parse(posted) as SignedLiveClaim
+    expect(body.live).toBe(true)
+    expect(body.calldata.toLowerCase()).toBe(dispute.calldata.toLowerCase())
+    expect(body.intent.action).toBe("dispute")
+    expect(body.intent.escrowId).toBe(id)
+    expect(body.intent.chainId).toBe(84532)
+    expect(body.intent.verifyingContract).toBe(escrow)
+    expect(body.intent.sender).toBe(payerAccount.address)
+    expect(body.intent.calldataHash).toBe(keccak256(dispute.calldata))
     expect(body).not.toHaveProperty("amountWei")
-    const accepted = relayerDisputeCalldata({ claimId: body.claimId, disputeId: body.disputeId ?? "" })
+    expect(body.intent).not.toHaveProperty("disputeId")
+    const accepted = relayerDisputeCalldata({ claimId: id, disputeId: other })
     expect(accepted.toLowerCase()).toBe(dispute.calldata.toLowerCase())
     expect(client.call).toHaveBeenCalledWith({
       account: "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
@@ -421,7 +451,7 @@ describe("dispute submit via the claim relayer", () => {
     }
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: previewOpenDispute(panel, other, id, "wallet only"),
       client,
       fetchImpl: async () => {
@@ -449,7 +479,7 @@ describe("dispute submit via the claim relayer", () => {
     }
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client,
       fetchImpl: async () => {
@@ -468,7 +498,7 @@ describe("dispute submit via the claim relayer", () => {
   it("keeps a timed-out post unknown and points at the relayer wallet", async () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client: readyClient({ status: "success" }),
       fetchTimeoutMs: 20,
@@ -487,7 +517,7 @@ describe("dispute submit via the claim relayer", () => {
   it("links the transaction when the receipt never arrives", async () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client: readyClient(Object.assign(new Error("Timed out while waiting for transaction."), { name: "WaitForTransactionReceiptTimeoutError" })),
       fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
@@ -513,7 +543,7 @@ describe("dispute submit via the claim relayer", () => {
     }
     const decoded = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client,
       fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
@@ -526,7 +556,7 @@ describe("dispute submit via the claim relayer", () => {
 
     const plain = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client: readyClient({ status: "reverted" }),
       fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
@@ -622,7 +652,7 @@ describe("relayer response copy", () => {
     for (const item of cases) {
       const result = await runRelayerSubmission({
         url: relayerUrl,
-        secret: "sepolia-test-secret",
+        ...signerInput(),
         preview: dispute,
         client: readyClient({ status: "success" }),
         fetchImpl: async () => jsonResponse(item.status, item.body),
@@ -642,7 +672,7 @@ describe("relayer response copy", () => {
     const client = readyClient({ status: "success" })
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      secret: "sepolia-test-secret",
+      ...signerInput(),
       preview: dispute,
       client,
       fetchImpl: async () =>
@@ -664,8 +694,7 @@ describe("relayer button", () => {
     expect(
       relayerButtonModel({
         url: null,
-        secret: "secret",
-        paused: false,
+        health: "ok",
         phase: "idle",
         gate: { ok: true },
         action: "dispute",
@@ -674,49 +703,69 @@ describe("relayer button", () => {
     expect(
       relayerButtonModel({
         url: relayerUrl,
-        secret: "secret",
-        paused: false,
+        health: "ok",
         phase: "idle",
         gate: { ok: true },
         action: "openDispute",
       }).visible,
     ).toBe(false)
+    expect(
+      relayerButtonModel({
+        url: relayerUrl,
+        health: "ok",
+        phase: "idle",
+        gate: { ok: true },
+        action: "createEscrow",
+      }).visible,
+    ).toBe(false)
   })
 
-  it("disables the button with an explanation when the secret is missing or the relayer is paused", () => {
-    const secret = relayerButtonModel({
+  it("enables the button only when health is ok, and explains checking, down, and paused", () => {
+    const checking = relayerButtonModel({
       url: relayerUrl,
-      secret: null,
-      paused: false,
+      health: "unknown",
       phase: "idle",
       gate: { ok: true },
       action: "dispute",
     })
-    expect(secret).toMatchObject({ visible: true, disabled: true, note: RELAYER_SECRET_NOTE })
+    expect(checking).toMatchObject({ visible: true, disabled: true, note: RELAYER_CHECKING_NOTE })
+    const down = relayerButtonModel({
+      url: relayerUrl,
+      health: "down",
+      phase: "idle",
+      gate: { ok: true },
+      action: "dispute",
+    })
+    expect(down).toMatchObject({ visible: true, disabled: true, note: RELAYER_DOWN_NOTE })
     const paused = relayerButtonModel({
       url: relayerUrl,
-      secret: "secret",
-      paused: true,
+      health: "paused",
       phase: "idle",
       gate: { ok: true },
       action: "release",
     })
     expect(paused).toMatchObject({ visible: true, disabled: true, note: RELAYER_PAUSED_NOTE })
+    const ready = relayerButtonModel({
+      url: relayerUrl,
+      health: "ok",
+      phase: "idle",
+      gate: { ok: true },
+      action: "dispute",
+    })
+    expect(ready).toMatchObject({ visible: true, disabled: false, label: "Submit via claim relayer", note: null })
   })
 
   it("disables the button while submitting and while waiting for confirmation", () => {
     const submitting = relayerButtonModel({
       url: relayerUrl,
-      secret: "secret",
-      paused: false,
+      health: "ok",
       phase: "submitting",
       gate: { ok: true },
       action: "dispute",
     })
     const waiting = relayerButtonModel({
       url: relayerUrl,
-      secret: "secret",
-      paused: false,
+      health: "ok",
       phase: "confirming",
       gate: { ok: true },
       action: "refund",
@@ -750,5 +799,91 @@ describe("relayer health", () => {
       },
     })
     expect(down).toBeNull()
+    const health = await readRelayerHealth({
+      url: relayerUrl,
+      fetchImpl: async () => jsonResponse(200, { ok: true, killSwitch: false }),
+    })
+    expect(health).toBe("ok")
+  })
+})
+
+describe("signed claim intent", () => {
+  it("matches the relayer schema byte for byte and pins the ClaimIntent typehash", () => {
+    const schema = JSON.parse(readFileSync(join(relayerPackage, "claimIntent.json"), "utf8")) as {
+      domainName: string
+      domainVersion: string
+      primaryType: string
+      typeString: string
+      actions: string[]
+      types: { ClaimIntent: { name: string; type: string }[] }
+    }
+    expect(schema.domainName).toBe(CLAIM_INTENT_DOMAIN_NAME)
+    expect(schema.domainVersion).toBe(CLAIM_INTENT_DOMAIN_VERSION)
+    expect(schema.primaryType).toBe(CLAIM_INTENT_PRIMARY_TYPE)
+    expect(schema.typeString).toBe(CLAIM_INTENT_TYPE_STRING)
+    expect(schema.actions).toEqual([...CLAIM_INTENT_ACTIONS])
+    expect(schema.types.ClaimIntent).toEqual(
+      CLAIM_INTENT_TYPES.ClaimIntent.map((field) => ({ name: field.name, type: field.type })),
+    )
+    expect(keccak256(toBytes(CLAIM_INTENT_TYPE_STRING))).toBe(CLAIM_INTENT_TYPEHASH)
+    expect(keccak256(toBytes(schema.typeString))).toBe(CLAIM_INTENT_TYPEHASH)
+  })
+
+  it("signs with the connected wallet and posts that signature to a mock relayer", async () => {
+    const dispute = previewDispute(escrow, id, other)
+    const order: string[] = []
+    let posted = ""
+    let headerNames: string[] = []
+    const client = {
+      call: vi.fn(async () => {
+        order.push("simulate")
+        return "0x"
+      }),
+      waitForTransactionReceipt: vi.fn(async () => ({ status: "success" as const })),
+    }
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      preview: dispute,
+      ...signerInput(async (args) => {
+        order.push("sign")
+        return payerAccount.signTypedData(args)
+      }),
+      client,
+      nowSeconds: 1_780_000_000,
+      nonce: 42n,
+      fetchImpl: async (_url, init) => {
+        order.push("post")
+        posted = String(init?.body)
+        headerNames = [...new Headers(init?.headers).keys()]
+        return jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow })
+      },
+    })
+    expect(order).toEqual(["simulate", "sign", "post"])
+    expect(headerNames).not.toContain("x-claim-secret")
+    const body = JSON.parse(posted) as SignedLiveClaim
+    expect(body.calldata.toLowerCase()).toBe(dispute.calldata.toLowerCase())
+    expect(body.intent.nonce).toBe("42")
+    expect(body.intent.deadline).toBe(String(1_780_000_000 + 240))
+    const recovered = await recoverTypedDataAddress({
+      domain: {
+        name: CLAIM_INTENT_DOMAIN_NAME,
+        version: CLAIM_INTENT_DOMAIN_VERSION,
+        chainId: 84532,
+        verifyingContract: escrow,
+      },
+      types: CLAIM_INTENT_TYPES,
+      primaryType: CLAIM_INTENT_PRIMARY_TYPE,
+      message: {
+        action: 3,
+        escrowId: id,
+        calldataHash: keccak256(dispute.calldata),
+        sender: payerAccount.address,
+        nonce: 42n,
+        deadline: BigInt(1_780_000_000 + 240),
+      },
+      signature: body.signature,
+    })
+    expect(recovered).toBe(payerAccount.address)
+    expect(result).toEqual({ ok: true, txHash })
   })
 })

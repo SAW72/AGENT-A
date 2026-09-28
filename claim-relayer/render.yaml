@@ -18,8 +18,10 @@
 # relayer stays warm. The app still hard-refuses mainnet (chain ids 1 and 8453).
 # Do not set a mainnet CHAIN_ID in this file.
 #
-# Single web instance: the nonce store is in-memory and is not shared across processes.
-# The filesystem is ephemeral. CLAIM_LOG_PATH under /tmp is lost on restart or spin-down.
+# Single web instance. Quote reservations are in memory. Live-claim (sender, nonce)
+# pairs are a JSONL file at INTENT_NONCE_PATH. Neither is shared across processes.
+# The filesystem is ephemeral. CLAIM_LOG_PATH and INTENT_NONCE_PATH under /tmp are
+# lost on restart or spin-down.
 # Never put RELAYER_PRIVATE_KEY in git.
 # LIVE_SUBMIT and SPENCER_RUN_AUTH stay 0 (fixture mode). Unlock both to 1 in the
 # dashboard, with CHAIN_ID=84532, for Base Sepolia claim submits. Leave that unlock
@@ -27,12 +29,12 @@
 # overwritten from git.
 # Unset ESCROW_ADDRESS loads the booked escrow from deployments/base-sepolia.json.
 # This service does not deploy contracts and has no forge broadcast.
-# CLAIM_API_SECRET is a separate shared secret for live POST /v1/claims (not ADMIN_SECRET).
-# sync: false so the dashboard value is not overwritten from git. If live submit is
-# later unlocked and this secret is empty, live claims fail closed (503).
+# Live POST /v1/claims is authorized by an EIP-712 ClaimIntent from the connected
+# wallet. There is no CLAIM_API_SECRET and no x-claim-secret header.
+# ERC1271_ENABLED stays 0. Abuse-limit env vars keep the code defaults.
 # CORS_ORIGINS example (Wallet UX Pages plus local Vite):
 #   https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173
-# The preflight allow-headers list includes x-claim-secret.
+# Preflight allow-headers are content-type, x-admin-secret, and authorization.
 
 services:
   - type: web
@@ -65,6 +67,10 @@ services:
         value: "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861"
       - key: CLAIM_LOG_PATH
         value: /tmp/claim-relayer/claims.jsonl
+      - key: INTENT_NONCE_PATH
+        value: /tmp/claim-relayer/intent-nonces.jsonl
+      - key: ERC1271_ENABLED
+        value: "0"
       - key: BASE_SEPOLIA_RPC_URL
         sync: false
       - key: RELAYER_PRIVATE_KEY
@@ -72,8 +78,6 @@ services:
       - key: ESCROW_ADDRESS
         sync: false
       - key: ADMIN_SECRET
-        sync: false
-      - key: CLAIM_API_SECRET
         sync: false
       - key: CORS_ORIGINS
         value: "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173"

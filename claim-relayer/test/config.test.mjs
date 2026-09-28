@@ -32,7 +32,12 @@ describe("config gates", () => {
     assert.equal(config.coreTimelock, "0x10CC9474b45625ADfd05C209f2518023484878D9");
     assert.equal(config.bvtAddress, null);
     assert.equal(config.liveSubmit.allowed, false);
-    assert.equal(config.claimApiSecret, "");
+    assert.equal(config.claimApiSecret, undefined);
+    assert.equal(config.erc1271Enabled, false);
+    assert.equal(config.abuse.senderLimit, 5);
+    assert.equal(config.abuse.ipLimit, 30);
+    assert.equal(config.abuse.escrowCap, 8);
+    assert.equal(config.abuse.dailyGasBudgetWei, "10000000000000000");
     assert.equal(
       config.corsOrigins,
       "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
@@ -66,14 +71,14 @@ describe("config gates", () => {
     assert.equal(health.escrowStartBlockSource, "unset");
   });
 
-  it("keeps CLAIM_API_SECRET off the health payload", () => {
+  it("does not load CLAIM_API_SECRET onto config or health", () => {
     const config = loadConfig({
       LIVE_SUBMIT: "1",
       SPENCER_RUN_AUTH: "1",
       CLAIM_API_SECRET: "claim-health-secret",
       ADMIN_SECRET: "admin-health-secret",
     });
-    assert.equal(config.claimApiSecret, "claim-health-secret");
+    assert.equal(Object.hasOwn(config, "claimApiSecret"), false);
     assert.equal(config.adminSecret, "admin-health-secret");
     const health = JSON.stringify(healthPayload(config, false));
     assert.equal(health.includes("claim-health-secret"), false);
@@ -150,6 +155,11 @@ describe("config gates", () => {
       "escrowCalldata.mjs",
       "addressBook.mjs",
       "readonlyEscrow.mjs",
+      "claimIntent.mjs",
+      "liveAuth.mjs",
+      "intentNonceStore.mjs",
+      "abuseLimits.mjs",
+      "escrowChain.mjs",
     ];
     for (const name of quiet) {
       const text = await readFile(new URL(`../${name}`, import.meta.url), "utf8");
