@@ -366,8 +366,9 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
 
     /// @notice Credit the payee recorded at create time. Does not transfer ETH.
     /// @dev Caller, by state. See `BotAttestationEscrow.spec.md`.
-    ///      - `Open`: payer or payee only. A stranger reverts `ReleaseNotAuthorized`
-    ///        before expiry and before the Vault or denylist are read.
+    ///      - `Open`: the payer only. The payee and a stranger revert `ReleaseNotAuthorized`
+    ///        before expiry and before the Vault or denylist are read. The payee must not
+    ///        credit itself ahead of the payer's `dispute` link.
     ///      - `Disputed`: payer or payee only, and only after the linked case is resolved
     ///        and upheld. A stranger reverts `ReleaseNotAuthorized`. A party reverts
     ///        `DisputePending` until that ruling. An unwind is not a release.
@@ -396,7 +397,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
             panelUpheld = true;
         } else if (e.state != EscrowState.Open) {
             revert EscrowNotOpen();
-        } else if (msg.sender != e.payer && msg.sender != e.payee) {
+        } else if (msg.sender != e.payer) {
             revert ReleaseNotAuthorized();
         }
         // Open escrows expire. An upheld dispute does not: release remains the payee path.

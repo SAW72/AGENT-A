@@ -889,6 +889,9 @@ contract BotAttestationEscrowTest is Test {
         escrow.dispute(escrowId, disputeId);
 
         vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+        vm.prank(payer);
         vm.expectRevert(BotAttestationEscrow.EscrowExpired.selector);
         escrow.release(escrowId);
 
@@ -917,6 +920,9 @@ contract BotAttestationEscrowTest is Test {
         escrow.dispute(escrowId, disputeId);
 
         vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+        vm.prank(payer);
         vm.expectRevert(abi.encodeWithSignature("AttestationFailed(string)", "payee bot denylisted"));
         escrow.release(escrowId);
         assertEq(address(escrow).balance, amount);
@@ -1122,11 +1128,16 @@ contract BotAttestationEscrowTest is Test {
         vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
         escrow.release(escrowId);
 
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+
         (,,,,,,, BotAttestationEscrow.EscrowState openState,) = _escrowTuple(escrowId);
         assertEq(uint256(openState), uint256(BotAttestationEscrow.EscrowState.Open));
         assertEq(escrow.lockedValue(), amount);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
 
-        vm.prank(payee);
+        vm.prank(payer);
         escrow.release(escrowId);
         assertEq(escrow.pendingWithdrawals(payee), amount);
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
@@ -1165,6 +1176,56 @@ contract BotAttestationEscrowTest is Test {
         vm.prank(payer);
         escrow.release(escrowId);
         assertEq(escrow.pendingWithdrawals(payee), amount);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
+    }
+
+    /// @notice The payee cannot release an open escrow ahead of the payer's dispute link.
+    /// @dev Adapted from the SCA front-run: payee `release` landed, then `dispute` reverted
+    ///      `EscrowNotOpen` and the payee was credited. Setup matches the shared fixture
+    ///      (denylist, vault, three-arbitrator panel, Ownable2Step handoff, Financial bots).
+    function test_payeeFrontRunsDisputeLink() public {
+        bytes32 escrowId = keccak256("payer-case-escrow");
+        bytes32 caseId = keccak256("payer-case");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+
+        bytes32 subject = _subjectOf(escrow, escrowId);
+        _panelOpen(payer, caseId, subject, "no delivery");
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+        assertEq(escrow.lockedValue(), amount);
+
+        vm.prank(payer);
+        escrow.dispute(escrowId, caseId);
+
+        (,,,,,,, BotAttestationEscrow.EscrowState state, bytes32 linked) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Disputed));
+        assertEq(linked, caseId);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+        assertEq(address(escrow).balance, amount);
+    }
+
+    /// @notice Any caller other than the payer reverts on an open escrow. The payer then releases.
+    function testFuzz_onlyPayerCanReleaseOpen(
+        address caller
+    ) public {
+        vm.assume(caller != payer);
+        bytes32 escrowId = keccak256("fuzz-payer-only-release");
+        _create(escrowId, 1 ether, 3600);
+
+        vm.prank(caller);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+        assertEq(escrow.lockedValue(), 1 ether);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+
+        vm.prank(payer);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), 1 ether);
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
         assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
     }

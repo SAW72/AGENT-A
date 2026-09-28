@@ -245,7 +245,7 @@ contract BotAttestationEscrowPullTest is Test {
         assertGe(address(escrow).balance, escrow.lockedValue() + escrow.totalOwed());
     }
 
-    /// @dev Open and disputed `release` is payer-or-payee. These tests call as the payer.
+    /// @dev Open `release` is the payer. These tests call as the payer.
     function _release(
         bytes32 id
     ) internal {
@@ -821,7 +821,8 @@ contract PullPaymentHandler is StdUtils {
         if (ids.length == 0) return;
         bytes32 id = _pick(i);
         (address rowPayer, address rowPayee,,,,,,,) = escrow.escrows(id);
-        // Open and disputed release is party-only. Alternate the two parties.
+        // Open release is the payer. After an uphold, either party can release.
+        // A payee call while Open reverts and is swallowed here.
         vm.prank(i % 2 == 0 ? rowPayer : rowPayee);
         try escrow.release(id) {
             callsRelease++;
