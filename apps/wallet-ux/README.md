@@ -75,4 +75,4 @@ cd apps/wallet-ux
 npm run sync-abis
 ```
 
-Do not hand-edit those JSON files.
+`src/abi/BotAttestationEscrow.json` is written by `scripts/gen-escrow-abi.sh` (`npm run gen-escrow-abi` from this package). `npm run sync-abis` calls that script for the escrow file. CI runs `forge build`, regenerates the file, and fails if it differs from the commit. Do not hand-edit those JSON files.
