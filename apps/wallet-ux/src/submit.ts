@@ -120,6 +120,9 @@ export const FORM_ERRORS = {
   subjectNoCode: "No escrow contract at this address on this network.",
   subjectRejected: "The escrow rejected the subject read, so this dispute was not prepared.",
   subjectNotBooked: "This contract did not return a dispute subject. It is not a supported escrow.",
+  subjectNotOpen:
+    "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
+  subjectExpired: "The claim window has closed, so this dispute can't be linked.",
   subjectMissing: "This claim is not on the escrow yet, so this dispute was not prepared.",
   subjectPending: "The subject is still being read, so this dispute was not prepared.",
   disputeClaim: "Enter the claim identifier before opening a dispute.",

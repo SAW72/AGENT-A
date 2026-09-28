@@ -3,7 +3,8 @@ import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem
 import { useAccount, usePublicClient, useSendTransaction, useWalletClient } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import { parseBytes32, randomBytes32 } from "./bytes32"
-import { readDisputeSubject, type DisputeSubjectResult } from "./disputeSubject"
+import { disputeWindowMessage, readDisputeSubject, type DisputeSubjectResult } from "./disputeSubject"
+import { currentNowSeconds } from "./nowClock"
 import { ErrorNotice } from "./ErrorNotice"
 import { presentError, type ErrorPresentation } from "./format"
 import { resolveWalletChainId } from "./guard"
@@ -576,7 +577,7 @@ function OpenDisputeForm({
     let cancelled = false
     setReadingSubject(true)
     setResolution(null)
-    readDisputeSubject(client, escrow, parsedClaim).then(
+    readDisputeSubject(client, escrow, parsedClaim, currentNowSeconds()).then(
       (next) => {
         if (cancelled) return
         setReadingSubject(false)
@@ -626,6 +627,11 @@ function OpenDisputeForm({
         }
         if (!resolution.ok) {
           onError(resolution.message)
+          return
+        }
+        const windowMessage = disputeWindowMessage(resolution.state, resolution.expiresAt, currentNowSeconds())
+        if (windowMessage) {
+          onError(windowMessage)
           return
         }
         onPreview([

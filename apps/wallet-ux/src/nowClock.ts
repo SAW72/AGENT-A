@@ -5,6 +5,11 @@ export function nowSecondsFrom(nowMs: number): bigint {
   return BigInt(Math.floor(nowMs / 1000))
 }
 
+/** Seconds since the epoch, from the same clock the payee prompt uses. */
+export function currentNowSeconds(now: () => number = Date.now): bigint {
+  return nowSecondsFrom(now())
+}
+
 /** Calls `onTick` on an interval. The returned function clears that timer. */
 export function startNowTicker(
   onTick: (nowSeconds: bigint) => void,

@@ -144,6 +144,8 @@ describe("calldata preview", () => {
     expect(source).not.toContain("Use the claim identifier. The panel stores this as the subject.")
     const openForm = source.slice(source.indexOf("function OpenDisputeForm"), source.indexOf("function DisputeForm"))
     expect(openForm).toContain("readDisputeSubject")
+    expect(openForm).toContain("currentNowSeconds()")
+    expect(openForm).toContain("disputeWindowMessage")
     expect(openForm).not.toContain("panelSubject(")
     expect(openForm).not.toContain("setCreatedAt")
     expect(openForm).not.toContain("parseCreatedAt")
