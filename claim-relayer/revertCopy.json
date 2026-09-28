@@ -5,5 +5,9 @@
   },
   "ReleaseNotAuthorized": {
     "meaning": "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee."
+  },
+  "DisputePending": {
+    "selector": "0xfd29e9e5",
+    "meaning": "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal."
   }
 }

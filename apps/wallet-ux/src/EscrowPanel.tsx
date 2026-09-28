@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { type Address } from "viem"
 import { useAccount } from "wagmi"
 import { ADDRESSES } from "./addresses"
 import { parseBytes32 } from "./bytes32"
 import { FlowPreview } from "./FlowPreview"
 import { errorText, formatEth, isZeroAddress, payeeOpenExpiryNotice } from "./format"
+import { PAYEE_NOW_INTERVAL_MS, nowSecondsFrom, startNowTicker } from "./nowClock"
 import { escrowStateLabel, readEscrowById, type EscrowRecord, type EscrowStatus, type SepoliaClient } from "./read"
 import { AddressRow, TextRow } from "./ui"
 
@@ -79,6 +80,9 @@ function EscrowLookup({
   const [row, setRow] = useState<EscrowRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [nowSeconds, setNowSeconds] = useState(() => nowSecondsFrom(Date.now()))
+
+  useEffect(() => startNowTicker(setNowSeconds, PAYEE_NOW_INTERVAL_MS), [])
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -115,7 +119,7 @@ function EscrowLookup({
           expiresAt: row.expiresAt,
           used: row.used,
           createdAt: row.createdAt,
-          nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
+          nowSeconds,
         })
 
   return (

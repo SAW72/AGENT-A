@@ -21,6 +21,14 @@ export const RULING_PENDING_TEXT =
   "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled."
 
 /**
+ * `DisputePending` on the #56 escrow.
+ * Release: a party while the linked case is unresolved or was unwound.
+ * Refund: before the claim ends, until the panel unwinds the deal; also whenever the panel upheld it.
+ */
+export const DISPUTE_PENDING_TEXT =
+  "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal."
+
+/**
  * Two votes on one side already decide a 3-member panel, so that case cannot be linked.
  * One vote, or one vote on each side, still links. The next step is a new case.
  */
@@ -74,7 +82,7 @@ export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "ReleaseNotAuthorized", meaning: RELEASE_NOT_AUTHORIZED_TEXT },
   { name: "NotParty", meaning: "This wallet is not a party to this escrow." },
   { name: "DisputeAfterExpiry", meaning: "The claim window has closed, so this dispute can't be linked." },
-  { name: "DisputePending", meaning: "This claim can't be refunded because the dispute panel upheld the deal." },
+  { name: "DisputePending", meaning: DISPUTE_PENDING_TEXT },
   { name: "RulingPending", meaning: RULING_PENDING_TEXT },
   { name: "ZeroAddress", meaning: "A required wallet address was left blank." },
   { name: "InvalidGovernance", meaning: "This contract was set up with its deployer as the governor, which isn't allowed." },

@@ -26,6 +26,15 @@ describe("revert data", () => {
       meaning: DISPUTE_VOTES_CAST_TEXT,
     });
     assert.equal(contractRevertCopy("0x3a0621bd"), null);
+    assert.equal(
+      REVERT_COPY.DisputePending.meaning,
+      "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal.",
+    );
+    assert.deepEqual(contractRevertCopy("0xfd29e9e5"), {
+      name: "DisputePending",
+      selector: "0xfd29e9e5",
+      meaning: REVERT_COPY.DisputePending.meaning,
+    });
   });
 
   it("keeps a custom-error payload as lowercase hex", () => {

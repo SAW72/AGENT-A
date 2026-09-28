@@ -8,6 +8,7 @@ import { randomBytes32 } from "./bytes32"
 import {
   ERROR_GLOSSARY,
   MAX_DURATION_SECONDS,
+  DISPUTE_PENDING_TEXT,
   DISPUTE_VOTES_CAST_TEXT,
   POST_EXPIRY_REFUND_ORDER,
   RELEASE_NOT_AUTHORIZED_TEXT,
@@ -79,6 +80,10 @@ describe("calldata preview", () => {
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "NotParty")?.meaning).toBe(
       "This wallet is not a party to this escrow.",
     )
+    expect(DISPUTE_PENDING_TEXT).toBe(
+      "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal.",
+    )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "DisputePending")?.meaning).toBe(DISPUTE_PENDING_TEXT)
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "RulingPending")?.meaning).toBe(RULING_PENDING_TEXT)
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "DisputeVotesCast")?.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
     expect(DISPUTE_VOTES_CAST_TEXT).not.toMatch(/already has votes/)
@@ -88,10 +93,14 @@ describe("calldata preview", () => {
     ) as {
       DisputeVotesCast: { selector: string; meaning: string }
       ReleaseNotAuthorized: { meaning: string }
+      DisputePending: { selector: string; meaning: string }
     }
     expect(revertCopy.DisputeVotesCast.selector).toBe("0x8aab0a8f")
     expect(revertCopy.DisputeVotesCast.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
     expect(revertCopy.ReleaseNotAuthorized.meaning).toBe(RELEASE_NOT_AUTHORIZED_TEXT)
+    expect(revertCopy.DisputePending.selector).toBe("0xfd29e9e5")
+    expect(revertCopy.DisputePending.meaning).toBe(DISPUTE_PENDING_TEXT)
+    expect(toFunctionSelector("DisputePending()")).toBe("0xfd29e9e5")
     expect(toFunctionSelector("RulingPending()")).toBe("0x3a0621bd")
     expect(toFunctionSelector("RULING_GRACE()")).toBe("0x3cfbadae")
     expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.error)).toEqual([

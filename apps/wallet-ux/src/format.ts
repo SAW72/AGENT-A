@@ -25,10 +25,10 @@ export function isZeroAddress(address: string): boolean {
 export const RULING_GRACE_SECONDS = 7n * 24n * 60n * 60n
 
 export const PAYEE_OPEN_BEFORE_EXPIRY_TEXT =
-  "Open a dispute before this claim ends. After that time the payer can refund unless a dispute is already open. While a dispute is unresolved, a refund stays blocked until 7 days after the claim ends."
+  "Open a dispute before this claim ends. After that time, anyone can trigger the refund to the payer unless a dispute is already open. While a dispute is unresolved, a refund stays blocked until 7 days after the claim ends."
 
 export const PAYEE_OPEN_AFTER_EXPIRY_TEXT =
-  "This claim has ended, so a dispute can no longer be opened. The payer can refund unless a dispute is already open. While a dispute is unresolved, a refund stays blocked until 7 days after the claim ends."
+  "This claim has ended, so a dispute can no longer be opened. Anyone can trigger the refund to the payer unless a dispute is already open. While a dispute is unresolved, a refund stays blocked until 7 days after the claim ends."
 
 export const PAYEE_EXPIRY_URGENT_LEAD = "Less than a day remains."
 
