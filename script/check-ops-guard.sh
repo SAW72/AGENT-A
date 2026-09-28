@@ -58,6 +58,9 @@ wanted = [
     ("Denylist.address", book["Denylist"]["address"]),
     ("DisputePanel.address", book["DisputePanel"]["address"]),
     ("superseded.Vault.address", book["superseded"]["Vault"]["address"]),
+    ("InsuranceFund.address", book["InsuranceFund"]["address"]),
+    ("Liability.address", book["Liability"]["address"]),
+    ("superseded.Denylist.address", book["superseded"]["Denylist"]["address"]),
 ]
 sol = (root / "script/DeployBotAttestationEscrow.s.sol").read_text()
 for name in ("SIMULATE_SENDER", "FOUNDRY_DEFAULT_SENDER"):
@@ -80,6 +83,33 @@ if not m:
     print("OPERATOR sample missing from OPS_LIVE_DENYLIST_VAULT.md")
     sys.exit(1)
 wanted.append(("OPERATOR", m.group(1)))
+def contract_addresses(node, path=""):
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child = f"{path}.{key}" if path else key
+            if key == "address" and isinstance(value, str) and re.fullmatch(r"0x[0-9a-fA-F]{40}", value):
+                found.append((child, value))
+            else:
+                found.extend(contract_addresses(value, child))
+    return found
+
+seen = {addr for _, addr in wanted}
+for key, addr in contract_addresses(book):
+    if addr not in seen:
+        wanted.append((key, addr))
+        seen.add(addr)
+
+allowed_eoas = [
+    ("coreTimelock", book["coreTimelock"]),
+    ("deployer", book["BotAttestationEscrow"]["deployer"]),
+]
+for key, addr in allowed_eoas:
+    if addr in fn:
+        print(f"allowed EOA is blocklisted: {key} {addr}")
+        sys.exit(1)
+    print(f"allowed EOA stays allowed {key} {addr}")
+
 missing = [f"{key} {addr}" for key, addr in wanted if addr not in fn]
 if missing:
     print("blocklist missing:\n" + "\n".join(missing))
@@ -92,18 +122,33 @@ then
   fail=$((fail + 1))
 fi
 
-gate_lines=$(awk '
-  /cast chain-id --rpc-url "\$BASE_SEPOLIA_RPC_URL"/ && /wrong chain: expected Base Sepolia 84532/ && /exit 1/ {
-    print
-  }
-' "$md")
-gate_count=$(printf '%s\n' "$gate_lines" | grep -c .)
-gate_unique=$(printf '%s\n' "$gate_lines" | sort -u | grep -c .)
-if [ "$gate_count" != 2 ] || [ "$gate_unique" != 1 ]; then
-  echo "$shell: expected two identical chain-id gates, found $gate_count unique $gate_unique"
+if grep -n 'exit 1' "$md" >/dev/null; then
+  echo "$shell: runbook still contains exit 1"
   fail=$((fail + 1))
 fi
-gate_line=$(printf '%s\n' "$gate_lines" | head -n 1)
+if grep -n 'A wrong chain does exit' "$md" >/dev/null; then
+  echo "$shell: runbook still says a wrong chain does exit"
+  fail=$((fail + 1))
+fi
+missing_cast_count=$(grep -c "command -v cast >/dev/null || { echo 'cast is not installed'; skip_send=1; }" "$md" || true)
+if [ "$missing_cast_count" != 2 ]; then
+  echo "$shell: expected the missing-cast skip on both send pastes, found $missing_cast_count"
+  fail=$((fail + 1))
+fi
+risks=$(awk '/^## Risks$/{p=1} p' "$md")
+case $risks in
+  *"cast is not installed"*) ;;
+  *)
+    echo "$shell: Risks does not mention cast is not installed"
+    fail=$((fail + 1))
+    ;;
+esac
+case $risks in
+  *"does exit"*)
+    echo "$shell: Risks still says the chain check exits"
+    fail=$((fail + 1))
+    ;;
+esac
 
 # shellcheck disable=SC1090
 eval "$a"
@@ -195,6 +240,19 @@ check "payee sample from-address" 1 "PAYEE_OPERATOR is blocklisted" \
 check "quoted placeholders" 1 "PAYER_OPERATOR invalid/placeholder" \
   "<SPENCER_PAYER_WALLET>" "<REAL_PAYEE_WALLET>"
 check "timelock payer still allowed" 0 "" "$TIMELOCK" "$GOOD_PAYEE"
+check "deployer payer still allowed" 0 "" 0x5D467FA00eC0E92044f779e495a17db66c5964aa "$GOOD_PAYEE"
+check "payer insurance fund" 1 "PAYER_OPERATOR is blocklisted" \
+  0x19fc26B36Cb2031062eD90C19db64b3b09753ab8 "$GOOD_PAYEE"
+check "payee insurance fund lowercase" 1 "PAYEE_OPERATOR is blocklisted" \
+  "$GOOD_PAYER" 0x19fc26b36cb2031062ed90c19db64b3b09753ab8
+check "payer liability" 1 "PAYER_OPERATOR is blocklisted" \
+  0x554Caf5a214B8d70D675C09186C5EAE24FEB7307 "$GOOD_PAYEE"
+check "payee liability lowercase" 1 "PAYEE_OPERATOR is blocklisted" \
+  "$GOOD_PAYER" 0x554caf5a214b8d70d675c09186c5eae24feb7307
+check "payer old denylist" 1 "PAYER_OPERATOR is blocklisted" \
+  0xF0f260967D377E07Bdd7840862508ddB23C012b8 "$GOOD_PAYEE"
+check "payee old denylist lowercase" 1 "PAYEE_OPERATOR is blocklisted" \
+  "$GOOD_PAYER" 0xf0f260967d377e07bdd7840862508ddb23c012b8
 
 # Stale values stay set until something clears them. The guard fails without unset.
 PAYER_OPERATOR=0x1111111111111111111111111111111111111111
@@ -246,35 +304,131 @@ case $out in
     ;;
 esac
 
-run_chain() {
+send_tmp=$(mktemp -d)
+awk '
+  /^```bash$/ { cap=1; buf=""; next }
+  cap && /^```$/ {
+    cap=0
+    if (index(buf, "cast send") && index(buf, "ops_guard()")) {
+      n++
+      path = sprintf("%s/send-%d.sh", tmp, n)
+      printf "%s", buf > path
+      close(path)
+    }
+    next
+  }
+  cap { buf = buf $0 ORS }
+' tmp="$send_tmp" "$md"
+send_count=$(find "$send_tmp" -name 'send-*.sh' | wc -l | tr -d ' ')
+if [ "$send_count" != 2 ]; then
+  echo "$shell: expected two send pastes, found $send_count"
+  fail=$((fail + 1))
+fi
+
+exercise_send() {
   label=$1
-  stub=$2
-  want=$3
+  snippet=$2
+  mode=$3
+  snippet=$(printf '%s\n' "$snippet" | sed 's/<his-keystore>/KEYSTORE/g')
   out=$(
     {
-      CHAIN_STUB=$stub
+    unset PAYER_OPERATOR PAYEE_OPERATOR
+    unset -f cast 2>/dev/null || true
+    if [ "$mode" = missing ]; then
+      PATH="/usr/bin:/bin"
+      hash -r 2>/dev/null || true
+    else
+      CHAIN_MODE=$mode
       # shellcheck disable=SC2317
       cast() {
         if [ "$1" = "chain-id" ]; then
-          printf '%s\n' "$CHAIN_STUB"
+          if [ "$CHAIN_MODE" = error ]; then
+            echo "cast chain-id failed" >&2
+            return 1
+          fi
+          if [ "$CHAIN_MODE" = empty ]; then
+            printf '\n'
+            return 0
+          fi
+          if [ "$CHAIN_MODE" = wrong ]; then
+            printf '%s\n' 1
+            return 0
+          fi
+          printf '%s\n' 84532
           return 0
         fi
-        echo "unexpected cast $*" >&2
-        return 1
+        if [ "$1" = "send" ]; then
+          echo SENT
+          return 0
+        fi
+        if [ "$1" = "wallet" ]; then
+          echo WALLET
+          return 0
+        fi
+        command cast "$@"
       }
-      BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
-      export BASE_SEPOLIA_RPC_URL
-      eval "$gate_line"
-      echo DID_NOT_ABORT
+    fi
+    BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+    export BASE_SEPOLIA_RPC_URL
+    # shellcheck disable=SC1090
+    eval "$snippet"
+    echo SHELL_STILL_OPEN
     } 2>&1
   )
   got=$?
-  printf '== %s %s ==\n%s\nrc %s (want %s)\n' "$shell" "$label" "$out" "$got" "$want"
-  if [ "$got" != "$want" ]; then
-    echo MISMATCH
+  printf '== %s %s ==\n%s\nrc %s\n' "$shell" "$label" "$out" "$got"
+  if [ "$got" != 0 ]; then
+    echo "shell exited"
     fail=$((fail + 1))
   fi
-  if [ "$want" = 1 ]; then
+  case $out in
+    *SHELL_STILL_OPEN*) ;;
+    *)
+      echo "shell did not stay open"
+      fail=$((fail + 1))
+      ;;
+  esac
+  case $out in
+    *SENT*)
+      echo "sent a transaction"
+      fail=$((fail + 1))
+      ;;
+  esac
+  case $out in
+    *WALLET*)
+      echo "called the wallet"
+      fail=$((fail + 1))
+      ;;
+  esac
+  if [ "$mode" = missing ]; then
+    case $out in
+      *"cast is not installed"*) ;;
+      *)
+        echo "MISSING: cast is not installed"
+        fail=$((fail + 1))
+        ;;
+    esac
+    case $out in
+      *"wrong chain: expected Base Sepolia 84532"*)
+        echo "missing cast reported wrong chain"
+        fail=$((fail + 1))
+        ;;
+    esac
+  elif [ "$mode" = ok ]; then
+    case $out in
+      *"wrong chain: expected Base Sepolia 84532"*)
+        echo "84532 reported wrong chain"
+        fail=$((fail + 1))
+        ;;
+    esac
+    case $out in
+      *"PAYER_OPERATOR invalid/placeholder"*) ;;
+      *)
+        echo "84532 did not reach ops_guard"
+        fail=$((fail + 1))
+        ;;
+    esac
+  else
     case $out in
       *"wrong chain: expected Base Sepolia 84532"*) ;;
       *)
@@ -283,24 +437,24 @@ run_chain() {
         ;;
     esac
     case $out in
-      *DID_NOT_ABORT*)
-        echo "chain gate did not abort"
-        fail=$((fail + 1))
-        ;;
-    esac
-  else
-    case $out in
-      *DID_NOT_ABORT*) ;;
-      *)
-        echo "chain gate aborted on 84532"
+      *"invalid/placeholder"*|*"blocklisted"*|*"is the relayer"*)
+        echo "chain failure still ran ops_guard"
         fail=$((fail + 1))
         ;;
     esac
   fi
 }
 
-run_chain "wrong chain aborts" 1 1
-run_chain "base sepolia chain continues" 84532 0
+for send_file in "$send_tmp"/send-*.sh; do
+  send_body=$(cat "$send_file")
+  send_name=$(basename "$send_file")
+  exercise_send "$send_name missing cast" "$send_body" missing
+  exercise_send "$send_name wrong chain" "$send_body" wrong
+  exercise_send "$send_name empty chain" "$send_body" empty
+  exercise_send "$send_name cast error" "$send_body" error
+  exercise_send "$send_name base sepolia continues" "$send_body" ok
+done
+rm -rf "$send_tmp"
 
 echo "SHELL-ALIVE $shell fail=$fail"
 if [ "$fail" != 0 ]; then
