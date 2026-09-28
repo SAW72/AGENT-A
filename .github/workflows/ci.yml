@@ -27,6 +27,10 @@ jobs:
         with:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Check operator guard in bash and zsh
+        run: bash script/check-ops-guard.sh && zsh script/check-ops-guard.sh
       # Main's forge-std install plus OpenZeppelin (BVT ERC-20).
       # Submodules are vendored; install is a fallback if checkout skips them.
       - name: Install forge-std

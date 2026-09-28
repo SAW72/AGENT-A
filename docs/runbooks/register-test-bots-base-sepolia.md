@@ -127,14 +127,21 @@ cast keccak "agent-bv:base-sepolia:p1d:bot-b:behavior"   # 0xa068a50733d40b7c745
 cast keccak "agent-bv:base-sepolia:p1d:bot-b:prompt"     # 0x3f6dbab9b8cf39f0a13b6e8348f3100e05af1d7d53e95f7fd7e52ac629fcdd6d
 ```
 
-## Checklist
+## Clear leftover operators
 
-Replace both angle-bracket tokens with checksummed addresses, then follow the numbers in order. The first line clears `PAYER_OPERATOR` and `PAYEE_OPERATOR` so a value left over from an earlier command in this shell is not reused. Left as written, the two operator exports fail to parse (`<` is a redirection).
-
-Bash reads a paste one line at a time, so that `unset` still runs, the stale addresses are cleared, and the shell then reports a syntax error on the angle brackets. zsh, the default on macOS, treats a bracketed paste as one unit and rejects the whole block on that syntax error, so a previous valid address can remain. Step 7 prints both values and waits for `YES` before either registration `cast send`.
+Paste this block by itself and let it finish before the export block. It is a separate paste on purpose. zsh, the default on a Mac, rejects an unedited export paste as one unit, so an `unset` written inside that export paste never runs and a previous payer and payee stay set. This step clears them even when the next paste is rejected.
 
 ```bash
 unset PAYER_OPERATOR PAYEE_OPERATOR
+```
+
+## Checklist
+
+Replace both angle-bracket tokens with checksummed addresses, then follow the numbers in order. Left as written, the two operator exports fail to parse (`<` is a redirection).
+
+Bash reads a paste one line at a time, so it reports a syntax error on the angle brackets and does not set the placeholders. zsh rejects that whole paste, so a previous valid address can remain if the clear step above was skipped. `ops_guard` does not rely on that `unset`. It rejects a payer or a payee that matches a known sample or stale address, compared after checksum and ignoring hex case. That list is the `bEEF` placeholder, the zero address, the simulation stand-ins `0x1111111111111111111111111111111111111111` and `0x2222222222222222222222222222222222222222`, the live escrow, the retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`, and the sample senders in `script/` (`0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001`, `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`, `0x0000000000000000000000000000000000000A11`, `0x0000000000000000000000000000000000000A22`, `0x0000000000000000000000000000000000000A33`, and `0x0000000000000000000000000000000000000001`). It also rejects either operator equal to the relayer. Step 7 still prints both values and waits for `YES` before either registration `cast send`. That prompt is what stops a stale address that is not on the list.
+
+```bash
 export BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
 export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
 export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
@@ -219,13 +226,17 @@ A `cast call` of the same register with `--value 1` from `CORE_TIMELOCK` reverts
 
 The same register with `--from` set to any account other than `CORE_TIMELOCK` reverts `OwnableUnauthorizedAccount` (`0x118cdaa7`). The registration has to come from `CORE_TIMELOCK`.
 
-4. Define `ops_guard`, then dry-run Bot B only if it returns 0. Paste this block as one unit. The function checks that each operator is a valid checksummed address (`cast to-check-sum-address`, then compare the shell value to that result), is not `0x000000000000000000000000000000000000bEEF`, is not the zero address, and that the two operators differ. It also rejects a payer equal to the relayer `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861`, compared case-insensitively after checksum. A failure prints why and `return`s 1. It does not `exit`, so the interactive shell stays open. The dry-run is on the same `&&` chain, so a failure skips both `cast` commands.
+4. Define `ops_guard`, then dry-run Bot B only if it returns 0. Paste this block as one unit. The function checks that each operator is a valid checksummed address (`cast to-check-sum-address`, then compare the shell value to that result) and that the two operators differ. After checksum, and ignoring hex case, it rejects either operator when it is the relayer `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861`, the `bEEF` placeholder, the zero address, a simulation stand-in, the live escrow, the retired escrow, or a sample sender from `script/`. That check does not depend on the earlier `unset`. A failure prints why and `return`s 1. It does not `exit`, so the interactive shell stays open. The dry-run is on the same `&&` chain, so a failure skips both `cast` commands.
 
 ```bash
 ops_guard() {
-  local payer payee relayer payer_lc relayer_lc
+  local payer payee relayer payer_lc payee_lc relayer_lc banned banned_lc
   payer=$(cast to-check-sum-address "${PAYER_OPERATOR-}") || {
     echo "PAYER_OPERATOR invalid/placeholder"
+    return 1
+  }
+  payee=$(cast to-check-sum-address "${PAYEE_OPERATOR-}") || {
+    echo "PAYEE_OPERATOR invalid/placeholder"
     return 1
   }
   relayer=$(cast to-check-sum-address 0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861) || {
@@ -233,28 +244,54 @@ ops_guard() {
     return 1
   }
   payer_lc=$(printf '%s' "$payer" | tr '[:upper:]' '[:lower:]')
+  payee_lc=$(printf '%s' "$payee" | tr '[:upper:]' '[:lower:]')
   relayer_lc=$(printf '%s' "$relayer" | tr '[:upper:]' '[:lower:]')
   if [ "$payer_lc" = "$relayer_lc" ]; then
     echo "PAYER_OPERATOR is the relayer"
     return 1
   fi
+  if [ "$payee_lc" = "$relayer_lc" ]; then
+    echo "PAYEE_OPERATOR is the relayer"
+    return 1
+  fi
+  while IFS= read -r banned; do
+    [ -n "$banned" ] || continue
+    banned=$(cast to-check-sum-address "$banned") || {
+      echo "PAYER_OPERATOR invalid/placeholder"
+      return 1
+    }
+    banned_lc=$(printf '%s' "$banned" | tr '[:upper:]' '[:lower:]')
+    if [ "$payer_lc" = "$banned_lc" ]; then
+      echo "PAYER_OPERATOR is a known sample or stale address"
+      return 1
+    fi
+    if [ "$payee_lc" = "$banned_lc" ]; then
+      echo "PAYEE_OPERATOR is a known sample or stale address"
+      return 1
+    fi
+  done <<'END_KNOWN'
+0x000000000000000000000000000000000000bEEF
+0x0000000000000000000000000000000000000000
+0x1111111111111111111111111111111111111111
+0x2222222222222222222222222222222222222222
+0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d
+0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c
+0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
+0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+0x0000000000000000000000000000000000000A11
+0x0000000000000000000000000000000000000A22
+0x0000000000000000000000000000000000000A33
+0x0000000000000000000000000000000000000001
+END_KNOWN
   if [ "$PAYER_OPERATOR" != "$payer" ]; then
     echo "PAYER_OPERATOR is not checksummed (expected $payer)"
     return 1
   fi
-  if [ "$payer" = 0x000000000000000000000000000000000000bEEF ] || [ "$payer" = 0x0000000000000000000000000000000000000000 ]; then
-    echo "PAYER_OPERATOR invalid/placeholder"
-    return 1
-  fi
-  payee=$(cast to-check-sum-address "${PAYEE_OPERATOR-}") || {
-    echo "PAYEE_OPERATOR invalid/placeholder"
-    return 1
-  }
   if [ "$PAYEE_OPERATOR" != "$payee" ]; then
     echo "PAYEE_OPERATOR is not checksummed (expected $payee)"
     return 1
   fi
-  if [ "$payee" = 0x000000000000000000000000000000000000bEEF ] || [ "$payee" = 0x0000000000000000000000000000000000000000 ] || [ "$payee" = "$payer" ]; then
+  if [ "$payee" = "$payer" ]; then
     echo "PAYEE_OPERATOR invalid/placeholder"
     return 1
   fi
@@ -297,15 +334,19 @@ cast estimate "$ESCROW" "createEscrow(bytes32,address,bytes32,bytes32,uint256)" 
 
 On the empty Vault this reverts `InvalidParties` (`0xb6e500fe`). The [simulation-only record](#simulation-only-record) has the exact text.
 
-7. **Stop. Do not send until both prerequisite boxes are ticked, the echoed addresses are the wallets you mean, and you type `YES`. `PAYER_OPERATOR` and `PAYEE_OPERATOR` have to be real checksummed wallets. An unedited export of `<SPENCER_PAYER_WALLET>` or `<REAL_PAYEE_WALLET>` fails in the shell. `0x000000000000000000000000000000000000bEEF`, the zero address, the relayer, and using one address for both operators are rejected. Sending either stand-in binds that address as a party.**
+7. **Stop. Do not send until both prerequisite boxes are ticked, the echoed addresses are the wallets you mean, and you type `YES`. `PAYER_OPERATOR` and `PAYEE_OPERATOR` have to be real checksummed wallets. An unedited export of `<SPENCER_PAYER_WALLET>` or `<REAL_PAYEE_WALLET>` fails in the shell. The guard rejects the `bEEF` placeholder, the zero address, the simulation stand-ins, the live escrow, the retired escrow, the sample senders from `script/`, the relayer as either operator, and using one address for both operators. A known sample or stale address fails here even when the clear step was skipped. Sending a stand-in binds that address as a party.**
 
 Paste this block as one unit. It defines `ops_guard` again so a fresh shell cannot send without it. The two `echo` lines show the addresses that will be bound. The prompt uses `printf` and `read -r`, which behave the same in bash and in zsh. Do not switch it to `read -p`: zsh treats `-p` as a coprocess flag. Type `YES` only after the echoed addresses are right. Any other answer, or a failing guard, skips both `cast send` commands and leaves the shell open. Replace `<his-keystore>` with the `CORE_TIMELOCK` account name before pasting. `cast wallet address` for that account must be `0x10CC9474b45625ADfd05C209f2518023484878D9`. That keystore is the 7702 EOA. There is no schedule step.
 
 ```bash
 ops_guard() {
-  local payer payee relayer payer_lc relayer_lc
+  local payer payee relayer payer_lc payee_lc relayer_lc banned banned_lc
   payer=$(cast to-check-sum-address "${PAYER_OPERATOR-}") || {
     echo "PAYER_OPERATOR invalid/placeholder"
+    return 1
+  }
+  payee=$(cast to-check-sum-address "${PAYEE_OPERATOR-}") || {
+    echo "PAYEE_OPERATOR invalid/placeholder"
     return 1
   }
   relayer=$(cast to-check-sum-address 0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861) || {
@@ -313,28 +354,54 @@ ops_guard() {
     return 1
   }
   payer_lc=$(printf '%s' "$payer" | tr '[:upper:]' '[:lower:]')
+  payee_lc=$(printf '%s' "$payee" | tr '[:upper:]' '[:lower:]')
   relayer_lc=$(printf '%s' "$relayer" | tr '[:upper:]' '[:lower:]')
   if [ "$payer_lc" = "$relayer_lc" ]; then
     echo "PAYER_OPERATOR is the relayer"
     return 1
   fi
+  if [ "$payee_lc" = "$relayer_lc" ]; then
+    echo "PAYEE_OPERATOR is the relayer"
+    return 1
+  fi
+  while IFS= read -r banned; do
+    [ -n "$banned" ] || continue
+    banned=$(cast to-check-sum-address "$banned") || {
+      echo "PAYER_OPERATOR invalid/placeholder"
+      return 1
+    }
+    banned_lc=$(printf '%s' "$banned" | tr '[:upper:]' '[:lower:]')
+    if [ "$payer_lc" = "$banned_lc" ]; then
+      echo "PAYER_OPERATOR is a known sample or stale address"
+      return 1
+    fi
+    if [ "$payee_lc" = "$banned_lc" ]; then
+      echo "PAYEE_OPERATOR is a known sample or stale address"
+      return 1
+    fi
+  done <<'END_KNOWN'
+0x000000000000000000000000000000000000bEEF
+0x0000000000000000000000000000000000000000
+0x1111111111111111111111111111111111111111
+0x2222222222222222222222222222222222222222
+0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d
+0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c
+0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
+0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+0x0000000000000000000000000000000000000A11
+0x0000000000000000000000000000000000000A22
+0x0000000000000000000000000000000000000A33
+0x0000000000000000000000000000000000000001
+END_KNOWN
   if [ "$PAYER_OPERATOR" != "$payer" ]; then
     echo "PAYER_OPERATOR is not checksummed (expected $payer)"
     return 1
   fi
-  if [ "$payer" = 0x000000000000000000000000000000000000bEEF ] || [ "$payer" = 0x0000000000000000000000000000000000000000 ]; then
-    echo "PAYER_OPERATOR invalid/placeholder"
-    return 1
-  fi
-  payee=$(cast to-check-sum-address "${PAYEE_OPERATOR-}") || {
-    echo "PAYEE_OPERATOR invalid/placeholder"
-    return 1
-  }
   if [ "$PAYEE_OPERATOR" != "$payee" ]; then
     echo "PAYEE_OPERATOR is not checksummed (expected $payee)"
     return 1
   fi
-  if [ "$payee" = 0x000000000000000000000000000000000000bEEF ] || [ "$payee" = 0x0000000000000000000000000000000000000000 ] || [ "$payee" = "$payer" ]; then
+  if [ "$payee" = "$payer" ]; then
     echo "PAYEE_OPERATOR invalid/placeholder"
     return 1
   fi
@@ -433,9 +500,13 @@ When Spencer later sends `createEscrow`, paste this block as one unit. It define
 
 ```bash
 ops_guard() {
-  local payer payee relayer payer_lc relayer_lc
+  local payer payee relayer payer_lc payee_lc relayer_lc banned banned_lc
   payer=$(cast to-check-sum-address "${PAYER_OPERATOR-}") || {
     echo "PAYER_OPERATOR invalid/placeholder"
+    return 1
+  }
+  payee=$(cast to-check-sum-address "${PAYEE_OPERATOR-}") || {
+    echo "PAYEE_OPERATOR invalid/placeholder"
     return 1
   }
   relayer=$(cast to-check-sum-address 0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861) || {
@@ -443,28 +514,54 @@ ops_guard() {
     return 1
   }
   payer_lc=$(printf '%s' "$payer" | tr '[:upper:]' '[:lower:]')
+  payee_lc=$(printf '%s' "$payee" | tr '[:upper:]' '[:lower:]')
   relayer_lc=$(printf '%s' "$relayer" | tr '[:upper:]' '[:lower:]')
   if [ "$payer_lc" = "$relayer_lc" ]; then
     echo "PAYER_OPERATOR is the relayer"
     return 1
   fi
+  if [ "$payee_lc" = "$relayer_lc" ]; then
+    echo "PAYEE_OPERATOR is the relayer"
+    return 1
+  fi
+  while IFS= read -r banned; do
+    [ -n "$banned" ] || continue
+    banned=$(cast to-check-sum-address "$banned") || {
+      echo "PAYER_OPERATOR invalid/placeholder"
+      return 1
+    }
+    banned_lc=$(printf '%s' "$banned" | tr '[:upper:]' '[:lower:]')
+    if [ "$payer_lc" = "$banned_lc" ]; then
+      echo "PAYER_OPERATOR is a known sample or stale address"
+      return 1
+    fi
+    if [ "$payee_lc" = "$banned_lc" ]; then
+      echo "PAYEE_OPERATOR is a known sample or stale address"
+      return 1
+    fi
+  done <<'END_KNOWN'
+0x000000000000000000000000000000000000bEEF
+0x0000000000000000000000000000000000000000
+0x1111111111111111111111111111111111111111
+0x2222222222222222222222222222222222222222
+0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d
+0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c
+0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
+0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38
+0x0000000000000000000000000000000000000A11
+0x0000000000000000000000000000000000000A22
+0x0000000000000000000000000000000000000A33
+0x0000000000000000000000000000000000000001
+END_KNOWN
   if [ "$PAYER_OPERATOR" != "$payer" ]; then
     echo "PAYER_OPERATOR is not checksummed (expected $payer)"
     return 1
   fi
-  if [ "$payer" = 0x000000000000000000000000000000000000bEEF ] || [ "$payer" = 0x0000000000000000000000000000000000000000 ]; then
-    echo "PAYER_OPERATOR invalid/placeholder"
-    return 1
-  fi
-  payee=$(cast to-check-sum-address "${PAYEE_OPERATOR-}") || {
-    echo "PAYEE_OPERATOR invalid/placeholder"
-    return 1
-  }
   if [ "$PAYEE_OPERATOR" != "$payee" ]; then
     echo "PAYEE_OPERATOR is not checksummed (expected $payee)"
     return 1
   fi
-  if [ "$payee" = 0x000000000000000000000000000000000000bEEF ] || [ "$payee" = 0x0000000000000000000000000000000000000000 ] || [ "$payee" = "$payer" ]; then
+  if [ "$payee" = "$payer" ]; then
     echo "PAYEE_OPERATOR invalid/placeholder"
     return 1
   fi
@@ -488,7 +585,7 @@ This mode is not the first smoke. It is allowed only after both of these are tru
 1. The claim secret is rotated.
 2. EIP-712 relayer auth or a relayer amount cap has shipped.
 
-Until both are true, `PAYER_OPERATOR` stays Spencer's wallet. `ops_guard` rejects the relayer on purpose for this smoke, including a lowercase copy of that address. After both gates are true, delete the relayer comparison inside `ops_guard` (the block that prints `PAYER_OPERATOR is the relayer`) in the step 4, step 7, and `createEscrow` pastes. Then set `PAYER_OPERATOR` to `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` and use the same register and `createEscrow` templates. `createEscrow`'s `msg.sender` is that relayer. The rest of the guard still rejects the zero address, the `bEEF` address, and a payee equal to the payer.
+Until both are true, `PAYER_OPERATOR` stays Spencer's wallet. `ops_guard` rejects the relayer as the payer on purpose for this smoke, including a lowercase copy of that address. A payee equal to the relayer is always rejected, in this smoke and after it. After both gates are true, delete only the payer comparison inside `ops_guard` (the block that prints `PAYER_OPERATOR is the relayer`) in the step 4, step 7, and `createEscrow` pastes. Leave the block that prints `PAYEE_OPERATOR is the relayer`. Then set `PAYER_OPERATOR` to `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` and use the same register and `createEscrow` templates. `createEscrow`'s `msg.sender` is that relayer. The rest of the guard still rejects the zero address, the `bEEF` address, the known sample and stale addresses, and a payee equal to the payer.
 
 The current relayer accepts a positive `amountWei` and does not cap it. `release` is permissionless and pays the payee. Registering the relayer as Bot A's operator before those two gates lets a caller who knows the published claim secret push the relayer balance into escrows.
 
@@ -568,7 +665,7 @@ The first smoke therefore sets `PAYER_OPERATOR` to Spencer's own wallet (`<SPENC
 
 `register` is permanent for a `botId`. `burn` clears `active` and does not free the id. A wrong id cannot be registered again. `setOperator` can point a stored bot at a new non-zero account, and that call is also `onlyOwner` from `0x10CC9474b45625ADfd05C209f2518023484878D9`.
 
-The payer operator and the payee operator have to be different addresses. `createEscrow` reverts `InvalidParties` when `msg.sender == payee`. `ops_guard` returns 1 when they match, and the shell stays open.
+The payer operator and the payee operator have to be different addresses. `createEscrow` reverts `InvalidParties` when `msg.sender == payee`. `ops_guard` returns 1 when they match, when either one is the relayer, and when either one is a known sample or stale address. The shell stays open.
 
 These ids and fingerprints are the smoke pair. Listing any of the three hashes on the Denylist later makes `_verifyBot` revert `AttestationFailed` even when the operators still match.
 
