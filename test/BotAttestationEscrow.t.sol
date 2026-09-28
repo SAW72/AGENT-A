@@ -120,13 +120,31 @@ contract BotAttestationEscrowTest is Test {
         escrow.withdraw();
     }
 
+    function _subjectOf(
+        BotAttestationEscrow target,
+        bytes32 escrowId
+    ) internal view returns (bytes32) {
+        (,,,,, uint256 createdAt,,,) = target.escrows(escrowId);
+        return target.panelSubject(escrowId, createdAt);
+    }
+
+    /// @dev Compute `subject` before this call. `vm.prank` would otherwise hit that read.
+    function _panelOpen(
+        address challenger,
+        bytes32 disputeId,
+        bytes32 subject,
+        string memory reason
+    ) internal {
+        vm.prank(challenger);
+        panel.openDispute(disputeId, subject, reason);
+    }
+
     function _openPanel(
         bytes32 escrowId,
         bytes32 disputeId
     ) internal {
         // Challenger must be a party. The test contract is neither payer nor payee.
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "attestation stale");
+        _panelOpen(payer, disputeId, _subjectOf(escrow, escrowId), "attestation stale");
     }
 
     function _panelRule(
@@ -860,8 +878,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 disputeId = keccak256("esc-m1-expiry-steal-d");
         uint256 amount = 1 ether;
 
-        vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "pre-opened");
+        _panelOpen(payee, disputeId, escrow.panelSubject(escrowId, block.timestamp), "pre-opened");
         _panelRule(disputeId, true);
 
         _create(escrowId, amount, 100);
@@ -889,8 +906,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 disputeId = keccak256("esc-m1-denylist-d");
         uint256 amount = 1 ether;
 
-        vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "pre-opened");
+        _panelOpen(payee, disputeId, escrow.panelSubject(escrowId, block.timestamp), "pre-opened");
         _panelRule(disputeId, true);
 
         _create(escrowId, amount, 3600);
@@ -914,8 +930,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 disputeId = keccak256("esc-m1-unwind-d");
         uint256 amount = 1 ether;
 
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "pre-unwound");
+        _panelOpen(payer, disputeId, escrow.panelSubject(escrowId, block.timestamp), "pre-unwound");
         _panelRule(disputeId, false);
 
         _create(escrowId, amount, 3600);
@@ -936,11 +951,9 @@ contract BotAttestationEscrowTest is Test {
         bytes32 disputeId = keccak256("esc-m1-second-d");
         uint256 amount = 1 ether;
 
-        vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "old ruling");
-        _panelRule(disputeId, true);
-
         BotAttestationEscrow escrow2 = _secondEscrow();
+        _panelOpen(payee, disputeId, escrow2.panelSubject(escrowId, block.timestamp), "old ruling");
+        _panelRule(disputeId, true);
         vm.prank(payer);
         escrow2.createEscrow{ value: amount }(escrowId, payee, payerBot, payeeBot, 3600);
 
@@ -961,8 +974,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 disputeId = keccak256("esc-m1-two-votes-d");
         uint256 openedAt = block.timestamp;
 
-        vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "pre-voted");
+        _panelOpen(payee, disputeId, escrow.panelSubject(escrowId, block.timestamp), "pre-voted");
         vm.prank(arb1);
         panel.vote(disputeId, true);
         vm.prank(arb2);
@@ -988,8 +1000,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("esc-m1-challenger");
         _create(escrowId, 1 ether, 3600);
         bytes32 disputeId = keccak256("esc-m1-challenger-d");
-        vm.prank(makeAddr("stranger-challenger"));
-        panel.openDispute(disputeId, escrowId, "not a party");
+        _panelOpen(makeAddr("stranger-challenger"), disputeId, _subjectOf(escrow, escrowId), "not a party");
 
         vm.prank(payer);
         vm.expectRevert(BotAttestationEscrow.DisputeChallengerNotParty.selector);
@@ -999,9 +1010,9 @@ contract BotAttestationEscrowTest is Test {
     function test_escM1_disputePredatesEscrowRejected() public {
         bytes32 escrowId = keccak256("esc-m1-predates");
         bytes32 disputeId = keccak256("esc-m1-predates-d");
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "early");
-        vm.warp(block.timestamp + 1);
+        uint256 createdAt = block.timestamp + 1;
+        _panelOpen(payer, disputeId, escrow.panelSubject(escrowId, createdAt), "early");
+        vm.warp(createdAt);
         _create(escrowId, 1 ether, 3600);
 
         vm.prank(payer);
@@ -1013,8 +1024,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("esc-m1-after-expiry");
         _create(escrowId, 1 ether, 100);
         bytes32 disputeId = keccak256("esc-m1-after-expiry-d");
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "in window");
+        _panelOpen(payer, disputeId, _subjectOf(escrow, escrowId), "in window");
         vm.warp(block.timestamp + 101);
 
         vm.prank(payer);
@@ -1026,8 +1036,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("esc-m1-resolved");
         _create(escrowId, 1 ether, 3600);
         bytes32 disputeId = keccak256("esc-m1-resolved-d");
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "then ruled");
+        _panelOpen(payer, disputeId, _subjectOf(escrow, escrowId), "then ruled");
         _panelRule(disputeId, true);
 
         vm.prank(payer);
@@ -1041,8 +1050,7 @@ contract BotAttestationEscrowTest is Test {
         uint256 amount = 1 ether;
         _create(escrowId, amount, 3600);
         bytes32 disputeId = keccak256("vote-before-link-d");
-        vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "early vote");
+        _panelOpen(payee, disputeId, _subjectOf(escrow, escrowId), "early vote");
         vm.prank(arb1);
         panel.vote(disputeId, true);
 
@@ -1081,8 +1089,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("locked-then-fresh");
         _create(escrowId, 1 ether, 3600);
         bytes32 lockedId = keccak256("locked-id");
-        vm.prank(payer);
-        panel.openDispute(lockedId, escrowId, "two votes");
+        _panelOpen(payer, lockedId, _subjectOf(escrow, escrowId), "two votes");
         vm.prank(arb1);
         panel.vote(lockedId, false);
         vm.prank(arb2);
@@ -1095,8 +1102,7 @@ contract BotAttestationEscrowTest is Test {
         assertEq(uint256(stillOpen), uint256(BotAttestationEscrow.EscrowState.Open));
 
         bytes32 freshId = keccak256("fresh-id");
-        vm.prank(payee);
-        panel.openDispute(freshId, escrowId, "fresh");
+        _panelOpen(payee, freshId, _subjectOf(escrow, escrowId), "fresh");
         vm.prank(payee);
         escrow.dispute(escrowId, freshId);
         (,,,,,,, BotAttestationEscrow.EscrowState state, bytes32 linked) = _escrowTuple(escrowId);
@@ -1186,8 +1192,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("fuzz-below-majority");
         bytes32 disputeId = keccak256("fuzz-below-majority-d");
         _create(escrowId, 1 ether, 3600);
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "fuzz");
+        _panelOpen(payer, disputeId, _subjectOf(escrow, escrowId), "fuzz");
         if (forVotes == 1) {
             vm.prank(arb1);
             panel.vote(disputeId, true);
@@ -1224,8 +1229,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("esc-m1-same-block");
         bytes32 disputeId = keccak256("esc-m1-same-block-d");
         _create(escrowId, 1 ether, 3600);
-        vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "same block");
+        _panelOpen(payee, disputeId, _subjectOf(escrow, escrowId), "same block");
 
         (,,,,, uint256 escrowCreatedAt,,,) = escrow.escrows(escrowId);
         (,,,,,,, uint256 disputeCreatedAt) = panel.disputes(disputeId);
@@ -1243,8 +1247,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 escrowId = keccak256("esc-m1-exact-expiry");
         _create(escrowId, 1 ether, 100);
         bytes32 disputeId = keccak256("esc-m1-exact-expiry-d");
-        vm.prank(payer);
-        panel.openDispute(disputeId, escrowId, "at edge");
+        _panelOpen(payer, disputeId, _subjectOf(escrow, escrowId), "at edge");
 
         (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
         vm.warp(expiresAt);
@@ -1253,6 +1256,85 @@ contract BotAttestationEscrowTest is Test {
 
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
         assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Disputed));
+    }
+
+    /// @notice Same escrow id and createdAt on two deployments. Only the matching subject links.
+    function test_twoDeploymentsSameIdAndTimestampOnlyMatchingSubjectAttachesRuling() public {
+        bytes32 escrowId = keccak256("shared-row");
+        uint256 amount = 1 ether;
+        BotAttestationEscrow escrow2 = _secondEscrow();
+
+        vm.prank(payer);
+        escrow.createEscrow{ value: amount }(escrowId, payee, payerBot, payeeBot, 3600);
+        vm.prank(payer);
+        escrow2.createEscrow{ value: amount }(escrowId, payee, payerBot, payeeBot, 3600);
+
+        (,,,,, uint256 created1,,,) = escrow.escrows(escrowId);
+        (,,,,, uint256 created2,,,) = escrow2.escrows(escrowId);
+        assertEq(created1, created2);
+
+        bytes32 subject1 = escrow.panelSubject(escrowId, created1);
+        bytes32 subject2 = escrow2.panelSubject(escrowId, created2);
+        assertEq(subject1, keccak256(abi.encode(block.chainid, address(escrow), escrowId, created1)));
+        assertEq(subject2, keccak256(abi.encode(block.chainid, address(escrow2), escrowId, created2)));
+        assertTrue(subject1 != subject2);
+
+        uint256 chainBefore = block.chainid;
+        vm.chainId(chainBefore + 1);
+        assertTrue(escrow.panelSubject(escrowId, created1) != subject1);
+        vm.chainId(chainBefore);
+
+        bytes32 bareId = keccak256("bare-subject");
+        vm.prank(payer);
+        panel.openDispute(bareId, escrowId, "bare");
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.InvalidDispute.selector);
+        escrow.dispute(escrowId, bareId);
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.InvalidDispute.selector);
+        escrow2.dispute(escrowId, bareId);
+
+        bytes32 disputeId = keccak256("shared-row-d");
+        vm.prank(payer);
+        panel.openDispute(disputeId, subject1, "deployment one");
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.InvalidDispute.selector);
+        escrow2.dispute(escrowId, disputeId);
+
+        vm.prank(payee);
+        escrow.dispute(escrowId, disputeId);
+        (,,,,,,, BotAttestationEscrow.EscrowState linked, bytes32 linkedId) = _escrowTuple(escrowId);
+        assertEq(uint256(linked), uint256(BotAttestationEscrow.EscrowState.Disputed));
+        assertEq(linkedId, disputeId);
+
+        _panelRule(disputeId, true);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.InvalidDispute.selector);
+        escrow2.dispute(escrowId, disputeId);
+
+        vm.prank(payee);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), amount);
+
+        (,,,,,,, BotAttestationEscrow.EscrowState other,) = escrow2.escrows(escrowId);
+        assertEq(uint256(other), uint256(BotAttestationEscrow.EscrowState.Open));
+        assertEq(address(escrow2).balance, amount);
+        assertEq(escrow2.pendingWithdrawals(payee), 0);
+    }
+
+    /// @notice The subject changes with the escrow address even when id and timestamp match.
+    function testFuzz_panelSubjectDiffersAcrossDeployments(
+        bytes32 escrowId,
+        uint256 createdAt
+    ) public {
+        BotAttestationEscrow escrow2 = _secondEscrow();
+        bytes32 left = escrow.panelSubject(escrowId, createdAt);
+        bytes32 right = escrow2.panelSubject(escrowId, createdAt);
+        assertTrue(left != right);
+        assertEq(left, keccak256(abi.encode(block.chainid, address(escrow), escrowId, createdAt)));
+        assertEq(right, keccak256(abi.encode(block.chainid, address(escrow2), escrowId, createdAt)));
     }
 
     function _secondEscrow() internal returns (BotAttestationEscrow escrow2) {

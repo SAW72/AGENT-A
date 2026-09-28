@@ -24,7 +24,7 @@ The payee can still `release` an `Open` escrow that passes attestation. That is 
 
 `dispute(escrowId, disputeId)` does not call the panel. The party opens the case with `DisputePanel.openDispute`, then links it here. The link checks, in order:
 
-1. The case exists (`createdAt != 0`) and `subjectHash` equals the subject for this escrow row. Today that subject is the bare `escrowId`.
+1. The case exists (`createdAt != 0`) and `subjectHash` equals `panelSubject(escrowId, createdAt)`.
 2. The case is not `resolved`.
 3. Neither side has `UNMOVABLE_PANEL_VOTES` (2) or more. `DisputePanel.PANEL_SIZE` is 3, so two votes on one side cannot be outvoted, and `resolved` is still false until the third vote.
 4. `dispute.createdAt >= escrow.createdAt` (same block is allowed).
@@ -45,8 +45,16 @@ The error name `DisputeVotesCast` is the old zero-vote revert. Its meaning is na
 
 Same-block ordering is not visible on chain. A 2-0 tally in the create block is refused for the same reason as a 2-0 tally later: it has already decided the panel. A 1-0 tally in that block links.
 
+## Panel subject
+
+`panelSubject` is `keccak256(abi.encode(block.chainid, address(this), escrowId, createdAt))`. `createdAt` is the timestamp stored by `createEscrow`. `openDispute` must pass that hash as `subjectHash`. `dispute` and the uphold / unwind reads require the same hash.
+
+The bare `escrowId` is not enough. Two escrow deployments can share one `DisputePanel` and can each create the same `escrowId` in the same block, so `createdAt` matches. The escrow address is inside the preimage, so the hashes differ. A ruling opened for one does not link on the other (`InvalidDispute`). Chain id is in the preimage so the same addresses on another chain do not match either.
+
+The hash is public once the escrow exists. A stranger can open a case with the right subject. The link still requires the panel challenger to be the payer or the payee, so that case does not attach. Squatting one dispute id only burns that id. The party opens another. They cannot build the other deployment's subject without that deployment's address.
+
 ## What did not change
 
-No storage was added. `Escrow` and the mapping slots are unchanged. No event was added or retyped. `release(bytes32)` and `dispute(bytes32,bytes32)` keep their selectors. `refund` is still permissionless.
+No storage was added. `Escrow` and the mapping slots are unchanged. No event was added or retyped. `release(bytes32)` and `dispute(bytes32,bytes32)` keep their selectors. `panelSubject(bytes32,uint256)` is an added view. `refund` is still permissionless.
 
 New errors: `ReleaseNotAuthorized`, `NotParty`. `DisputeVotesCast` stays, with the narrower meaning above. The string revert `"not a party"` is gone. `apps/wallet-ux/src/abi/BotAttestationEscrow.json` is regenerated from the forge artifact because CI compares that file to the build. Wallet TypeScript is not edited here. The glossary sentence that still says any vote blocks the link is stale until a wallet follow-up.

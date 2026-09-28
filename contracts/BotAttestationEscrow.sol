@@ -500,7 +500,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Flag an escrow for dispute. Does not authorize a refund.
-    /// @dev Links a panel case whose subject is this escrow, at any vote count that has
+    /// @dev Links a panel case whose subject is `panelSubject(escrowId, createdAt)`, at any vote count that has
     ///      not already decided a 3-seat panel. A vote cast after `openDispute` and before
     ///      this call no longer reverts, so that race cannot leave the escrow `Open`.
     ///      `votesFor >= UNMOVABLE_PANEL_VOTES` or `votesAgainst >= UNMOVABLE_PANEL_VOTES`
@@ -528,8 +528,8 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
             uint256 disputeCreatedAt
         ) = disputePanel.disputes(disputeId);
 
-        // 1. Exists (createdAt != 0, same as outcome) and the subject is this escrow.
-        if (disputeCreatedAt == 0 || subject != _panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
+        // 1. Exists (createdAt != 0, same as outcome) and the subject is this deployment's row.
+        if (disputeCreatedAt == 0 || subject != panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
         // 2. Still open on the panel. A resolved ruling cannot be attached later.
         if (resolved) revert DisputeAlreadyResolved();
         // 3. A tally that already decides the 3-seat panel is not a live challenge.
@@ -549,14 +549,18 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         emit EscrowDisputed(escrowId, disputeId);
     }
 
-    /// @dev Subject a panel case must use for this escrow row. This revision is the
-    ///      bare `escrowId`. `createdAt` is unused here; the outcome checks pass it so
-    ///      the comparison stays in one place.
-    function _panelSubject(
+    /// @notice Subject a panel case must use for this escrow row.
+    /// @dev `keccak256(abi.encode(block.chainid, address(this), escrowId, createdAt))`.
+    ///      `createdAt` is the timestamp `createEscrow` stored. Two deployments that share
+    ///      a panel, an `escrowId`, and a `createdAt` still hash apart, because the
+    ///      escrow address is inside the preimage. `dispute` and the ruling checks require
+    ///      this exact value. The formula is public, so a stranger can open a case with
+    ///      it; `dispute` still requires the panel challenger to be the payer or the payee.
+    function panelSubject(
         bytes32 escrowId,
-        uint256 /* createdAt */
-    ) internal pure returns (bytes32) {
-        return escrowId;
+        uint256 createdAt
+    ) public view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), escrowId, createdAt));
     }
 
     function _requireBoundOperators(
@@ -572,7 +576,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId
     ) internal view returns (bool) {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
-        return exists && subject == _panelSubject(escrowId, e.createdAt) && resolved && upheld;
+        return exists && subject == panelSubject(escrowId, e.createdAt) && resolved && upheld;
     }
 
     function _requirePanelUnwind(
@@ -580,7 +584,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId
     ) internal view {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
-        if (!exists || subject != _panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
+        if (!exists || subject != panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
         if (!resolved) revert DisputePending();
         if (upheld) revert DisputePending();
     }
@@ -590,7 +594,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId
     ) internal view {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
-        if (!exists || subject != _panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
+        if (!exists || subject != panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
         if (!resolved || !upheld) revert DisputePending();
     }
 
