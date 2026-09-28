@@ -106,10 +106,30 @@ Then look at both Production and Preview in the dashboard again.
 1. PR #46 is already squash-merged. `main` is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`. It was merged from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. Do not merge it again.
 2. If Auto-Deploy is on, leave the step 0 stop in place and leave `ADMIN_SECRET` unset through that deploy. When that stop is `KILL_SWITCH=1`, the new process reads `KILL_SWITCH` at start, so the deploy comes up paused. When the alternate was used, leave `LIVE_SUBMIT=0` instead of setting `KILL_SWITCH`. When the fallback was used, do not add `KILL_SWITCH` or `LIVE_SUBMIT` for this deploy: `a66ef64` comes up open, which is harmless because `a66ef64` ignores the old secret and old-bundle requests get **400** `intent_required`. If Auto-Deploy is off, the merge does not deploy. Use Manual Deploy of `a66ef64` with that same env.
 3. After the deploy finishes, `GET /health` must show `"killSwitch": true` when step 0 set `KILL_SWITCH=1`. If the alternate (`LIVE_SUBMIT=0`) was used, expect `"liveSubmit": false` and `"mode": "fixture"` instead of `"killSwitch": true`. `liveSubmitBlockers` contains `live_submit_off`. If the fallback (`CLAIM_API_SECRET` deleted) was used, this deploy of `a66ef64` comes up open, so `"killSwitch"` is false unless `KILL_SWITCH` was already set. That open process is harmless: `a66ef64` ignores the old secret, and old-bundle requests get **400** `intent_required`. The Render deploy view shows the relayer commit `a66ef64`. That is not the Pages commit. `/health` has no commit field and no build field. Do not look for either in the JSON.
-4. Done by Builder. PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. Publish Pages from that `main` commit. The Pages commit is not `a66ef64`.
-5. Publish that Pages commit. Either path uses the build env from CI or from the local shell, never from Pages env vars.
-   - GitHub: Actions → Deploy wallet-ux → Run workflow. `on` is `workflow_dispatch` only, and the job runs only for `refs/heads/main`. The build receives `VITE_CLAIM_RELAYER_URL` from the `production` environment variable. It must not receive `VITE_CLAIM_API_SECRET`. The workflow uploads with `wrangler pages deploy` twice: first `--branch=preview-<run_id>`, then `--branch=main` with `--commit-hash` set to that commit.
-   - Or, from a shell where `VITE_CLAIM_API_SECRET` is unset:
+4. Publish Pages from `main` at or after the PR #53 merge. #53 is not merged yet. Do not publish from `10d021323bd9faa75481a9692625c9ba43ba9aad`. That SHA is the #41 merge (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow). It is already on `main`, and it is not the Pages commit for this step. The Pages commit is not `a66ef64`.
+
+   After #53 merges, set `PR53_MERGE_SHA` to that merge commit. Copy it from `git log` on `main` or from the PR page. Check out the `main` commit you will publish, so `HEAD` is that commit or a later one. Then run the gate. The assignment below is a comment, so sourcing the snippet does not set an empty value. `${PR53_MERGE_SHA:-}` is safe when the variable is unset, including under `set -u`. `git merge-base --is-ancestor` sits inside an `if`, and the whole check is one `( ... )` subshell. `exit` stays inside that subshell, so a skip does not close your shell when you paste the snippet or source it. If the gate prints `SKIP`, do not dispatch the workflow and do not run the local publish in step 5. If it prints `OK`, publish this `HEAD`.
+
+```bash
+# Fill PR53_MERGE_SHA after #53 merges. Copy the merge commit from git log or the PR page.
+# PR53_MERGE_SHA=
+(
+  if [ -z "${PR53_MERGE_SHA:-}" ]; then
+    echo 'SKIP: PR53_MERGE_SHA is unset or empty. Fill it after #53 merges (git log or the PR page).'
+    exit 0
+  fi
+  if git merge-base --is-ancestor "$PR53_MERGE_SHA" HEAD; then
+    echo 'OK: HEAD contains PR53_MERGE_SHA. Publish Pages from this main commit.'
+  else
+    echo 'SKIP: HEAD does not contain PR53_MERGE_SHA. Publish Pages from main at or after the #53 merge.'
+    exit 0
+  fi
+)
+```
+
+5. Publish that Pages commit only after the gate prints `OK`. Either path uses the build env from CI or from the local shell, never from Pages env vars.
+   - GitHub: Actions → Deploy wallet-ux → Run workflow, on `main`, only after #53 is on that `main` and the gate prints `OK`. `on` is `workflow_dispatch` only, and the job runs only for `refs/heads/main`. The build receives `VITE_CLAIM_RELAYER_URL` from the `production` environment variable. It must not receive `VITE_CLAIM_API_SECRET`. The workflow uploads with `wrangler pages deploy` twice: first `--branch=preview-<run_id>`, then `--branch=main` with `--commit-hash` set to that `main` commit. That commit must contain `PR53_MERGE_SHA`.
+   - Or, from a shell where `VITE_CLAIM_API_SECRET` is unset, on the same `HEAD` the gate accepted:
 
 This is the only `cd` in the runbook. The leak check below does not change directory.
 
@@ -120,6 +140,7 @@ npm ci
 npm test
 npm run build
 (
+  set +e
   if [ ! -d dist ]; then
     echo 'MISSING DIST' >&2
     exit 1
@@ -138,6 +159,31 @@ npm run build
     echo 'NO JS' >&2
     exit 1
   fi
+  stripped=$(mktemp)
+  trap 'rm -f "$stripped"' EXIT
+  nonempty=0
+  while IFS= read -r jsfile; do
+    [ -n "$jsfile" ] || continue
+    bom=$(od -An -t x1 -N 3 "$jsfile" | tr -d '[:space:]')
+    if [ "$bom" = "efbbbf" ]; then
+      tail -c +4 "$jsfile" > "$stripped"
+      if LC_ALL=C grep -q '[[:graph:]]' "$stripped"; then
+        nonempty=1
+        break
+      fi
+    else
+      if LC_ALL=C grep -q '[[:graph:]]' "$jsfile"; then
+        nonempty=1
+        break
+      fi
+    fi
+  done <<ENDJS
+$(find dist -type f -name '*.js')
+ENDJS
+  if [ "$nonempty" -eq 0 ]; then
+    echo 'EMPTY JS' >&2
+    exit 1
+  fi
   if [ -n "$name" ] && printf '%s\n' "$name" | grep -v ':0$'; then
     leak=1
   fi
@@ -148,13 +194,13 @@ npm run build
 )
 ```
 
-`grep -REc` and `grep -REic` print one line per file, `path:N`. `N` is how many lines in that file matched. It is not a line number. `dist/assets/index-xxxx.js:0` means no matching line in that file. The check is one `( ... )` subshell, so `exit` stays inside it and pasting it does not close your shell. The subshell pipes each result through `grep -v ':0$'`, so only nonzero hits print. Any printed hit is a failure: the subshell prints `LEAK` and exits nonzero. A clean tree that contains at least one `.js` file prints nothing and that subshell exits 0. A missing `dist` prints `MISSING DIST` and exits nonzero. It does not print `LEAK`. An empty `dist`, or a `dist` with no `.js` files, prints `NO JS` and exits nonzero. A grep error (exit status 2) is `MISSING DIST`, not `LEAK`. Do not drop `-c`. Do not add `-o` or `-n`. Do not deploy if anything prints. #41 merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. `node scripts/guard-claim-secret.mjs dist` replaces these greps. Run it from `apps/wallet-ux`.
+`grep -REc` and `grep -REic` print one line per file, `path:N`. `N` is how many lines in that file matched. It is not a line number. `dist/assets/index-xxxx.js:0` means no matching line in that file. The check is one `( ... )` subshell, so `exit` stays inside it. Pasting it does not close your shell. Sourcing the snippet does not run that `exit` in your shell either, and `$?` is the subshell status. `set +e` is the first command inside the subshell, so the message is printed before that status is returned. The subshell pipes each result through `grep -v ':0$'`, so only nonzero hits print. Any printed hit is a failure: the subshell prints that `path:N` line and then `LEAK`, and it exits nonzero. A clean tree that contains at least one `.js` file with a real payload prints nothing and that subshell exits 0. A leading UTF-8 BOM is not a payload. A missing `dist` prints `MISSING DIST` and exits nonzero. It does not print `LEAK`. An empty `dist`, or a `dist` with no `.js` files, prints `NO JS` and exits nonzero. A `dist` whose every `.js` file is 0 bytes, only whitespace, or only a UTF-8 BOM prints `EMPTY JS` and exits nonzero. It does not print `LEAK`. That BOM rule matches `apps/wallet-ux/scripts/verify-served-bundle.mjs` on #53: strip one leading UTF-8 BOM, then a body with no remaining payload is empty. A grep error (exit status 2) is `MISSING DIST`, not `LEAK`. Do not drop `-c`. Do not add `-o` or `-n`. Do not deploy if anything prints. #41 merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. `node scripts/guard-claim-secret.mjs dist` replaces these greps. Run it from `apps/wallet-ux`. The publish commit is still the `HEAD` the gate above accepted, not `10d021323bd9faa75481a9692625c9ba43ba9aad`.
 
 ```bash
 npx wrangler pages deploy dist --project-name=agent-a-wallet-ux --branch=main --commit-hash=<pages-main-sha> --commit-dirty=false
 ```
 
-A local `--branch=main` upload publishes production directly. The workflow's preview branch is the path that runs `verify-served-bundle.mjs` before production. `<pages-main-sha>` is the wallet-ux commit on `main`. #41 merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. That Pages commit is not the Render commit `a66ef64`.
+A local `--branch=main` upload publishes production directly. The workflow's preview branch is the path that runs `verify-served-bundle.mjs` before production. `<pages-main-sha>` is the `HEAD` the gate above accepted: `main` at or after the #53 merge. It is not `10d021323bd9faa75481a9692625c9ba43ba9aad`, and it is not the Render commit `a66ef64`.
 
 Keep `KILL_SWITCH=1` through this publish and the leak checks below when that is the step 0 stop. Step 7 is the first step that sets it to `0`. While it is on, quote and claim return **503** `kill_switch` before any of the split-version behavior below. If the alternate (`LIVE_SUBMIT=0`) was used, the health check stays `"liveSubmit": false` instead of `"killSwitch": true`, and a live claim stays **409** `live_submit_blocked`. If the fallback was used, the `a66ef64` process is open and an old-bundle live claim is **400** `intent_required`.
 
