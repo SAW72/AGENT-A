@@ -22,6 +22,7 @@ Read before using or relying on any stamp:
 - [Disclaimer](DISCLAIMER.md)
 - [Terms of Use](TERMS.md)
 - [Privacy](PRIVACY.md)
+- [Security summary](SECURITY.md)
 
 Related: [BVT securities disclaimer](docs/BVT_SECURITIES_DISCLAIMER.md) · [jurisdiction risk map](docs/LEGAL_JURISDICTION_MATRIX.md) (not a legal opinion).
 
