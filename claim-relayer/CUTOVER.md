@@ -106,7 +106,7 @@ Then look at both Production and Preview in the dashboard again.
 1. PR #46 is already squash-merged. `main` is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`. It was merged from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. Do not merge it again.
 2. If Auto-Deploy is on, leave the step 0 stop in place and leave `ADMIN_SECRET` unset through that deploy. When that stop is `KILL_SWITCH=1`, the new process reads `KILL_SWITCH` at start, so the deploy comes up paused. When the alternate was used, leave `LIVE_SUBMIT=0` instead of setting `KILL_SWITCH`. When the fallback was used, do not add `KILL_SWITCH` or `LIVE_SUBMIT` for this deploy: `a66ef64` comes up open, which is harmless because `a66ef64` ignores the old secret and old-bundle requests get **400** `intent_required`. If Auto-Deploy is off, the merge does not deploy. Use Manual Deploy of `a66ef64` with that same env.
 3. After the deploy finishes, `GET /health` must show `"killSwitch": true` when step 0 set `KILL_SWITCH=1`. If the alternate (`LIVE_SUBMIT=0`) was used, expect `"liveSubmit": false` and `"mode": "fixture"` instead of `"killSwitch": true`. `liveSubmitBlockers` contains `live_submit_off`. If the fallback (`CLAIM_API_SECRET` deleted) was used, this deploy of `a66ef64` comes up open, so `"killSwitch"` is false unless `KILL_SWITCH` was already set. That open process is harmless: `a66ef64` ignores the old secret, and old-bundle requests get **400** `intent_required`. The Render deploy view shows the relayer commit `a66ef64`. That is not the Pages commit. `/health` has no commit field and no build field. Do not look for either in the JSON.
-4. Done by Builder. PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) is rebased onto `a66ef64`. Its head is `c6b4a844378a95f74a575e213991cfac248ef3fc`. QA and Verifier both passed it there. Spencer does not rebase #41 by hand. Wait until that PR is merged, then publish Pages from that `main` commit. The Pages commit is not `a66ef64`.
+4. Done by Builder. PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. Publish Pages from that `main` commit. The Pages commit is not `a66ef64`.
 5. Publish that Pages commit. Either path uses the build env from CI or from the local shell, never from Pages env vars.
    - GitHub: Actions → Deploy wallet-ux → Run workflow. `on` is `workflow_dispatch` only, and the job runs only for `refs/heads/main`. The build receives `VITE_CLAIM_RELAYER_URL` from the `production` environment variable. It must not receive `VITE_CLAIM_API_SECRET`. The workflow uploads with `wrangler pages deploy` twice: first `--branch=preview-<run_id>`, then `--branch=main` with `--commit-hash` set to that commit.
    - Or, from a shell where `VITE_CLAIM_API_SECRET` is unset:
@@ -120,12 +120,24 @@ npm ci
 npm test
 npm run build
 (
+  if [ ! -d dist ]; then
+    echo 'MISSING DIST' >&2
+    exit 1
+  fi
   leak=0
   name=$(grep -REic -e 'x-claim-secret|VITE_CLAIM_API_SECRET' dist)
   name_status=$?
   shape=$(grep -REc -e 'VITE_[A-Z_]*(SECRET|KEY|TOKEN)["'\'']?[[:space:]]*:[[:space:]]*["'\''`][^"'\''`]{16,}' dist)
   shape_status=$?
-  [ "$name_status" -ne 2 ] && [ "$shape_status" -ne 2 ] || { echo 'LEAK' >&2; exit 1; }
+  if [ "$name_status" -eq 2 ] || [ "$shape_status" -eq 2 ]; then
+    echo 'MISSING DIST' >&2
+    exit 1
+  fi
+  js=$(printf '%s\n' "$name" | grep '\.js:' || true)
+  if [ -z "$js" ]; then
+    echo 'NO JS' >&2
+    exit 1
+  fi
   if [ -n "$name" ] && printf '%s\n' "$name" | grep -v ':0$'; then
     leak=1
   fi
@@ -136,13 +148,13 @@ npm run build
 )
 ```
 
-`grep -REc` and `grep -REic` print one line per file, `path:N`. `N` is how many lines in that file matched. It is not a line number. `dist/assets/index-xxxx.js:0` means no matching line in that file. The subshell pipes each result through `grep -v ':0$'`, so only nonzero hits print. Any printed line is a failure: the subshell prints `LEAK` and exits nonzero, and your shell stays open. A clean tree prints nothing and that subshell exits 0. A grep error (exit status 2, for example a missing `dist`) is also `LEAK`. Do not drop `-c`. Do not add `-o` or `-n`. Do not deploy if anything prints. After #41 merges, `node scripts/guard-claim-secret.mjs dist` replaces these greps. Run it from `apps/wallet-ux`.
+`grep -REc` and `grep -REic` print one line per file, `path:N`. `N` is how many lines in that file matched. It is not a line number. `dist/assets/index-xxxx.js:0` means no matching line in that file. The check is one `( ... )` subshell, so `exit` stays inside it and pasting it does not close your shell. The subshell pipes each result through `grep -v ':0$'`, so only nonzero hits print. Any printed hit is a failure: the subshell prints `LEAK` and exits nonzero. A clean tree that contains at least one `.js` file prints nothing and that subshell exits 0. A missing `dist` prints `MISSING DIST` and exits nonzero. It does not print `LEAK`. An empty `dist`, or a `dist` with no `.js` files, prints `NO JS` and exits nonzero. A grep error (exit status 2) is `MISSING DIST`, not `LEAK`. Do not drop `-c`. Do not add `-o` or `-n`. Do not deploy if anything prints. #41 merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. `node scripts/guard-claim-secret.mjs dist` replaces these greps. Run it from `apps/wallet-ux`.
 
 ```bash
 npx wrangler pages deploy dist --project-name=agent-a-wallet-ux --branch=main --commit-hash=<pages-main-sha> --commit-dirty=false
 ```
 
-A local `--branch=main` upload publishes production directly. The workflow's preview branch is the path that runs `verify-served-bundle.mjs` before production. `<pages-main-sha>` is the wallet-ux commit on `main` after #41 merges. It is not the Render commit `a66ef64`.
+A local `--branch=main` upload publishes production directly. The workflow's preview branch is the path that runs `verify-served-bundle.mjs` before production. `<pages-main-sha>` is the wallet-ux commit on `main`. #41 merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. That Pages commit is not the Render commit `a66ef64`.
 
 Keep `KILL_SWITCH=1` through this publish and the leak checks below when that is the step 0 stop. Step 7 is the first step that sets it to `0`. While it is on, quote and claim return **503** `kill_switch` before any of the split-version behavior below. If the alternate (`LIVE_SUBMIT=0`) was used, the health check stays `"liveSubmit": false` instead of `"killSwitch": true`, and a live claim stays **409** `live_submit_blocked`. If the fallback was used, the `a66ef64` process is open and an old-bundle live claim is **400** `intent_required`.
 
@@ -162,7 +174,7 @@ The snippet uses `[[:space:]]` in place of `\s` because macOS `/usr/bin/grep` is
 
 `name /assets/file.js:N` and `shape /assets/file.js:N` use the same `path:N` form as `grep -REc`. The number after the last colon is how many lines in that file matched. It is not a line number. `:0` is clean for that check. The whole snippet is one `( ... )` subshell. `exit`, `trap`, and `set -o pipefail` stay inside it. Pasting it does not close your shell, and it does not drop `$BASE` or the `PAGES_*` exports from step 3. You can save the fenced text as `leak-check.sh` and run `bash leak-check.sh` or `zsh leak-check.sh`. A failure exits nonzero. Only a clean run prints `CLEAN` and exits 0.
 
-The snippet prints `CLEAN` only when at least one real `/assets/*.js` file was checked and every count is 0. It starts from the `/assets/*.js` paths in the HTML, then follows more JavaScript found in those files: absolute `/assets/*.js` paths, and same-directory dynamic imports such as `"./ccip-….js"` (`"./*.js"` quoted with `"`, `'`, or a backtick). That is the same pair of scans as `apps/wallet-ux/scripts/verify-served-bundle.mjs` on #41 (`c6b4a84`). Those chunks are fetched and scanned too. Every other path exits nonzero: `FETCH FAILED` (curl error, redirect, empty body, whitespace-only JavaScript, HTML body, or no script), `OLD BUNDLE`, or `LEAK`. A JavaScript body that is empty or only whitespace is `FETCH FAILED`, including a file whose only bytes are a UTF-8 BOM. A Pages 404 for a missing asset is `index.html`, so a body whose first non-whitespace character is `<` is a failure. A leading UTF-8 BOM is stripped before that test. An Access or auth 302 is a failure. Do not read `CLEAN` out of a failed run.
+The snippet prints `CLEAN` only when at least one real `/assets/*.js` file was checked and every count is 0. It starts from the `/assets/*.js` paths in the HTML, then follows more JavaScript found in those files: absolute `/assets/*.js` paths, and same-directory dynamic imports such as `"./ccip-….js"` (`"./*.js"` quoted with `"`, `'`, or a backtick). That is the same pair of scans as `apps/wallet-ux/scripts/verify-served-bundle.mjs` from #41, which merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. Those chunks are fetched and scanned too. Every other path exits nonzero: `FETCH FAILED` (curl error, redirect, empty body, whitespace-only JavaScript, HTML body, or no script), `OLD BUNDLE`, or `LEAK`. A JavaScript body that is empty or only whitespace is `FETCH FAILED`, including a file whose only bytes are a UTF-8 BOM. A Pages 404 for a missing asset is `index.html`, so a body whose first non-whitespace character is `<` is a failure. A leading UTF-8 BOM is stripped before that test. An Access or auth 302 is a failure. Do not read `CLEAN` out of a failed run.
 
 ```bash
 (
@@ -285,7 +297,7 @@ echo CLEAN
 )
 ```
 
-After #41 merges, the new deployment is also checked by `apps/wallet-ux/scripts/verify-served-bundle.mjs` at `c6b4a844378a95f74a575e213991cfac248ef3fc` on `cursor/wallet-ux-pages-deploy-e3f5`. The workflow runs `node scripts/verify-served-bundle.mjs` from `apps/wallet-ux` on the preview deployment, then again after the production upload. That file is on the #41 branch. It is not on `main` until #41 merges, so run this snippet yourself on any upload before that. `scripts/guard-claim-secret.mjs` rejects the header name and `VITE_CLAIM_API_SECRET`, including base64, hex, and URL encodings of those names. It does not read a secret from the environment.
+#41 merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`. The deployment is also checked by `apps/wallet-ux/scripts/verify-served-bundle.mjs` on that commit. The workflow runs `node scripts/verify-served-bundle.mjs` from `apps/wallet-ux` on the preview deployment, then again after the production upload. `scripts/guard-claim-secret.mjs` rejects the header name and `VITE_CLAIM_API_SECRET`, including base64, hex, and URL encodings of those names. It does not read a secret from the environment.
 
 ### Health check after both sides are up
 
@@ -341,9 +353,9 @@ npx wrangler pages deployment delete <DEPLOYMENT_ID> --project-name agent-a-wall
 
 The Pages preview docs still say the latest deployment on a branch cannot be deleted. If the force delete is refused, do not keep retrying it.
 
-The Deploy wallet-ux workflow (PR #41) uploads `--branch=preview-<run_id>` and then tries to delete that deployment with `--force`. `preview-<run_id>` has only that one deployment, so it is the latest on its branch. The workflow marks that step `continue-on-error`. Pages does not expire those previews. Each dispatch can leave one behind, and they pile up.
+The Deploy wallet-ux workflow (PR #41, merged into `main` as `10d021323bd9faa75481a9692625c9ba43ba9aad`) uploads `--branch=preview-<run_id>` and then tries to delete that deployment with `--force`. `preview-<run_id>` has only that one deployment, so it is the latest on its branch. The workflow marks that step `continue-on-error`. Pages does not expire those previews. Each dispatch can leave one behind, and they pile up.
 
-If a preview still cannot be deleted, Cloudflare Access on preview URLs remains the fallback (Zero Trust → Access, or the Pages project's Access policy). Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable. Leave preview deployments enabled. On `c6b4a84` the workflow uploads `--branch=preview-<run_id>`, runs `scripts/verify-served-bundle.mjs` on that preview, and only then uploads `--branch=main`. Turning preview deployments off stops that check before production.
+If a preview still cannot be deleted, Cloudflare Access on preview URLs remains the fallback (Zero Trust → Access, or the Pages project's Access policy). Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable. Leave preview deployments enabled. On `10d021323bd9faa75481a9692625c9ba43ba9aad` the workflow uploads `--branch=preview-<run_id>`, runs `scripts/verify-served-bundle.mjs` on that preview, and only then uploads `--branch=main`. Turning preview deployments off stops that check before production.
 
 ## 4. Rotate ADMIN_SECRET only if admin routes are needed later
 
