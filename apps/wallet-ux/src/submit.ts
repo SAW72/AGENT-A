@@ -1,6 +1,7 @@
 import type { Address } from "viem"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import { BASE_MAINNET_CHAIN_ID, ETHEREUM_MAINNET_CHAIN_ID, type WalletChainId } from "./guard"
+import { RELEASE_SENDER_NOTE } from "./preview"
 
 export type SubmitCode = "ok" | "disconnected" | "conflict" | "unknown" | "mainnet" | "base-mainnet" | "wrong-chain"
 
@@ -78,7 +79,7 @@ export function submitSenderNote(functionName: string): string {
     return "The connected wallet sends this dispute to the panel on Base Sepolia."
   }
   if (functionName === "release") {
-    return "Only the payer can release an open escrow. The connected wallet sends this payout on Base Sepolia."
+    return RELEASE_SENDER_NOTE
   }
   if (functionName === "refund") {
     return "Anyone can send a refund. The connected wallet sends this on Base Sepolia."
@@ -113,8 +114,13 @@ export const FORM_ERRORS = {
   valueZero: "Enter an amount greater than zero. Nothing was sent.",
   releaseId: "Enter the claim identifier before releasing this claim.",
   refundId: "Enter the claim identifier before refunding this claim.",
-  openIds: "Enter the claim identifier and the time the claim was created before opening a dispute.",
+  openIds: "Enter the claim identifier before opening a dispute.",
   openReason: "Enter a reason before opening a dispute.",
+  subjectNetwork: "The network did not answer, so this dispute was not prepared.",
+  subjectNoCode: "No contract is at the escrow address, so this dispute was not prepared.",
+  subjectRejected: "The escrow rejected the subject read, so this dispute was not prepared.",
+  subjectMissing: "This claim is not on the escrow yet, so this dispute was not prepared.",
+  subjectPending: "The subject is still being read, so this dispute was not prepared.",
   disputeClaim: "Enter the claim identifier before opening a dispute.",
   disputeId: "Enter the dispute identifier before opening a dispute.",
   denylistHash: "Enter the identifier before looking it up.",

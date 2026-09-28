@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { keccak256, toBytes } from "viem";
-import { CLAIM_INTENT_SCHEMA, CLAIM_INTENT_TYPE_STRING, CLAIM_INTENT_TYPEHASH, actionIndex, actionName, parseClaimIntent } from "../claimIntent.mjs";
+import { CLAIM_INTENT_SCHEMA, CLAIM_INTENT_TYPE_STRING, CLAIM_INTENT_TYPEHASH, actionIndex, actionName, isReleaseAlias, parseClaimIntent } from "../claimIntent.mjs";
 
 /** Pinned EIP-712 typehash for ClaimIntent. A schema edit must change this on purpose. */
 const PINNED_TYPEHASH = "0x1f13fdcc6f1390de5e43ffa26909f5e100cb78aaa1cf33d9abdf7d71a4cde0d2";
@@ -31,11 +31,30 @@ describe("ClaimIntent typehash", () => {
     assert.equal(CLAIM_INTENT_SCHEMA.deadlineWindowSeconds, 300);
   });
 
-  it("refuses release before a signature is read", () => {
-    for (const action of ["release", 0]) {
+  it("refuses release aliases before a signature is read", () => {
+    for (const action of ["release", "Release", " RELEASE ", "0", "00", " 0", 0, 0n]) {
+      assert.equal(isReleaseAlias(action), true);
       assert.throws(
         () => parseClaimIntent({ intent: { action } }),
-        (err) => err.status === 400 && err.error === "release_not_relayable",
+        (err) => err.status === 400 && err.error === "release_not_relayable" && err.txHash === null,
+      );
+    }
+    assert.equal(isReleaseAlias("0x0"), false);
+    assert.equal(isReleaseAlias("1"), false);
+    assert.equal(isReleaseAlias(1), false);
+    assert.throws(
+      () => parseClaimIntent({ intent: { action: "0x0" } }),
+      (err) => err.status === 400 && err.error === "invalid_signature",
+    );
+  });
+
+  it("rejects array and object actions before a signature is read", () => {
+    for (const action of [[], {}, ["release"], { name: "release" }]) {
+      assert.equal(actionName(action), null);
+      assert.equal(actionIndex(action), null);
+      assert.throws(
+        () => parseClaimIntent({ intent: { action } }),
+        (err) => err.status === 400 && err.error === "action_not_claim" && err.field === "action",
       );
     }
   });

@@ -14,7 +14,7 @@ import { BASE_SEPOLIA_CHAIN_ID, SUPERSEDED } from "./addresses"
 import { presentError, presentRevertHex, type ErrorPresentation } from "./format"
 import { BASE_MAINNET_CHAIN_ID, ETHEREUM_MAINNET_CHAIN_ID, type WalletChainId } from "./guard"
 import { CLAIM_RELAYER_WALLET, submitRelayerAfterPreflight, type PreflightClient } from "./preflight"
-import type { CallPreview } from "./preview"
+import { RELEASE_NOT_RELAYABLE_TEXT, type CallPreview } from "./preview"
 import { REVERT_FALLBACK_TEXT } from "./revert"
 import { evaluateEscrowSubmit } from "./submit"
 
@@ -163,7 +163,7 @@ const RELAYER_PLAIN: Record<string, string> = {
   mainnet_refused: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   wrong_chain: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   action_not_claim: "This step has to be sent from your wallet, not the claim relayer.",
-  release_not_relayable: "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
+  release_not_relayable: RELEASE_NOT_RELAYABLE_TEXT,
   ruling_pending:
     "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled. Nothing was sent.",
   invalid_relayer_url: "The claim relayer address is not valid. Nothing was sent.",
@@ -293,11 +293,7 @@ function asHex32(value: unknown, field: string): Hex {
 export function claimBodyFromPreview(preview: CallPreview): LiveClaimBody {
   assertRelayerChain(BASE_SEPOLIA_CHAIN_ID)
   if (preview.functionName === "release") {
-    throw new RelayerRequestError(
-      "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
-      null,
-      "release_not_relayable",
-    )
+    throw new RelayerRequestError(RELEASE_NOT_RELAYABLE_TEXT, null, "release_not_relayable")
   }
   if (!isRelayerAction(preview.functionName)) {
     throw new RelayerRequestError(
@@ -732,11 +728,7 @@ export function claimSignArgs(input: {
 
 function actionFromSignedIndex(index: number): RelayerAction {
   if (index === CLAIM_INTENT_REFUSED_ACTIONS.release) {
-    throw new RelayerRequestError(
-      "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
-      null,
-      "release_not_relayable",
-    )
+    throw new RelayerRequestError(RELEASE_NOT_RELAYABLE_TEXT, null, "release_not_relayable")
   }
   if (index === CLAIM_INTENT_ACTION_VALUES.refund) return "refund"
   throw new RelayerRequestError(

@@ -179,10 +179,15 @@ describe("signed claim intent auth", () => {
 
   it("returns 409 ruling_pending when refund simulation reverts RulingPending and does not broadcast", async () => {
     let sends = 0;
+    let sims = 0;
     const chain = trackingChain({
       payer: accounts.payer.address,
       payee: accounts.payee.address,
-      simulate: async () => ({ ok: false, gasUsed: 0n, revertData: "0x3a0621bd" }),
+      simulate: async () => {
+        sims += 1;
+        if (sims === 1) return { ok: false, gasUsed: 0n, revertData: "0x3a0621bd" };
+        return { ok: true, gasUsed: 80_000n };
+      },
     });
     const ctx = await boot({}, {
       chain,
@@ -202,6 +207,18 @@ describe("signed claim intent auth", () => {
       assert.equal(res.json.revert_data, "0x3a0621bd");
       assert.equal(sends, 0);
       assert.equal(chain.calls.simulations.length, 1);
+
+      const again = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(again.status, 409);
+      assert.equal(again.json.error, "nonce_replay");
+      assert.equal(again.json.txHash, null);
+      assert.equal(sends, 0);
+
+      const fresh = await releaseBody(accounts.payer, { nonce: "178" });
+      const ok = await request(ctx.port, "POST", "/v1/claims", fresh);
+      assert.equal(ok.status, 200);
+      assert.equal(ok.json.txHash, TX);
+      assert.equal(sends, 1);
     } finally {
       await ctx.close();
     }
@@ -549,6 +566,32 @@ describe("signed claim intent auth", () => {
       assert.equal(sent.length, 0);
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("refuses release aliases, including numeric 0, before signature recovery", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({}, { chain });
+    try {
+      for (const action of [0, "0", "00", " 0", "Release", " RELEASE "]) {
+        const res = await request(ctx.port, "POST", "/v1/claims", { live: true, intent: { action } });
+        assert.equal(res.status, 400, JSON.stringify(action));
+        assert.equal(res.json.error, "release_not_relayable", JSON.stringify(action));
+        assert.equal(res.json.txHash, null);
+      }
+      for (const action of [[], {}, ["release"], { name: "release" }]) {
+        const res = await request(ctx.port, "POST", "/v1/claims", { live: true, intent: { action } });
+        assert.equal(res.status, 400);
+        assert.equal(res.json.error, "action_not_claim");
+        assert.equal(res.json.field, "action");
+        assert.equal(res.json.txHash, null);
+      }
+      assert.equal(chain.calls.reads.length, 0);
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(chain.calls.simulations.length, 0);
+      assert.equal(ctx.sent.length, 0);
+    } finally {
+      await ctx.close();
     }
   });
 

@@ -2,5 +2,8 @@
   "DisputeVotesCast": {
     "selector": "0x8aab0a8f",
     "meaning": "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one."
+  },
+  "ReleaseNotAuthorized": {
+    "meaning": "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee."
   }
 }

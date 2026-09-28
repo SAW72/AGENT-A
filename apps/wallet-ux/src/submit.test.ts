@@ -65,7 +65,7 @@ describe("submit target", () => {
   it("states who sends each prepared transaction in plain English", () => {
     expect(submitSenderNote("createEscrow")).toMatch(/allowed to fund claims for the payer/)
     expect(submitSenderNote("release")).toBe(
-      "Only the payer can release an open escrow. The connected wallet sends this payout on Base Sepolia.",
+      "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee. The connected wallet sends this payout on Base Sepolia.",
     )
     expect(submitSenderNote("refund")).toBe("Anyone can send a refund. The connected wallet sends this on Base Sepolia.")
     expect(submitSenderNote("dispute")).toBe("The payer or the payee has to send this. The connected wallet is the sender.")

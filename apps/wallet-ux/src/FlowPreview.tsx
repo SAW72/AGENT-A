@@ -3,6 +3,7 @@ import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem
 import { useAccount, usePublicClient, useSendTransaction, useWalletClient } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import { parseBytes32, randomBytes32 } from "./bytes32"
+import { readDisputeSubject, type DisputeSubjectResult } from "./disputeSubject"
 import { ErrorNotice } from "./ErrorNotice"
 import { presentError, type ErrorPresentation } from "./format"
 import { resolveWalletChainId } from "./guard"
@@ -19,7 +20,6 @@ import {
   POST_EXPIRY_REFUND_ORDER,
   previewCreateEscrow,
   previewDispute,
-  panelSubject,
   previewOpenDispute,
   previewRefund,
   previewRelease,
@@ -319,14 +319,6 @@ function Field({
   )
 }
 
-function parseCreatedAt(value: string): bigint | null {
-  const text = value.trim()
-  if (!/^[0-9]+$/.test(text)) return null
-  const parsed = BigInt(text)
-  if (parsed >= 2n ** 256n) return null
-  return parsed
-}
-
 export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address }) {
   const [error, setError] = useState<string | null>(null)
   const [previews, setPreviews] = useState<CallPreview[]>([])
@@ -562,14 +554,56 @@ function OpenDisputeForm({
   onPreview: (preview: CallPreview[]) => void
   onError: (message: string) => void
 }) {
+  const client = usePublicClient({ chainId: BASE_SEPOLIA_CHAIN_ID })
   const [disputeId, setDisputeId] = useState(() => randomBytes32())
   const [claimId, setClaimId] = useState("")
-  const [createdAt, setCreatedAt] = useState("")
   const [reason, setReason] = useState("")
+  const [resolution, setResolution] = useState<DisputeSubjectResult | null>(null)
+  const [readingSubject, setReadingSubject] = useState(false)
   const parsedClaim = parseBytes32(claimId)
-  const parsedCreatedAt = parseCreatedAt(createdAt)
-  const subjectHash =
-    parsedClaim && parsedCreatedAt !== null ? panelSubject(escrow, parsedClaim, parsedCreatedAt) : ""
+
+  useEffect(() => {
+    if (!parsedClaim) {
+      setResolution(null)
+      setReadingSubject(false)
+      return
+    }
+    if (!client) {
+      setReadingSubject(false)
+      setResolution({ ok: false, message: FORM_ERRORS.subjectNetwork })
+      return
+    }
+    let cancelled = false
+    setReadingSubject(true)
+    setResolution(null)
+    readDisputeSubject(client, escrow, parsedClaim).then(
+      (next) => {
+        if (cancelled) return
+        setReadingSubject(false)
+        setResolution(next)
+      },
+      () => {
+        if (cancelled) return
+        setReadingSubject(false)
+        setResolution({ ok: false, message: FORM_ERRORS.subjectNetwork })
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [client, escrow, parsedClaim])
+
+  const createdAt = resolution?.ok ? resolution.createdAt.toString() : ""
+  const subject = resolution?.ok ? resolution.subject : ""
+  const subjectHint = readingSubject
+    ? "Reading the subject from the escrow."
+    : resolution?.ok
+      ? resolution.source === "view"
+        ? "Read from the escrow. The panel stores this subject."
+        : "This escrow has no subject view, so the claim identifier is the subject."
+      : resolution
+        ? resolution.message
+        : "Filled from the escrow after the claim identifier is entered."
 
   return (
     <form
@@ -578,8 +612,7 @@ function OpenDisputeForm({
         event.preventDefault()
         const id = parseBytes32(disputeId)
         const claim = parseBytes32(claimId)
-        const created = parseCreatedAt(createdAt)
-        if (!id || !claim || created === null) {
+        if (!id || !claim) {
           onError(FORM_ERRORS.openIds)
           return
         }
@@ -587,9 +620,16 @@ function OpenDisputeForm({
           onError(FORM_ERRORS.openReason)
           return
         }
-        const subject = panelSubject(escrow, claim, created)
+        if (readingSubject || !resolution || (resolution.ok && resolution.escrowId !== claim)) {
+          onError(FORM_ERRORS.subjectPending)
+          return
+        }
+        if (!resolution.ok) {
+          onError(resolution.message)
+          return
+        }
         onPreview([
-          previewOpenDispute(panel, id, subject, reason.trim()),
+          previewOpenDispute(panel, id, resolution.subject, reason.trim()),
           previewDispute(escrow, claim, id),
         ])
       }}
@@ -612,16 +652,17 @@ function OpenDisputeForm({
         id="open-created-at"
         label="Time the claim was created"
         value={createdAt}
-        onChange={setCreatedAt}
-        hint="Seconds since 1970, the same time stored when the claim was created."
+        onChange={() => undefined}
+        readOnly
+        hint="Read from the claim. This time is not typed."
       />
       <Field
         id="open-subject"
         label="Subject"
-        value={subjectHash}
+        value={subject}
         onChange={() => undefined}
         readOnly
-        hint="Filled from the claim identifier and the time the claim was created. The panel stores this subject."
+        hint={subjectHint}
       />
       <Field id="open-reason" label="Reason" value={reason} onChange={setReason} />
       <button type="submit">{OPEN_AND_LINK_BUTTON}</button>

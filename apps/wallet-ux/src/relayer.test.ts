@@ -28,6 +28,7 @@ import {
   claimBodyFromPreview,
   postLiveClaim,
   presentRelayerError,
+  RelayerRequestError,
   readRelayerHealth,
   readRelayerPaused,
   RELAYER_CHECK_WALLET_LABEL,
@@ -402,9 +403,17 @@ describe("release is not relayed", () => {
     if (!result.ok) {
       expect(result.code).toBe("release_not_relayable")
       expect(result.presentation.main).toBe(
-        "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
+        "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee. Send it from that wallet. Nothing was sent.",
       )
     }
+  })
+
+  it("explains a ruling_pending refusal in plain English", () => {
+    const presented = presentRelayerError(new RelayerRequestError("ruling_pending", 409, "ruling_pending"))
+    expect(presented.main).toBe(
+      "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled. Nothing was sent.",
+    )
+    expect(presented.main).not.toMatch(/409|ruling_pending/)
   })
 })
 

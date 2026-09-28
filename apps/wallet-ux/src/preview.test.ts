@@ -10,6 +10,7 @@ import {
   MAX_DURATION_SECONDS,
   DISPUTE_VOTES_CAST_TEXT,
   POST_EXPIRY_REFUND_ORDER,
+  RELEASE_NOT_AUTHORIZED_TEXT,
   RULING_PENDING_TEXT,
   previewCreateEscrow,
   previewDispute,
@@ -69,8 +70,11 @@ describe("calldata preview", () => {
     expect(names).toContain("ReleaseNotAuthorized")
     expect(names).toContain("NotParty")
     expect(names).toContain("DisputeAfterExpiry")
+    expect(RELEASE_NOT_AUTHORIZED_TEXT).toBe(
+      "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee.",
+    )
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "ReleaseNotAuthorized")?.meaning).toBe(
-      "Only the payer can release an open escrow.",
+      RELEASE_NOT_AUTHORIZED_TEXT,
     )
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "NotParty")?.meaning).toBe(
       "This wallet is not a party to this escrow.",
@@ -81,9 +85,13 @@ describe("calldata preview", () => {
     expect(toFunctionSelector("DisputeVotesCast()")).toBe("0x8aab0a8f")
     const revertCopy = JSON.parse(
       readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../claim-relayer/revertCopy.json"), "utf8"),
-    ) as { DisputeVotesCast: { selector: string; meaning: string } }
+    ) as {
+      DisputeVotesCast: { selector: string; meaning: string }
+      ReleaseNotAuthorized: { meaning: string }
+    }
     expect(revertCopy.DisputeVotesCast.selector).toBe("0x8aab0a8f")
     expect(revertCopy.DisputeVotesCast.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
+    expect(revertCopy.ReleaseNotAuthorized.meaning).toBe(RELEASE_NOT_AUTHORIZED_TEXT)
     expect(toFunctionSelector("RulingPending()")).toBe("0x3a0621bd")
     expect(toFunctionSelector("RULING_GRACE()")).toBe("0x3cfbadae")
     expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.error)).toEqual([
@@ -118,11 +126,16 @@ describe("calldata preview", () => {
     expect(panelSubject(escrow, other, createdAt)).not.toBe(subject)
     expect(panelSubject(panel, id, createdAt)).not.toBe(subject)
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "FlowPreview.tsx"), "utf8")
-    expect(source).toContain("panelSubject(escrow, claim, created)")
+    expect(source).not.toContain("panelSubject(escrow, claim, created)")
     expect(source).toContain('id="open-subject"')
+    expect(source).toContain('id="open-created-at"')
     expect(source).toContain("readOnly")
     expect(source).not.toContain("Use the claim identifier. The panel stores this as the subject.")
     const openForm = source.slice(source.indexOf("function OpenDisputeForm"), source.indexOf("function DisputeForm"))
+    expect(openForm).toContain("readDisputeSubject")
+    expect(openForm).not.toContain("panelSubject(")
+    expect(openForm).not.toContain("setCreatedAt")
+    expect(openForm).not.toContain("parseCreatedAt")
     expect(openForm).toContain("randomBytes32()")
     expect(openForm).toContain("previewOpenDispute")
     expect(openForm).toContain("previewDispute(escrow, claim, id)")

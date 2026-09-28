@@ -50,6 +50,14 @@ export const OPEN_CASE_HEADING = "Open the case"
 export const LINK_CASE_HEADING = "Link the case"
 export const CASE_ID_HINT = "A new random identifier for this case. It is not taken from the claim or the clock."
 
+/** Contract error ReleaseNotAuthorized. */
+export const RELEASE_NOT_AUTHORIZED_TEXT =
+  "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee."
+
+export const RELEASE_NOT_RELAYABLE_TEXT = `${RELEASE_NOT_AUTHORIZED_TEXT} Send it from that wallet. Nothing was sent.`
+
+export const RELEASE_SENDER_NOTE = `${RELEASE_NOT_AUTHORIZED_TEXT} The connected wallet sends this payout on Base Sepolia.`
+
 /** Plain-English meanings for contract reverts. These builders do not submit. */
 export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "FundingBeforeGovernance", meaning: "New claims can't be created yet. The contract owner still needs to accept the governance handover." },
@@ -63,7 +71,7 @@ export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "DisputeVotesCast", meaning: DISPUTE_VOTES_CAST_TEXT },
   { name: "DisputePredatesEscrow", meaning: "This dispute was opened before this claim, so it can't be linked." },
   { name: "DisputeChallengerNotParty", meaning: "The person who opened this dispute is neither the payer nor the payee, so it can't be linked to this claim." },
-  { name: "ReleaseNotAuthorized", meaning: "Only the payer can release an open escrow." },
+  { name: "ReleaseNotAuthorized", meaning: RELEASE_NOT_AUTHORIZED_TEXT },
   { name: "NotParty", meaning: "This wallet is not a party to this escrow." },
   { name: "DisputeAfterExpiry", meaning: "The claim window has closed, so this dispute can't be linked." },
   { name: "DisputePending", meaning: "This claim can't be refunded because the dispute panel upheld the deal." },

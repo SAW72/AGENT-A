@@ -30,6 +30,20 @@ export const RETIRED_ESCROW = SUPERSEDED.botAttestationEscrow;
 const ACTION_VALUES = CLAIM_INTENT_SCHEMA.actionValues;
 const REFUSED_ACTIONS = CLAIM_INTENT_SCHEMA.refusedActions;
 
+function isNonScalar(value) {
+  return Array.isArray(value) || (value !== null && typeof value === "object");
+}
+
+/** Case, whitespace, and numeric-string aliases of release. Not "0x0" and not "1". */
+export function isReleaseAlias(action) {
+  if (isNonScalar(action)) return false;
+  if (typeof action === "bigint") return action === 0n;
+  if (typeof action === "number") return Number.isInteger(action) && action === 0;
+  if (typeof action !== "string") return false;
+  const trimmed = action.trim();
+  return trimmed.toLowerCase() === "release" || /^0+$/.test(trimmed);
+}
+
 function valueForName(name) {
   if (Object.prototype.hasOwnProperty.call(ACTION_VALUES, name)) return ACTION_VALUES[name];
   if (Object.prototype.hasOwnProperty.call(REFUSED_ACTIONS, name)) return REFUSED_ACTIONS[name];
@@ -65,6 +79,7 @@ export function claimIntentDomain(chainId, verifyingContract) {
 }
 
 export function actionIndex(action) {
+  if (isNonScalar(action)) return null;
   if (typeof action === "bigint") {
     if (action < 0n || action > 255n) return null;
     return actionIndex(Number(action));
@@ -77,6 +92,7 @@ export function actionIndex(action) {
 }
 
 export function actionName(action) {
+  if (isNonScalar(action)) return null;
   if (typeof action === "bigint") {
     if (action < 0n || action > 255n) return null;
     return actionName(Number(action));
@@ -126,10 +142,13 @@ export function parseClaimIntent(body) {
   if (!intent || typeof intent !== "object" || Array.isArray(intent)) {
     throw httpError(400, "intent_required");
   }
-  const action = actionName(intent.action);
-  if (action === "release") {
+  if (isNonScalar(intent.action)) {
+    throw httpError(400, "action_not_claim", { field: "action", txHash: null, dryRun: false });
+  }
+  if (isReleaseAlias(intent.action)) {
     throw httpError(400, "release_not_relayable", { txHash: null, dryRun: false });
   }
+  const action = actionName(intent.action);
 
   const signature = String(body.signature ?? "").trim();
   if (!isHex(signature) || signature.length < 10) throw httpError(400, "invalid_signature");
