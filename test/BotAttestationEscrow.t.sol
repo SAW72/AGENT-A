@@ -980,7 +980,7 @@ contract BotAttestationEscrowTest is Test {
         assertEq(votesAgainst, 0);
 
         vm.prank(payee);
-        vm.expectRevert(BotAttestationEscrow.DisputeOutcomeLocked.selector);
+        vm.expectRevert(BotAttestationEscrow.DisputeVotesCast.selector);
         escrow.dispute(escrowId, disputeId);
     }
 
@@ -1089,7 +1089,7 @@ contract BotAttestationEscrowTest is Test {
         panel.vote(lockedId, false);
 
         vm.prank(payer);
-        vm.expectRevert(BotAttestationEscrow.DisputeOutcomeLocked.selector);
+        vm.expectRevert(BotAttestationEscrow.DisputeVotesCast.selector);
         escrow.dispute(escrowId, lockedId);
         (,,,,,,, BotAttestationEscrow.EscrowState stillOpen,) = _escrowTuple(escrowId);
         assertEq(uint256(stillOpen), uint256(BotAttestationEscrow.EscrowState.Open));

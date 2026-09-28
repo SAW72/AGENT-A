@@ -179,8 +179,9 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     error InvalidDispute();
     error DisputeAlreadyResolved();
     /// @notice The panel tally can no longer be outvoted, and the case is not resolved yet.
-    /// @dev `votesFor >= UNMOVABLE_PANEL_VOTES` or the same for `votesAgainst`. Open a new dispute id.
-    error DisputeOutcomeLocked();
+    /// @dev Name kept from the zero-vote check. Now means `votesFor >= UNMOVABLE_PANEL_VOTES`
+    ///      or the same for `votesAgainst`. One vote, or one on each side, still links. Open a new dispute id.
+    error DisputeVotesCast();
     error DisputePredatesEscrow();
     error DisputeChallengerNotParty();
     error DisputeAfterExpiry();
@@ -503,7 +504,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ///      not already decided a 3-seat panel. A vote cast after `openDispute` and before
     ///      this call no longer reverts, so that race cannot leave the escrow `Open`.
     ///      `votesFor >= UNMOVABLE_PANEL_VOTES` or `votesAgainst >= UNMOVABLE_PANEL_VOTES`
-    ///      reverts `DisputeOutcomeLocked`: the third vote cannot outvote that side, and
+    ///      reverts `DisputeVotesCast`: the third vote cannot outvote that side, and
     ///      `resolved` is still false. That is the ESC-M-1 pre-cooked ballot. The party
     ///      opens a new dispute id. This function does not call the panel.
     ///      `e.createdAt` is the timestamp stored by `createEscrow`. Same-block open
@@ -534,7 +535,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         // 3. A tally that already decides the 3-seat panel is not a live challenge.
         //    One vote, or one on each side, still links. See `UNMOVABLE_PANEL_VOTES`.
         if (votesFor >= UNMOVABLE_PANEL_VOTES || votesAgainst >= UNMOVABLE_PANEL_VOTES) {
-            revert DisputeOutcomeLocked();
+            revert DisputeVotesCast();
         }
         // 4. The case must not predate this escrow. Equal timestamps (same block) pass.
         if (disputeCreatedAt < e.createdAt) revert DisputePredatesEscrow();
