@@ -399,7 +399,8 @@ contract BotAttestationEscrowPullTest is Test {
         vm.warp(block.timestamp + 1 hours);
         g.openAndLink(escrow, panel, id, did);
         g.setAccept(false);
-        vm.warp(block.timestamp + 1);
+        // Linked at expiresAt. An unresolved case refunds at expiresAt + RULING_GRACE, not one second later.
+        vm.warp(block.timestamp + escrow.RULING_GRACE());
 
         _assertFundedGate();
         vm.prank(payee);

@@ -94,6 +94,14 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ///      governance action and would need this constant updated with it.
     uint256 internal constant UNMOVABLE_PANEL_VOTES = 2;
 
+    /// @notice How long after `expiresAt` an unresolved linked case still blocks `refund`.
+    /// @dev The payee may `dispute` at `expiresAt`. The panel has this long to vote before
+    ///      an unresolved case refunds the payer. `refund` is allowed when
+    ///      `block.timestamp >= expiresAt + RULING_GRACE` and the case is still unresolved.
+    ///      A resolved ruling does not wait on this clock: upheld pays the payee, and
+    ///      an unwind refunds immediately. Not a storage variable.
+    uint256 public constant RULING_GRACE = 7 days;
+
     /// @notice ETH still held for Open or Disputed escrows. Not the raw contract balance.
     uint256 public lockedValue;
 
@@ -186,7 +194,17 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     error DisputeChallengerNotParty();
     error DisputeAfterExpiry();
     error DisputePending();
-    /// @notice `release` caller is neither the payer nor the payee stored at create.
+    /// @notice A linked dispute is still unresolved after `expiresAt`, and `RULING_GRACE` has not elapsed.
+    /// @dev `refund` only. `block.timestamp > expiresAt` and `block.timestamp < expiresAt + RULING_GRACE`.
+    ///      At `expiresAt` the in-window check still reverts `DisputePending`. At
+    ///      `expiresAt + RULING_GRACE` an unresolved case refunds. A resolved ruling does not use this error.
+    error RulingPending();
+    /// @notice This caller may not `release` in the current state.
+    /// @dev While `Open`, only the payer may release. The payee and every other caller revert
+    ///      here, before expiry and before the Vault or denylist are read. While `Disputed`,
+    ///      a caller other than the payer or the payee reverts here. A party on a case that
+    ///      is not a completed uphold reverts `DisputePending` instead, including during
+    ///      `RULING_GRACE`. An upheld case lets either party release.
     error ReleaseNotAuthorized();
     /// @notice `dispute` caller is neither the payer nor the payee.
     error NotParty();
@@ -424,10 +442,20 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
 
     /// @notice Credit the payer if the escrow expires or the panel rules an unwind. Does not transfer ETH.
     /// @dev `Disputed` alone is not enough — that would let either party unwind unilaterally.
-    ///      An upheld panel ruling closes refund permanently, including after `expiresAt`.
-    ///      Expiry remains the backstop only when the panel has not upheld the deal
-    ///      (still pending, or resolved as an unwind). Credits `e.payer`. Does not call the payer.
-    ///      The payer collects with `withdraw` or `withdrawTo`. See `withdraw` for the recipient rule.
+    ///      An upheld panel ruling closes refund permanently, including after `expiresAt`
+    ///      and during `RULING_GRACE`. A resolved unwind refunds immediately, including
+    ///      inside the window and inside the grace. An unresolved case reverts
+    ///      `DisputePending` while `block.timestamp <= expiresAt`, and `RulingPending`
+    ///      while `expiresAt < block.timestamp < expiresAt + RULING_GRACE`. At
+    ///      `block.timestamp >= expiresAt + RULING_GRACE` an unresolved case refunds.
+    ///      That grace is why the payee must `dispute` before expiry: while `Open`, only
+    ///      the payer can `release`, so a silent payee is refunded at `expiresAt`.
+    ///      Credits `e.payer`. Does not call the payer. The payer collects with `withdraw`
+    ///      or `withdrawTo`. See `withdraw` for the recipient rule.
+    ///      After `expiresAt`, `Disputed` checks in this order: upheld → `DisputePending`;
+    ///      else unresolved and still inside `RULING_GRACE` → `RulingPending`; else refund.
+    ///      The in-window order is unchanged: upheld → `DisputePending`, then
+    ///      `InvalidDispute`, then `DisputePending` if the case is not a completed unwind.
     function refund(
         bytes32 escrowId
     ) external nonReentrant {
@@ -435,12 +463,14 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         if (e.state == EscrowState.Open) {
             require(block.timestamp > e.expiresAt, "not expired");
         } else if (e.state == EscrowState.Disputed) {
-            // Upheld means the original deal stands. Do not let expiry flip that into a payer refund.
+            // Upheld means the original deal stands. Do not let expiry or grace flip that into a payer refund.
             if (_panelUpheld(e, escrowId)) revert DisputePending();
             if (block.timestamp <= e.expiresAt) {
                 _requirePanelUnwind(e, escrowId);
+            } else if (_panelUnresolved(e, escrowId) && block.timestamp < e.expiresAt + RULING_GRACE) {
+                // Filed at expiresAt. The panel has RULING_GRACE before an unresolved case refunds.
+                revert RulingPending();
             }
-            // else: expiry is the timelock backstop when the panel has not upheld
         } else {
             revert EscrowNotOpen();
         }
@@ -578,6 +608,17 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     ) internal view returns (bool) {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
         return exists && subject == panelSubject(escrowId, e.createdAt) && resolved && upheld;
+    }
+
+    /// @dev True when the linked case exists, the subject matches this row, and the panel has not resolved it.
+    ///      A missing id or a subject mismatch is not "unresolved": after `expiresAt` those still take the
+    ///      expiry backstop, the same as before `RULING_GRACE`.
+    function _panelUnresolved(
+        Escrow storage e,
+        bytes32 escrowId
+    ) internal view returns (bool) {
+        (bool exists, bool resolved,, bytes32 subject) = disputePanel.outcome(e.disputeId);
+        return exists && subject == panelSubject(escrowId, e.createdAt) && !resolved;
     }
 
     function _requirePanelUnwind(

@@ -27,6 +27,19 @@
   },
   {
     "type": "function",
+    "name": "RULING_GRACE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
     "outputs": [],
@@ -854,6 +867,11 @@
   {
     "type": "error",
     "name": "Replay",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RulingPending",
     "inputs": []
   },
   {

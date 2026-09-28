@@ -320,6 +320,7 @@ contract BotAttestationEscrowTest is Test {
         assertEq(payer.balance, before + amount);
     }
 
+    /// @notice An unresolved dispute does not refund at expiry. The backstop is `expiresAt + RULING_GRACE`.
     function test_refundAfterDisputeOnExpiryTimelock() public {
         bytes32 escrowId = keccak256("deal-disp-tl");
         uint256 amount = 1 ether;
@@ -330,7 +331,15 @@ contract BotAttestationEscrowTest is Test {
         vm.prank(payer);
         escrow.dispute(escrowId, disputeId);
 
-        vm.warp(block.timestamp + 101);
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt + 1);
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.RulingPending.selector);
+        escrow.refund(escrowId);
+        assertEq(escrow.lockedValue(), amount);
+        assertEq(escrow.pendingWithdrawals(payer), 0);
+
+        vm.warp(expiresAt + escrow.RULING_GRACE());
         uint256 before = payer.balance;
         vm.prank(payer);
         escrow.refund(escrowId);
@@ -1178,6 +1187,178 @@ contract BotAttestationEscrowTest is Test {
         assertEq(escrow.pendingWithdrawals(payee), amount);
         (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
         assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
+    }
+
+    /// @notice Payee cannot release an open escrow. Disputing before expiry blocks the payer's free refund.
+    /// @dev Adapted from the payer-free-option PoC. Without a link, expiry still refunds the payer.
+    ///      The payee's recourse is `dispute` at or before `expiresAt`, which holds the ETH through grace.
+    function test_payerFreeOption_noDispute() public {
+        bytes32 escrowId = keccak256("payer-free-option");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+
+        bytes32 caseId = keccak256("payee-blocks-free-option");
+        _panelOpen(payee, caseId, _subjectOf(escrow, escrowId), "delivered, payer silent");
+        vm.prank(payee);
+        escrow.dispute(escrowId, caseId);
+
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt + 1);
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.release(escrowId);
+        vm.prank(makeAddr("relayer"));
+        vm.expectRevert(BotAttestationEscrow.RulingPending.selector);
+        escrow.refund(escrowId);
+
+        assertEq(escrow.pendingWithdrawals(payer), 0);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+        assertEq(escrow.lockedValue(), amount);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Disputed));
+    }
+
+    /// @notice A payee dispute linked at `expiresAt` does not refund before `expiresAt + RULING_GRACE`.
+    /// @dev Adapted from the unresolved-at-expiry PoC. One vote at the deadline used to let the next
+    ///      block refund the payer, and a later uphold could not pay the payee.
+    function test_payeeDisputeUnresolvedAtExpiryRefunds() public {
+        bytes32 escrowId = keccak256("payee-dispute-at-expiry");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+
+        bytes32 caseId = keccak256("payee-case-at-expiry");
+        _panelOpen(payee, caseId, _subjectOf(escrow, escrowId), "delivered, payer silent");
+        vm.warp(expiresAt);
+        vm.prank(payee);
+        escrow.dispute(escrowId, caseId);
+        vm.prank(arb1);
+        panel.vote(caseId, true);
+
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.refund(escrowId);
+
+        vm.warp(expiresAt + 1);
+        vm.prank(makeAddr("relayer"));
+        vm.expectRevert(BotAttestationEscrow.RulingPending.selector);
+        escrow.refund(escrowId);
+        assertEq(escrow.pendingWithdrawals(payer), 0);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+        assertEq(escrow.lockedValue(), amount);
+    }
+
+    /// @notice An unresolved case refunds once `block.timestamp >= expiresAt + RULING_GRACE`.
+    function test_unresolvedRefundSucceedsAfterRulingGrace() public {
+        bytes32 escrowId = keccak256("grace-elapsed");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+        bytes32 caseId = keccak256("grace-elapsed-d");
+        _panelOpen(payee, caseId, _subjectOf(escrow, escrowId), "delivered");
+        vm.prank(payee);
+        escrow.dispute(escrowId, caseId);
+
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt + escrow.RULING_GRACE() - 1);
+        vm.expectRevert(BotAttestationEscrow.RulingPending.selector);
+        escrow.refund(escrowId);
+        assertEq(escrow.pendingWithdrawals(payer), 0);
+
+        vm.warp(expiresAt + escrow.RULING_GRACE());
+        uint256 before = payer.balance;
+        escrow.refund(escrowId);
+        _claim(payer);
+        assertEq(payer.balance, before + amount);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+        assertEq(escrow.lockedValue(), 0);
+    }
+
+    /// @notice A case resolved and upheld during grace pays the payee. Refund stays closed.
+    function test_resolvedUpheldPaysPayee() public {
+        bytes32 escrowId = keccak256("upheld-during-grace");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+        bytes32 caseId = keccak256("upheld-during-grace-d");
+        _panelOpen(payee, caseId, _subjectOf(escrow, escrowId), "delivered");
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt);
+        vm.prank(payee);
+        escrow.dispute(escrowId, caseId);
+
+        vm.warp(expiresAt + 1 days);
+        _panelRule(caseId, true);
+
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.refund(escrowId);
+
+        uint256 before = payee.balance;
+        vm.prank(payee);
+        escrow.release(escrowId);
+        _claim(payee);
+        assertEq(payee.balance, before + amount);
+        assertEq(escrow.pendingWithdrawals(payer), 0);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
+    }
+
+    /// @notice A resolved unwind refunds during grace. The grace clock does not delay a finished ruling.
+    function test_resolvedNotUpheldAllowsRefund() public {
+        bytes32 escrowId = keccak256("unwind-during-grace");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+        bytes32 caseId = keccak256("unwind-during-grace-d");
+        _panelOpen(payer, caseId, _subjectOf(escrow, escrowId), "no delivery");
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt);
+        vm.prank(payer);
+        escrow.dispute(escrowId, caseId);
+
+        vm.warp(expiresAt + 2 days);
+        _panelRule(caseId, false);
+
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.release(escrowId);
+
+        uint256 before = payer.balance;
+        vm.prank(makeAddr("relayer"));
+        escrow.refund(escrowId);
+        _claim(payer);
+        assertEq(payer.balance, before + amount);
+        assertEq(escrow.pendingWithdrawals(payee), 0);
+        assertLt(block.timestamp, expiresAt + escrow.RULING_GRACE());
+    }
+
+    /// @notice `RulingPending` holds for every offset in `(0, RULING_GRACE)`. The boundary refunds.
+    function testFuzz_rulingGraceBoundary(
+        uint256 pastExpiry
+    ) public {
+        pastExpiry = bound(pastExpiry, 1, 30 days);
+        bytes32 escrowId = keccak256(abi.encode("grace-boundary", pastExpiry));
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 1 days);
+        bytes32 caseId = keccak256(abi.encode("grace-boundary-d", pastExpiry));
+        _panelOpen(payee, caseId, _subjectOf(escrow, escrowId), "boundary");
+        vm.prank(payee);
+        escrow.dispute(escrowId, caseId);
+
+        (,,,,,, uint256 expiresAt,,) = escrow.escrows(escrowId);
+        vm.warp(expiresAt + pastExpiry);
+        if (pastExpiry < escrow.RULING_GRACE()) {
+            vm.expectRevert(BotAttestationEscrow.RulingPending.selector);
+            escrow.refund(escrowId);
+            assertEq(escrow.lockedValue(), amount);
+            assertEq(escrow.pendingWithdrawals(payer), 0);
+        } else {
+            escrow.refund(escrowId);
+            assertEq(escrow.pendingWithdrawals(payer), amount);
+            assertEq(escrow.lockedValue(), 0);
+            (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+            assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Refunded));
+        }
     }
 
     /// @notice The payee cannot release an open escrow ahead of the payer's dispute link.
