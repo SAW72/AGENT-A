@@ -2,7 +2,7 @@
 
 Spencer runs every step below, in order. Nothing in this repository deploys, broadcasts, or stores a secret. Placeholders are names only. Do not paste a real secret into git, a shell history you keep, or this file. Do not put a real secret in a test request.
 
-Step 0 is for the relayer that is deployed now: `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. It is not for PR #46. The later steps are for the EIP-712 relayer at `cfac34a989474c590202623fb8cacfce06621c33` (PR #46). That commit is the rebase onto `main`, and its tree is the one those steps describe.
+Step 0 is for the relayer that is deployed now: `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. It is not for PR #46. The later steps are for the EIP-712 relayer at `05fe6fa77f2b1380d148d289b4ba45ced68625e3` (PR #46). That commit is the rebase onto `main`, and its tree is the one those steps describe.
 
 The Render service is `bot-verifier-claim-relayer`. Copy the hostname from the dashboard. The example below is `https://bot-verifier-claim-relayer.onrender.com`. Wallet UX is the Cloudflare Pages project `agent-a-wallet-ux` (`https://agent-a-wallet-ux.pages.dev`). That project is Direct Upload. It has no git connection, and Cloudflare does not build it.
 
@@ -40,7 +40,7 @@ Leave `KILL_SWITCH=1` in place for the merge in step 2. Do not turn it off betwe
 
 Do this before step 2 builds the Pages bundle. Vite inlines `VITE_*` from the shell or from GitHub Actions. The Pages project env is not the build env. Deleting a Pages variable does not rewrite a bundle that is already uploaded.
 
-The new relayer (`cfac34a`) does not read `CLAIM_API_SECRET`. Delete the old value anyway so it is not left on the service. Do not print the value, and do not send it in a request.
+The new relayer (`05fe6fa`) does not read `CLAIM_API_SECRET`. Delete the old value anyway so it is not left on the service. Do not print the value, and do not send it in a request.
 
 Render dashboard → `bot-verifier-claim-relayer` → Environment → delete `CLAIM_API_SECRET` → Save, rebuild, and deploy. Keep `KILL_SWITCH=1`.
 
@@ -74,7 +74,7 @@ Then look at both Production and Preview in the dashboard again.
 
 `claim-relayer/render.yaml` does not set `autoDeploy`. The file is a reference Blueprint under `claim-relayer/`, not `render.yaml` at the repo root, so merging does not change the running service's auto-deploy setting. Render's Blueprint default, if this file were applied, is auto-deploy on when the key is omitted. That default is not what controls the service that already exists. Check the dashboard: `bot-verifier-claim-relayer` → Settings → Build & Deploy → Auto-Deploy.
 
-1. Merge PR #46 to `main` first. The relayer commit is `cfac34a989474c590202623fb8cacfce06621c33` until GitHub adds a merge commit.
+1. Merge PR #46 to `main` first. The relayer commit is `05fe6fa77f2b1380d148d289b4ba45ced68625e3` until GitHub adds a merge commit.
 2. If Auto-Deploy is on, leave `KILL_SWITCH=1` through that merge. The new process reads `KILL_SWITCH` at start, so the deploy comes up paused. If Auto-Deploy is off, the merge does not deploy. Use Manual Deploy on that same commit, still with `KILL_SWITCH=1`.
 3. After the deploy finishes, `GET /health` must show `"killSwitch": true`. The Render dashboard's deployed commit is the #46 merge. `/health` has no commit field and no build field. Do not look for either in the JSON.
 4. Rebase PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) onto #46, then merge #41. The Pages publish runs only after that, from the `main` commit that contains both.
@@ -258,7 +258,7 @@ To undo it, set `KILL_SWITCH` to `0`, then save, rebuild, and deploy. Confirm `"
 
 ## What the code does not do
 
-Step 0 was checked against `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. The later steps were checked against `cfac34a989474c590202623fb8cacfce06621c33`.
+Step 0 was checked against `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. The later steps were checked against `05fe6fa77f2b1380d148d289b4ba45ced68625e3`.
 
 - `main` does support `KILL_SWITCH` and `LIVE_SUBMIT`, and `/health` does report `killSwitch` and `liveSubmit`. The suspend action and a missing `CLAIM_API_SECRET` are fallbacks, not replacements for those fields.
 - `/health` does not report a git commit or a build id, on `main` or on #46.
