@@ -336,6 +336,33 @@ describe("verify-served-bundle", () => {
     expect(result.stderr).toContain("starts with '<'")
   })
 
+  it("fails when a JavaScript chunk is empty", async () => {
+    const result = await verify(fixture({ javascript: "" }))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`/assets/${hash}.js`)
+    expect(result.stderr).toContain("JavaScript is empty after stripping a UTF-8 BOM")
+  })
+
+  it("fails when a JavaScript chunk is whitespace-only", async () => {
+    const result = await verify(fixture({ javascript: " \n\t\r " }))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`/assets/${hash}.js`)
+    expect(result.stderr).toContain("JavaScript is empty after stripping a UTF-8 BOM")
+  })
+
+  it("fails when a JavaScript chunk is only a UTF-8 BOM", async () => {
+    const result = await verify(fixture({ javascript: "\uFEFF" }))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`/assets/${hash}.js`)
+    expect(result.stderr).toContain("JavaScript is empty after stripping a UTF-8 BOM")
+  })
+
+  it("passes when a JavaScript chunk has a UTF-8 BOM before real source", async () => {
+    const result = await verify(fixture({ javascript: `\uFEFF${bundleSource(3)}` }))
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("retired escrow count 3")
+  })
+
   it("prints one error line and exits 1 when the host is unreachable or DNS fails", async () => {
     const refused = await runNodeAsync("scripts/verify-served-bundle.mjs", [], {
       DEPLOYMENT_URL: "http://127.0.0.1:9",

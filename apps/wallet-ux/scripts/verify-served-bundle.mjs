@@ -128,7 +128,11 @@ try {
       if (!isJavaScriptContentType(contentType)) {
         fail(`Verify failed: ${assetPath} content-type is not JavaScript (${contentType || "missing"}).`)
       }
-      if (text.trimStart().startsWith("<")) {
+      const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+      if (source.trim() === "") {
+        fail(`Verify failed: ${assetPath} JavaScript is empty after stripping a UTF-8 BOM.`)
+      }
+      if (source.trimStart().startsWith("<")) {
         fail(`Verify failed: ${assetPath} body starts with '<' after leading whitespace.`)
       }
     }
