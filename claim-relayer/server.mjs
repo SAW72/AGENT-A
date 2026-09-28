@@ -2,7 +2,10 @@ import { pathToFileURL } from "node:url";
 import { createClaimRelayer } from "./app.mjs";
 import { createSepoliaBroadcaster } from "./broadcast.mjs";
 import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, loadConfig } from "./config.mjs";
+import { createAbuseGuard } from "./abuseLimits.mjs";
 import { createClaimLog } from "./claimLog.mjs";
+import { createRpcEscrowChain, httpRpcRequest } from "./escrowChain.mjs";
+import { createFileIntentNonceStore } from "./intentNonceStore.mjs";
 import { createKillSwitch } from "./killSwitch.mjs";
 import { createNonceStore } from "./nonceStore.mjs";
 
@@ -15,13 +18,30 @@ export function startServer(env = process.env) {
   const killSwitch = createKillSwitch({ initial: config.killSwitchInitial });
   const nonceStore = createNonceStore();
   const claimLog = createClaimLog({ filePath: config.claimLogPath });
+  const intentNonces = createFileIntentNonceStore({ filePath: config.intentNoncePath });
+  const abuse = createAbuseGuard(config.abuse);
+  const rpcUrl = env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  const chain = createRpcEscrowChain({
+    escrowAddress: config.escrowAddress,
+    from: config.relayerAddress,
+    request: httpRpcRequest(rpcUrl),
+  });
   const broadcaster = config.liveSubmit.allowed
     ? createSepoliaBroadcaster({
-        rpcUrl: env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+        rpcUrl,
         privateKey: env.RELAYER_PRIVATE_KEY,
       })
     : null;
-  const server = createClaimRelayer({ config, killSwitch, nonceStore, claimLog, broadcaster });
+  const server = createClaimRelayer({
+    config,
+    killSwitch,
+    nonceStore,
+    intentNonces,
+    abuse,
+    chain,
+    claimLog,
+    broadcaster,
+  });
   const mode = config.liveSubmit.allowed ? "live" : "fixture";
   server.listen(config.port, config.host, () => {
     console.log(

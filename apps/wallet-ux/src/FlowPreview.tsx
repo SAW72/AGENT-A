@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem"
-import { useAccount, usePublicClient, useSendTransaction } from "wagmi"
+import { useAccount, usePublicClient, useSendTransaction, useWalletClient } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import { parseBytes32 } from "./bytes32"
 import { ErrorNotice } from "./ErrorNotice"
@@ -17,8 +17,9 @@ import {
   type CallPreview,
 } from "./preview"
 import {
-  readRelayerPaused,
+  readRelayerHealth,
   RELAYER_CONFIRMED_TEXT,
+  RELAYER_CONNECT_NOTE,
   RELAYER_SUBMITTED_TEXT,
   RELAYER_SUBMITTING_TEXT,
   RELAYER_TX_LINK_LABEL,
@@ -28,6 +29,7 @@ import {
   relayerSubmitAllowed,
   relayerTxUrl,
   runRelayerSubmission,
+  type RelayerHealth,
   type RelayerPhase,
 } from "./relayer"
 import { submitAfterPreflight } from "./preflight"
@@ -52,25 +54,24 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
   const walletChainId = account.isConnected ? resolveWalletChainId(account.chainId, connectorChainId) : null
   const decision = evaluateEscrowSubmit({ walletConnected: account.isConnected, walletChainId })
   const publicClient = usePublicClient({ chainId: BASE_SEPOLIA_CHAIN_ID })
+  const { data: walletClient } = useWalletClient({ chainId: BASE_SEPOLIA_CHAIN_ID })
   const { sendTransactionAsync, isPending } = useSendTransaction()
   const [txHash, setTxHash] = useState<Hex | null>(null)
   const [submitError, setSubmitError] = useState<ErrorPresentation | null>(null)
   const [relayerPhase, setRelayerPhase] = useState<RelayerPhase>("idle")
-  const [relayerPaused, setRelayerPaused] = useState(false)
+  const [relayerHealth, setRelayerHealth] = useState<RelayerHealth>("unknown")
   const [pendingHash, setPendingHash] = useState<Hex | null>(null)
   const [confirmedHash, setConfirmedHash] = useState<Hex | null>(null)
   const relayerFlight = useRef(false)
   const relayer = relayerConfigFromEnv({
     VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL,
-    VITE_CLAIM_API_SECRET: import.meta.env.VITE_CLAIM_API_SECRET,
   })
   const relayerGate = relayerSubmitAllowed({ walletConnected: account.isConnected, walletChainId })
   const relayerBusy = relayerPhase !== "idle"
   const control = submitControl(decision, isPending || relayerBusy)
   const relayerButton = relayerButtonModel({
     url: relayer.url,
-    secret: relayer.secret,
-    paused: relayerPaused,
+    health: relayerHealth,
     phase: relayerPhase,
     gate: relayerGate,
     action: preview.functionName,
@@ -79,8 +80,8 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
   useEffect(() => {
     if (!relayer.url) return
     let cancelled = false
-    void readRelayerPaused({ url: relayer.url }).then((paused) => {
-      if (!cancelled && paused != null) setRelayerPaused(paused)
+    void readRelayerHealth({ url: relayer.url }).then((health) => {
+      if (!cancelled) setRelayerHealth(health)
     })
     return () => {
       cancelled = true
@@ -143,23 +144,31 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       setSubmitError(notice(gate.reason))
       return
     }
-    if (!relayer.url || !relayer.secret || relayerPaused) return
+    if (!relayer.url || relayerHealth !== "ok") return
     if (!publicClient) {
       setTxHash(null)
       setSubmitError(notice("The network client isn't ready, so nothing was sent."))
       return
     }
+    if (!account.address || !walletClient) {
+      setTxHash(null)
+      setSubmitError(notice(RELAYER_CONNECT_NOTE))
+      return
+    }
+    const signer = walletClient
+    const sender = account.address
     relayerFlight.current = true
     setRelayerPhase("submitting")
     setTxHash(null)
     try {
       assertSubmitTarget(preview.to, [escrow, panel])
       const url = relayer.url
-      const secret = relayer.secret
       const outcome = await runRelayerSubmission({
         url,
-        secret,
         preview,
+        sender,
+        verifyingContract: escrow,
+        signTypedData: (args) => signer.signTypedData(args),
         client: publicClient,
         onPhase: (phase, hash) => {
           setRelayerPhase(phase)
@@ -173,7 +182,7 @@ function SepoliaSubmit({ preview, escrow, panel }: { preview: CallPreview; escro
       }
       setPendingHash(null)
       setSubmitError(outcome.presentation)
-      if (outcome.code === "kill_switch") setRelayerPaused(true)
+      if (outcome.code === "kill_switch") setRelayerHealth("paused")
     } catch (cause) {
       setPendingHash(null)
       setSubmitError(presentError(cause))
@@ -297,7 +306,6 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
   const [preview, setPreview] = useState<CallPreview | null>(null)
   const relayerConfigured = relayerConfigFromEnv({
     VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL,
-    VITE_CLAIM_API_SECRET: import.meta.env.VITE_CLAIM_API_SECRET,
   }).url != null
 
   function show(next: CallPreview) {

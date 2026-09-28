@@ -94,7 +94,7 @@ export function previewCardCopy(functionName: string, relayerConfigured: boolean
               ? "This prepares opening a dispute."
               : "This prepares a transaction."
   const relayer =
-    relayerConfigured && functionName !== "openDispute"
+    relayerConfigured && (functionName === "release" || functionName === "refund")
       ? " Escrow steps can also be sent through the claim relayer on Base Sepolia."
       : ""
   return `${lead} Submit sends it from the connected wallet on Base Sepolia only.${relayer}`

@@ -40,6 +40,19 @@ const SENDER_CONSTRAINT = {
   dispute: "party_must_send",
 };
 
+/** Signature, selector, and sender constraint for an allowlisted claim action. */
+export function claimActionMeta(action) {
+  const name = String(action || "").trim();
+  if (!CLAIM_ACTIONS.has(name)) throw httpError(400, "action_not_claim", { field: "action" });
+  const signature = ESCROW_SIGNATURES[name];
+  return {
+    action: name,
+    signature,
+    selector: selectorFor(signature),
+    senderConstraint: SENDER_CONSTRAINT[name],
+  };
+}
+
 export function selectorFor(signature) {
   const hash = keccak_256(new TextEncoder().encode(signature));
   return "0x" + Buffer.from(hash.subarray(0, 4)).toString("hex");

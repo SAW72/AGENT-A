@@ -4,11 +4,11 @@
  * RELAYER_PRIVATE_KEY stays in this closure. It is never logged or returned.
  */
 
-import { createWalletClient, custom, http } from "viem";
+import { createWalletClient, custom, http, keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { BASE_SEPOLIA_CHAIN_ID, BOOKED_SEPOLIA_ESCROW, httpError } from "./config.mjs";
-import { isTransientClaimError } from "./retry.mjs";
+import { isTransientClaimError, withClaimRetry } from "./retry.mjs";
 import { extractRevertData, revertDataFrom } from "./revertData.mjs";
 
 if (baseSepolia.id !== BASE_SEPOLIA_CHAIN_ID) {
@@ -172,16 +172,22 @@ export function createSepoliaBroadcaster({ rpcUrl, privateKey, request } = {}) {
             },
           }),
         });
-        const txHash = await client.sendTransaction({
+        const request = await client.prepareTransactionRequest({
           chain: baseSepolia,
           to: BOOKED_SEPOLIA_ESCROW,
           data: tx.data,
           value: BigInt(tx.valueWei || "0"),
         });
-        if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
-          throw httpError(502, "broadcast_failed", { txHash: null, dryRun: false, revert_data: null });
-        }
-        return { txHash };
+        const serialized = await client.signTransaction(request);
+        const signedHash = keccak256(serialized);
+        const sentHash = await withClaimRetry(async () => {
+          const sent = await guarded({ method: "eth_sendRawTransaction", params: [serialized] });
+          if (typeof sent !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(sent)) {
+            throw httpError(502, "broadcast_failed", { txHash: null, dryRun: false });
+          }
+          return sent;
+        }, { log: () => {} });
+        return { txHash: sentHash, signedHash };
       } catch (err) {
         throw asSendError(err, key);
       }

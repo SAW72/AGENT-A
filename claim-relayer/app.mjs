@@ -11,6 +11,7 @@ import {
   submitLiveClaim,
   wantsLiveSubmit,
 } from "./claims.mjs";
+import { prepareLiveClaim } from "./liveAuth.mjs";
 
 const MAX_BODY = 32 * 1024;
 
@@ -32,13 +33,6 @@ export function adminAuthorized(req, adminSecret) {
   return secretsEqual(header, adminSecret) || secretsEqual(bearerToken(req), adminSecret);
 }
 
-/** Live claim auth. Separate from ADMIN_SECRET. Accepts x-claim-secret or Bearer. */
-export function claimAuthorized(req, claimApiSecret) {
-  if (!claimApiSecret) return false;
-  const header = req.headers["x-claim-secret"] || "";
-  return secretsEqual(header, claimApiSecret) || secretsEqual(bearerToken(req), claimApiSecret);
-}
-
 export function createCors(allowedOrigins) {
   const allowed = new Set(
     (Array.isArray(allowedOrigins) ? allowedOrigins : String(allowedOrigins || "").split(","))
@@ -47,7 +41,7 @@ export function createCors(allowedOrigins) {
   );
   return function corsHeaders(req) {
     const headers = {
-      "access-control-allow-headers": "content-type,x-admin-secret,authorization,x-claim-secret",
+      "access-control-allow-headers": "content-type,x-admin-secret,authorization",
       "access-control-allow-methods": "GET,POST,OPTIONS",
       vary: "Origin",
     };
@@ -67,6 +61,29 @@ function sendJson(res, req, status, body, corsHeaders) {
     ...corsHeaders(req),
   });
   res.end(payload);
+}
+
+/**
+ * Render's public proxy is the only hop in front of this process.
+ * It appends the connecting client to X-Forwarded-For, so a caller can
+ * prepend spoofed addresses. Only the rightmost hop is trusted.
+ * Missing header (local tests, or a request that did not pass that proxy)
+ * falls back to the socket address. X-Real-IP and Cloudflare headers are
+ * not read. This service is not behind Cloudflare.
+ */
+function clientIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "");
+  const hops = forwarded
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (hops.length > 0) return hops[hops.length - 1];
+  return req.socket?.remoteAddress || "unknown";
+}
+
+async function storeClaimResult(store, key, status, body) {
+  if (!store || typeof store.commit !== "function" || !key) return;
+  await store.commit(key, { status, body });
 }
 
 function readBody(req) {
@@ -157,6 +174,9 @@ function rejectQuoteBroadcast(config, body) {
  * @param {ReturnType<import('./config.mjs').loadConfig>} deps.config
  * @param {{ isOn: Function, engage: Function, release: Function }} deps.killSwitch
  * @param {{ reserve: Function }} deps.nonceStore
+ * @param {{ claim: Function, commit: Function }} deps.intentNonces
+ * @param {{ check: Function, consume: Function }} deps.abuse
+ * @param {{ readEscrow: Function, isValidSignature: Function, simulate: Function }} deps.chain
  * @param {{ append: Function }} deps.claimLog
  * @param {() => number} [deps.now]
  * @param {{ send: Function } | null} [deps.broadcaster]
@@ -165,6 +185,9 @@ export function createClaimRelayer(deps) {
   const config = deps.config;
   const killSwitch = deps.killSwitch;
   const nonceStore = deps.nonceStore;
+  const intentNonces = deps.intentNonces;
+  const abuse = deps.abuse;
+  const chain = deps.chain;
   const claimLog = deps.claimLog;
   const broadcaster = deps.broadcaster || null;
   const now = deps.now || Date.now;
@@ -238,18 +261,35 @@ export function createClaimRelayer(deps) {
 
       if (req.method === "POST" && path === "/v1/claims") {
         if (refuseIfKilled(res, req)) return;
+        if (abuse && typeof abuse.takeIp === "function") {
+          await abuse.takeIp(clientIp(req), now());
+        }
         const body = await readBody(req);
         assertBaseSepolia(body);
         if (wantsLiveSubmit(body)) {
           if (!config.liveSubmit.allowed) rejectLive(config, body);
-          if (!config.claimApiSecret) {
-            throw httpError(503, "claim_api_secret_required");
+          const prepared = await prepareLiveClaim({
+            body,
+            config,
+            chain,
+            intentNonces,
+            abuse,
+            nowMs: now(),
+            ip: clientIp(req),
+          });
+          let result;
+          try {
+            result = await submitLiveClaim({
+              body,
+              config,
+              broadcaster,
+              prepared: { encoded: prepared.encoded, claimId: prepared.claimId },
+            });
+          } catch (err) {
+            await storeClaimResult(intentNonces, prepared.nonceKey, err.status || 502, errorBody(err));
+            throw err;
           }
-          if (!claimAuthorized(req, config.claimApiSecret)) {
-            sendJson(res, req, 401, { ok: false, error: "unauthorized" }, corsHeaders);
-            return;
-          }
-          const result = await submitLiveClaim({ body, config, broadcaster });
+          await storeClaimResult(intentNonces, prepared.nonceKey, 200, result);
           await claimLog.append({
             event: "claim_live",
             ...result,
@@ -282,6 +322,13 @@ export function createClaimRelayer(deps) {
     } catch (err) {
       const status = Number(err.status) || 500;
       const body = errorBody(status === 500 ? { error: "request_failed" } : err);
+      if (err.nonceClaimed && err.nonceKey) {
+        try {
+          await storeClaimResult(intentNonces, err.nonceKey, status, body);
+        } catch {
+          /* a failed nonce write must not hide the response */
+        }
+      }
       if (status === 500 || status === 502) {
         console.error("claim_relayer_error", err.error || "request_failed");
       }

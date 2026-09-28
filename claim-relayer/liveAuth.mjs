@@ -1,0 +1,177 @@
+/**
+ * Live POST /v1/claims authorization.
+ * Verification order is fixed:
+ *   1. domain chainId + verifyingContract
+ *   2. deadline window
+ *   3. signer (ECDSA, then ERC-1271 only when enabled)
+ *   4. server builds calldata from action + escrowId (client calldata is not relayed)
+ *   5. sender is payer or payee of that same escrow id, which must exist at latest
+ *   6. (sender, nonce) single-use store. A replay is rejected and is not broadcast.
+ * Only then does the caller simulate and broadcast the server-built calldata.
+ * Abuse limits run after the signature checks and before simulation.
+ */
+
+import { DEADLINE_WINDOW_SECONDS, assertIntentDeadline, assertIntentDomain, assertIntentSigner, nonceKey, parseClaimIntent } from "./claimIntent.mjs";
+import { httpError } from "./config.mjs";
+import { encodeEscrowAction } from "./escrowCalldata.mjs";
+
+/**
+ * Live allowlist is release and refund only.
+ * withdraw() and withdrawTo(address) spend pendingWithdrawals[msg.sender]
+ * (BotAttestationEscrow.sol withdraw, withdrawTo, and _withdraw). The relayer
+ * is that msg.sender, so a relayed withdraw pays the relayer and a relayed
+ * withdrawTo can move the relayer's own credit to an address the caller picks.
+ * Neither spends the signed user's credit. Both stay off.
+ * dispute requires msg.sender to be the payer or the payee, so a relayed
+ * dispute reverts. createEscrow is not relayed.
+ */
+const LIVE_ACTIONS = new Set(["release", "refund"]);
+
+const ZERO = "0x0000000000000000000000000000000000000000";
+
+function sameAddress(left, right) {
+  return String(left || "").toLowerCase() === String(right || "").toLowerCase();
+}
+
+/**
+ * Build release/refund calldata from the signed action and escrow id.
+ * A client-supplied calldata field is checked and then discarded.
+ * The transaction uses the bytes this function returns.
+ */
+export function bindLiveCall(intent, body) {
+  if (!LIVE_ACTIONS.has(intent.action)) throw httpError(400, "action_not_claim", { field: "action" });
+  const built = encodeEscrowAction({ action: intent.action, escrowId: intent.escrowId });
+  const suppliedValue = body?.amountWei ?? body?.valueWei ?? body?.value;
+  if (suppliedValue !== undefined && suppliedValue !== null && String(suppliedValue).trim() !== "") {
+    throw httpError(400, "value_not_allowed");
+  }
+  if (built.valueWei !== "0") throw httpError(400, "value_not_allowed");
+  const client = body?.calldata;
+  if (client !== undefined && client !== null && String(client).trim() !== "") {
+    const hex = String(client).trim().toLowerCase();
+    if (!/^0x[0-9a-f]*$/.test(hex)) throw httpError(400, "invalid_calldata");
+    const canonical = built.calldata.toLowerCase();
+    if (hex.startsWith(canonical) && hex.length > canonical.length) throw httpError(400, "trailing_bytes");
+    if (hex !== canonical) throw httpError(400, "calldata_mismatch");
+  }
+  return built;
+}
+
+function gasWeiFor(gasUsed, valueWei, gasPriceWei) {
+  const gas = gasUsed > 0n ? gasUsed : 120_000n;
+  const price = gasPriceWei > 0n ? gasPriceWei : 1_000_000_000n;
+  const value = BigInt(valueWei || "0");
+  return gas * price + value;
+}
+
+/**
+ * @param {object} args
+ * @param {object} args.body
+ * @param {ReturnType<import('./config.mjs').loadConfig>} args.config
+ * @param {{ readEscrow: Function, isValidSignature: Function, simulate: Function }} args.chain
+ * @param {{ claim: Function }} args.intentNonces
+ * @param {{ check: Function, consume: Function }} args.abuse
+ * @param {number} args.nowMs
+ * @param {string} args.ip
+ */
+export async function prepareLiveClaim(args) {
+  const { body, config, chain, intentNonces, abuse, nowMs, ip } = args;
+  const intent = parseClaimIntent(body);
+  assertIntentDomain(intent, config);
+  assertIntentDeadline(intent, nowMs);
+  await assertIntentSigner(intent, config, chain);
+  const described = bindLiveCall(intent, body);
+  const valueWei = "0";
+  const boundEscrowId = intent.escrowId;
+
+  if (!chain || typeof chain.readEscrow !== "function") {
+    throw httpError(503, "escrow_reader_missing", { txHash: null, dryRun: false });
+  }
+  const record = await chain.readEscrow(boundEscrowId);
+  if (!record?.exists || sameAddress(record.payer, ZERO)) {
+    throw httpError(404, "escrow_not_found", { txHash: null, dryRun: false });
+  }
+  const senderIsParty =
+    sameAddress(intent.sender, record.payer) || sameAddress(intent.sender, record.payee);
+  if (!senderIsParty) throw httpError(403, "not_a_party", { txHash: null, dryRun: false });
+
+  const key = nonceKey(intent.sender, intent.nonce);
+  const ttlMs = Math.max(DEADLINE_WINDOW_SECONDS * 1000, Number(intent.deadline) * 1000 - nowMs);
+
+  const claimed = await intentNonces.claim({ key, ttlMs, atMs: nowMs });
+  if (claimed.kind === "replay") {
+    throw httpError(409, "nonce_replay", { txHash: null, dryRun: false });
+  }
+  if (claimed.kind === "pending") {
+    throw httpError(409, "nonce_in_flight", { txHash: null, dryRun: false });
+  }
+
+  const encoded = {
+    action: intent.action,
+    signature: described.signature,
+    selector: described.selector,
+    calldata: described.calldata,
+    valueWei,
+    calldataStatus: "encoded",
+    senderConstraint: described.senderConstraint,
+  };
+
+  try {
+    await abuse.check({
+      sender: intent.sender,
+      ip,
+      escrowId: boundEscrowId,
+      gasWei: 0n,
+      atMs: nowMs,
+    });
+  } catch (err) {
+    err.nonceClaimed = true;
+    err.nonceKey = key;
+    throw err;
+  }
+
+  let simulation;
+  try {
+    simulation = await chain.simulate({
+      to: config.escrowAddress,
+      data: described.calldata,
+      valueWei,
+    });
+  } catch (err) {
+    err.nonceClaimed = true;
+    err.nonceKey = key;
+    throw err;
+  }
+  if (!simulation?.ok) {
+    throw Object.assign(httpError(502, "broadcast_failed", {
+      txHash: null,
+      dryRun: false,
+      revert_data: simulation?.revertData ?? null,
+      action: intent.action,
+      senderConstraint: described.senderConstraint,
+    }), { nonceClaimed: true, nonceKey: key });
+  }
+
+  const gasWei = gasWeiFor(BigInt(simulation.gasUsed ?? 0), valueWei, BigInt(config.abuse.gasPriceWei));
+  try {
+    await abuse.consume({
+      sender: intent.sender,
+      ip,
+      escrowId: boundEscrowId,
+      gasWei,
+      atMs: nowMs,
+    });
+  } catch (err) {
+    err.nonceClaimed = true;
+    err.nonceKey = key;
+    throw err;
+  }
+
+  return {
+    kind: "ready",
+    nonceKey: key,
+    encoded,
+    claimId: boundEscrowId,
+    sender: intent.sender,
+  };
+}
