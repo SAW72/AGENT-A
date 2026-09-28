@@ -87,12 +87,7 @@ try {
     "scripts/guard-escrow-addresses.mjs",
     bundlePath,
   ])
-
-  if (process.env.EMBED_CLAIM_SECRET === "true") {
-    console.log("embed_claim_secret is true. Skipped the served claim-secret scan.")
-  } else {
-    runGuard(["scripts/guard-claim-secret.mjs", bundlePath])
-  }
+  runGuard(["scripts/guard-claim-secret.mjs", bundlePath])
 } finally {
   rmSync(directory, { recursive: true, force: true })
 }

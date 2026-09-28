@@ -3,19 +3,13 @@
 # workflow_dispatch only: a push or pull request does not publish.
 # Node.js 22 matches apps/wallet-ux/.node-version and the wallet-ux job in ci.yml.
 # There is no .nvmrc and package.json has no engines field.
-# embed_claim_secret defaults to false, so the claim secret stays out of the bundle.
+# The claim API secret is retired. This workflow has no input that can embed it.
 # A non-main ref skips this job. The first step fails the job if a run still starts.
 
 name: Deploy wallet-ux
 
 on:
   workflow_dispatch:
-    inputs:
-      embed_claim_secret:
-        description: "Embed VITE_CLAIM_API_SECRET in the public JS bundle. Leave this off."
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: read
@@ -75,7 +69,6 @@ jobs:
           fi
           if [ "$missing" -ne 0 ]; then
             echo "VITE_CLAIM_RELAYER_URL is a production environment variable, never a repository variable. Spencer: delete any existing repository-level copy."
-            echo "Do not set VITE_CLAIM_API_SECRET anywhere while embed_claim_secret stays false. Not a repository secret, not a production environment secret, and not a variable."
             exit 1
           fi
 
@@ -86,37 +79,14 @@ jobs:
         run: npm test
 
       - name: Build
-        if: ${{ github.event.inputs.embed_claim_secret != 'true' }}
         run: npm run build
         env:
           VITE_CLAIM_RELAYER_URL: ${{ vars.VITE_CLAIM_RELAYER_URL }}
-
-      - name: WARNING claim secret will be public in the bundle
-        if: ${{ github.event.inputs.embed_claim_secret == 'true' }}
-        run: |
-          echo "################################################################"
-          echo "WARNING: embed_claim_secret is true."
-          echo "WARNING: VITE_CLAIM_API_SECRET is being embedded in the public JavaScript bundle."
-          echo "WARNING: Anyone who can load the site can read that value. It is not confidential."
-          echo "WARNING: Do not rely on it as relayer authentication."
-          echo "WARNING: Relayer submit is re-enabled safely by EIP-712 signed intents, tracked separately."
-          echo "################################################################"
-          echo "::warning title=Claim secret will be public::VITE_CLAIM_API_SECRET is embedded in the public JavaScript bundle. It is not confidential and must not be relied on as relayer authentication."
-
-      - name: Build with the claim secret embedded
-        if: ${{ github.event.inputs.embed_claim_secret == 'true' }}
-        run: npm run build
-        env:
-          VITE_CLAIM_RELAYER_URL: ${{ vars.VITE_CLAIM_RELAYER_URL }}
-          VITE_CLAIM_API_SECRET: ${{ secrets.VITE_CLAIM_API_SECRET }}
 
       - name: Guard escrow addresses in the built bundle
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/guard-escrow-addresses.mjs dist
 
-      - name: Reject a bundled claim secret
-        if: ${{ github.event.inputs.embed_claim_secret != 'true' }}
-        env:
-          VITE_CLAIM_API_SECRET: ${{ secrets.VITE_CLAIM_API_SECRET }}
+      - name: Reject retired claim-secret markers
         run: node scripts/guard-claim-secret.mjs dist
 
       # defaults.run.working-directory does not apply to uses steps.
@@ -135,8 +105,6 @@ jobs:
       - name: Verify the preview bundle
         env:
           DEPLOYMENT_URL: ${{ steps.preview.outputs.deployment-url }}
-          EMBED_CLAIM_SECRET: ${{ github.event.inputs.embed_claim_secret }}
-          VITE_CLAIM_API_SECRET: ${{ github.event.inputs.embed_claim_secret != 'true' && secrets.VITE_CLAIM_API_SECRET || '' }}
         run: node scripts/verify-served-bundle.mjs
 
       - name: Deploy production
@@ -151,8 +119,6 @@ jobs:
       - name: Verify the production bundle
         env:
           DEPLOYMENT_URL: ${{ steps.production.outputs.deployment-url }}
-          EMBED_CLAIM_SECRET: ${{ github.event.inputs.embed_claim_secret }}
-          VITE_CLAIM_API_SECRET: ${{ github.event.inputs.embed_claim_secret != 'true' && secrets.VITE_CLAIM_API_SECRET || '' }}
         run: node scripts/verify-served-bundle.mjs
 
       # preview-<run id> has a single deployment, so it is the latest on that

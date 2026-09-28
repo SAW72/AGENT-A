@@ -13,7 +13,8 @@ import {
   RETIRED_ESCROW,
 } from "./guard-escrow-addresses.mjs"
 
-const SENTINEL = 'sl?m=n "'
+const HEADER = "x-claim-secret"
+const ENV_NAME = "VITE_CLAIM_API_SECRET"
 const temps = []
 
 afterEach(() => {
@@ -69,12 +70,11 @@ function runNodeAsync(script, args, env) {
   })
 }
 
-function secretForms(value) {
+function encodedForms(value) {
   const standard = Buffer.from(value, "utf8").toString("base64")
   const urlSafe = standard.replaceAll("+", "-").replaceAll("/", "_")
   const hex = Buffer.from(value, "utf8").toString("hex")
   const labeled = [
-    ["raw", value],
     ["base64", standard],
     ["base64-without-padding", standard.replace(/=+$/, "")],
     ["base64url", urlSafe],
@@ -84,7 +84,7 @@ function secretForms(value) {
     ["hex-uppercase", hex.toUpperCase()],
     ["json", JSON.stringify(value).slice(1, -1)],
   ]
-  const seen = new Set()
+  const seen = new Set([value])
   const unique = []
   for (const entry of labeled) {
     if (!entry[1] || seen.has(entry[1])) continue
@@ -128,44 +128,51 @@ describe("guard-escrow-addresses", () => {
 })
 
 describe("guard-claim-secret", () => {
-  it("skips an empty secret and passes when the sentinel is absent", () => {
-    const empty = runNode("scripts/guard-claim-secret.mjs", ["package.json"], { VITE_CLAIM_API_SECRET: "" })
-    expect(empty.status).toBe(0)
-    expect(empty.stdout).toContain("Skipped the embedded-secret scan")
-
+  it("passes when neither retired marker is present", () => {
     const clean = tempDir()
-    writeFileSync(join(clean, "clean.txt"), "no secret here")
-    const passed = runNode("scripts/guard-claim-secret.mjs", [join(clean, "clean.txt")], {
-      VITE_CLAIM_API_SECRET: SENTINEL,
-    })
+    writeFileSync(join(clean, "clean.txt"), "Submitting through the claim relayer")
+    const passed = runNode("scripts/guard-claim-secret.mjs", [join(clean, "clean.txt")])
     expect(passed.status).toBe(0)
-    expect(passed.stdout).not.toContain(SENTINEL)
-    expect(passed.stderr).not.toContain(SENTINEL)
+    expect(passed.stdout).toContain("Claim leak scan passed")
   })
 
-  it("fails for each encoded form without printing the value", () => {
-    const forms = secretForms(SENTINEL)
-    expect(forms.map(([label]) => label)).toEqual([
-      "raw",
-      "base64",
-      "base64-without-padding",
-      "base64url",
-      "base64url-without-padding",
-      "url",
-      "hex",
-      "hex-uppercase",
-      "json",
-    ])
-    for (const [label, value] of forms) {
+  it("fails when the bundle contains x-claim-secret in any case or encoded form", () => {
+    const raw = tempDir()
+    writeFileSync(join(raw, "leak.txt"), `headers["${HEADER}"]`)
+    const rawResult = runNode("scripts/guard-claim-secret.mjs", [join(raw, "leak.txt")])
+    expect(rawResult.status).not.toBe(0)
+    expect(rawResult.stderr).toContain(`the raw form of ${HEADER} is present`)
+
+    const mixed = tempDir()
+    writeFileSync(join(mixed, "leak.txt"), "X-Claim-Secret")
+    const mixedResult = runNode("scripts/guard-claim-secret.mjs", [join(mixed, "leak.txt")])
+    expect(mixedResult.status).not.toBe(0)
+    expect(mixedResult.stderr).toContain(`the raw form of ${HEADER} is present`)
+
+    for (const [label, value] of encodedForms(HEADER)) {
       const directory = tempDir()
       const file = join(directory, "leak.txt")
       writeFileSync(file, `prefix ${value} suffix`)
-      const result = runNode("scripts/guard-claim-secret.mjs", [file], { VITE_CLAIM_API_SECRET: SENTINEL })
+      const result = runNode("scripts/guard-claim-secret.mjs", [file])
       expect(result.status, label).not.toBe(0)
-      expect(result.stderr, label).toContain(`the ${label} form is present`)
-      expect(result.stderr, label).not.toContain(SENTINEL)
-      expect(result.stdout, label).not.toContain(SENTINEL)
-      expect(result.stderr, label).not.toContain(value)
+      expect(result.stderr, label).toContain(`${label} form of ${HEADER}`)
+    }
+  })
+
+  it("fails when the bundle contains VITE_CLAIM_API_SECRET", () => {
+    const raw = tempDir()
+    writeFileSync(join(raw, "leak.txt"), `import.meta.env.${ENV_NAME}`)
+    const rawResult = runNode("scripts/guard-claim-secret.mjs", [join(raw, "leak.txt")])
+    expect(rawResult.status).not.toBe(0)
+    expect(rawResult.stderr).toContain(`the raw form of ${ENV_NAME} is present`)
+
+    for (const [label, value] of encodedForms(ENV_NAME)) {
+      const directory = tempDir()
+      const file = join(directory, "leak.txt")
+      writeFileSync(file, `prefix ${value} suffix`)
+      const result = runNode("scripts/guard-claim-secret.mjs", [file])
+      expect(result.status, label).not.toBe(0)
+      expect(result.stderr, label).toContain(`${label} form of ${ENV_NAME}`)
     }
   })
 })
@@ -173,7 +180,7 @@ describe("guard-claim-secret", () => {
 describe("verify-served-bundle", () => {
   const hash = "app-abc123"
 
-  function fixture({ servedHtml, javascript, secret = "" }) {
+  function fixture({ servedHtml, javascript }) {
     const directory = tempDir()
     const built = `<script src="/assets/${hash}.js"></script><link href="/assets/${hash}.css">`
     writeFileSync(join(directory, "built.html"), built)
@@ -183,7 +190,7 @@ describe("verify-served-bundle", () => {
       [`/assets/${hash}.js`, javascript ?? bundleSource(3)],
       [`/assets/${hash}.css`, "body{}"],
     ])
-    return { directory, files, secret }
+    return { directory, files }
   }
 
   async function verify(setup) {
@@ -202,8 +209,6 @@ describe("verify-served-bundle", () => {
     const result = await runNodeAsync("scripts/verify-served-bundle.mjs", [], {
       DEPLOYMENT_URL: `http://127.0.0.1:${port}`,
       DIST_INDEX: join(setup.directory, "built.html"),
-      EMBED_CLAIM_SECRET: "false",
-      VITE_CLAIM_API_SECRET: setup.secret,
     })
     server.closeAllConnections?.()
     await new Promise((resolve) => server.close(resolve))
@@ -238,16 +243,23 @@ describe("verify-served-bundle", () => {
     expect(result.stderr).toContain("3 time(s)")
   })
 
-  it("fails when index.html contains the claim secret", async () => {
+  it("fails when index.html contains x-claim-secret", async () => {
     const result = await verify(
       fixture({
-        servedHtml: `<script src="/assets/${hash}.js"></script><link href="/assets/${hash}.css">${SENTINEL}`,
-        secret: SENTINEL,
+        servedHtml: `<script src="/assets/${hash}.js"></script><link href="/assets/${hash}.css">${HEADER}`,
       }),
     )
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain("the raw form is present")
-    expect(result.stderr).not.toContain(SENTINEL)
-    expect(result.stdout).not.toContain(SENTINEL)
+    expect(result.stderr).toContain(`the raw form of ${HEADER} is present`)
+  })
+
+  it("fails when index.html contains VITE_CLAIM_API_SECRET", async () => {
+    const result = await verify(
+      fixture({
+        servedHtml: `<script src="/assets/${hash}.js"></script><link href="/assets/${hash}.css">${ENV_NAME}`,
+      }),
+    )
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain(`the raw form of ${ENV_NAME} is present`)
   })
 })

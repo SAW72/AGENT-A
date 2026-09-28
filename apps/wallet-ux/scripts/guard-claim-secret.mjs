@@ -1,15 +1,17 @@
 import { spawnSync } from "node:child_process"
 import { statSync } from "node:fs"
 
-const secret = process.env.VITE_CLAIM_API_SECRET ?? ""
-if (secret.length === 0) {
-  console.log("VITE_CLAIM_API_SECRET is empty. Skipped the embedded-secret scan.")
-  process.exit(0)
-}
+// Retired claim-secret markers. The value is not read from the environment.
+// x-claim-secret is matched in any case. Both markers are also matched in the
+// encodings this scan already used for embedded secrets.
+const NEEDLES = [
+  { name: "x-claim-secret", caseInsensitive: true, variants: ["x-claim-secret", "X-CLAIM-SECRET", "X-Claim-Secret"] },
+  { name: "VITE_CLAIM_API_SECRET", caseInsensitive: false, variants: ["VITE_CLAIM_API_SECRET"] },
+]
 
 const targets = process.argv.slice(2)
 if (targets.length === 0) {
-  console.error("Claim secret scan needs at least one file or directory.")
+  console.error("Claim leak scan needs at least one file or directory.")
   process.exit(1)
 }
 
@@ -38,37 +40,60 @@ function encodings(value) {
   return unique
 }
 
-function grepQuiet(value, target, recursive) {
+function grepQuiet(value, target, recursive, ignoreCase) {
+  const caseFlag = ignoreCase ? "-i " : ""
   const script = recursive
-    ? 'grep -R -q -F -- "$SCAN_VALUE" "$SCAN_PATH"'
-    : 'grep -q -F -- "$SCAN_VALUE" "$SCAN_PATH"'
+    ? `grep -R ${caseFlag}-q -F -- "$SCAN_VALUE" "$SCAN_PATH"`
+    : `grep ${caseFlag}-q -F -- "$SCAN_VALUE" "$SCAN_PATH"`
   return spawnSync("bash", ["-c", script], {
     env: { ...process.env, SCAN_VALUE: value, SCAN_PATH: target },
     stdio: "ignore",
   })
 }
 
-const forms = encodings(secret)
+function formsFor(needle) {
+  const seen = new Set()
+  const forms = []
+  for (const variant of needle.variants) {
+    for (const [label, value] of encodings(variant)) {
+      if (label === "raw") continue
+      if (seen.has(value)) continue
+      seen.add(value)
+      forms.push([label, value])
+    }
+  }
+  return forms
+}
+
 for (const target of targets) {
   const info = statSync(target, { throwIfNoEntry: false })
   if (!info) {
-    console.error(`Claim secret scan failed: ${target} does not exist.`)
+    console.error(`Claim leak scan failed: ${target} does not exist.`)
     process.exit(1)
   }
   const recursive = info.isDirectory()
-  for (const [label, value] of forms) {
-    const result = grepQuiet(value, target, recursive)
-    if (result.status === 0) {
-      console.error(
-        `Claim secret scan failed: the ${label} form is present in ${target}. The value was not printed.`,
-      )
+  for (const needle of NEEDLES) {
+    const raw = grepQuiet(needle.variants[0], target, recursive, needle.caseInsensitive)
+    if (raw.status === 0) {
+      console.error(`Claim leak scan failed: the raw form of ${needle.name} is present in ${target}.`)
       process.exit(1)
     }
-    if (result.status !== 1) {
-      console.error(`Claim secret scan failed: grep could not scan ${target} for the ${label} form.`)
+    if (raw.status !== 1) {
+      console.error(`Claim leak scan failed: grep could not scan ${target} for ${needle.name}.`)
       process.exit(1)
+    }
+    for (const [label, value] of formsFor(needle)) {
+      const result = grepQuiet(value, target, recursive, false)
+      if (result.status === 0) {
+        console.error(`Claim leak scan failed: the ${label} form of ${needle.name} is present in ${target}.`)
+        process.exit(1)
+      }
+      if (result.status !== 1) {
+        console.error(`Claim leak scan failed: grep could not scan ${target} for the ${label} form of ${needle.name}.`)
+        process.exit(1)
+      }
     }
   }
 }
 
-console.log(`Claim secret scan passed for ${targets.length} path(s). No raw or encoded form was present.`)
+console.log(`Claim leak scan passed for ${targets.length} path(s).`)

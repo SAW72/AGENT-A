@@ -2,7 +2,7 @@
 
 The Pages project `agent-a-wallet-ux` (https://agent-a-wallet-ux.pages.dev) is a Direct Upload project. It has no git connection. Cloudflare does not build it, and environment variables set in the Cloudflare dashboard are not used at build time.
 
-Wallet UX is a static Vite app. The claim relayer stays on Render (`claim-relayer/`, service `bot-verifier-claim-relayer`). It is not a Pages or Workers app. A default deploy does not embed the claim secret, so the site has no relayer submit. Escrow submits go out through the connected wallet.
+Wallet UX is a static Vite app. The claim relayer stays on Render (`claim-relayer/`, service `bot-verifier-claim-relayer`). It is not a Pages or Workers app. The claim API secret is retired. This workflow never embeds one. The page does not embed a claim secret. Escrow submits go out through the connected wallet unless `VITE_CLAIM_RELAYER_URL` is set, in which case escrow actions can also be posted live to that Base Sepolia relayer. The connected wallet signs the claim. Live submit is authorized by the wallet signature, not a shared secret.
 
 [`wrangler.toml`](wrangler.toml) records the project name and `pages_build_output_dir = "./dist"`. That file is not a git connection. Cloudflare does not read it to build the site.
 
@@ -16,11 +16,11 @@ GitHub auto-creates a missing environment the first time a job names it, and tha
 4. Protect the `main` branch: require a pull request before merging, block force pushes, and block deletion.
 5. On that `production` environment, store `CLOUDFLARE_API_TOKEN` (Pages:Edit scope only) and `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Never store them as repository secrets. Spencer: delete any existing repository-level copies of those values.
 6. Store `VITE_CLAIM_RELAYER_URL` as a `production` environment variable (the public Base Sepolia claim-relayer URL, for example `https://bot-verifier-claim-relayer.onrender.com`). Spencer: delete any existing repository variable of the same name.
-7. Spencer: do not set `VITE_CLAIM_API_SECRET` anywhere while `embed_claim_secret` stays at its default `false`. Not a repository secret, not a `production` environment secret, and not a variable.
+7. `VITE_CLAIM_API_SECRET` is retired. It must not exist anywhere: not as a repository secret, not as a `production` environment secret or variable, and not as a Cloudflare Pages environment variable. Spencer: delete any existing copy.
 
 ## Manual deploy
 
-Publish from GitHub with **Actions → Deploy wallet-ux → Run workflow** on `main`, only after the checklist above. The workflow is [`.github/workflows/deploy-wallet-ux.yml`](../../.github/workflows/deploy-wallet-ux.yml). `on` is `workflow_dispatch` only, so a push or a pull request does not publish. Leave the input `embed_claim_secret` at its default, `false`.
+Publish from GitHub with **Actions → Deploy wallet-ux → Run workflow** on `main`, only after the checklist above. The workflow is [`.github/workflows/deploy-wallet-ux.yml`](../../.github/workflows/deploy-wallet-ux.yml). `on` is `workflow_dispatch` only, so a push or a pull request does not publish. The workflow has no input that can embed a claim secret.
 
 The job runs only when `github.ref` is `refs/heads/main`. Its first step exits with an error if that ref is anything else. The job uses the GitHub Environment `production`, so it reads that environment's secrets and variables.
 
@@ -32,51 +32,42 @@ Direct Upload has no native promote. The job first uploads `dist` with `--branch
 
 After that, the job tries `wrangler pages deployment delete <preview deployment id> --project-name=agent-a-wallet-ux --force`, including when a later step failed (`if: always()`). `continue-on-error: true` means a cleanup failure does not fail a production deploy that already succeeded. Cloudflare will not delete the latest deployment on a branch, and `preview-<run id>` has only that one deployment, so the delete is expected to be refused. Pages does not expire preview deployments on its own. Each run can leave that single preview deployment in place: it is not the `main` production alias, and preview responses send `X-Robots-Tag: noindex`. Delete it from the dashboard only after another deployment exists on that same branch. Until then, leave it.
 
-The workflow does nothing until the `production` environment has `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. If either is empty, the job fails before `npm ci` and does not upload. A default run does not pass `VITE_CLAIM_API_SECRET` into the build, and that secret must not be set anywhere while the default stays `false`.
+The workflow does nothing until the `production` environment has `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. If either is empty, the job fails before `npm ci` and does not upload. The build env is `VITE_CLAIM_RELAYER_URL` only. `VITE_CLAIM_API_SECRET` is retired and is not passed in.
 
 | Name | Where | Role |
 | --- | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | `production` environment secret only. Never a repository secret. | API token with **Pages:Edit** scope only. Wrangler uses it to upload `dist`. Spencer: delete any repository-level copy. |
 | `CLOUDFLARE_ACCOUNT_ID` | `production` environment secret only. Never a repository secret. | Cloudflare account that owns `agent-a-wallet-ux`. Spencer: delete any repository-level copy. |
-| `VITE_CLAIM_RELAYER_URL` | `production` environment variable. Never a repository variable. | Passed into every `npm run build`. Spencer: delete any repository-level copy. |
-| `embed_claim_secret` | Workflow input, boolean, default `false` | When `false`, the build env does not include `VITE_CLAIM_API_SECRET`. When `true`, the job prints a warning and passes `secrets.VITE_CLAIM_API_SECRET` into that build only. |
-| `VITE_CLAIM_API_SECRET` | Do not set this anywhere while `embed_claim_secret` stays `false`. | Not a repository secret, not a `production` environment secret, and not a variable. See the warning below. |
+| `VITE_CLAIM_RELAYER_URL` | `production` environment variable. Never a repository variable. | Passed into every `npm run build`. The relayer button stays off until `GET /health` is up and not paused. The connected wallet signs the claim. Do not set a claim secret. Spencer: delete any repository-level copy. |
+| `VITE_CLAIM_API_SECRET` | Retired. Must not exist anywhere. | Do not set a claim secret on Pages. Not a repository secret, not a `production` environment secret or variable, and not a Cloudflare Pages environment variable. Spencer: delete any existing copy. |
 
 `VITE_BASE_SEPOLIA_RPC_URL` is optional and is not passed by the workflow. Leave it unset to use `https://sepolia.base.org`. Any URL must answer `eth_chainId` with `84532`.
 
-### Default deploy: no relayer submit
+### Relayer submit
 
-With `embed_claim_secret` left `false`, the built site has no relayer submit. Wallet submit still works.
-
-When `VITE_CLAIM_RELAYER_URL` is set and the secret is unset, the relayer button stays visible and disabled. `relayerButtonModel` in [`src/relayer.ts`](src/relayer.ts) returns `{ visible: true, disabled: true, note: RELAYER_SECRET_NOTE }` from the `if (!input.secret)` branch. The note is: "This app is missing the claim secret, so the claim relayer stays off. Use your wallet to submit instead." [`src/FlowPreview.tsx`](src/FlowPreview.tsx) `onRelayer` returns before any post when `relayer.secret` is missing. The test "disables the button with an explanation when the secret is missing or the relayer is paused" in [`src/relayer.test.ts`](src/relayer.test.ts) expects `visible: true`, `disabled: true`, and `note: RELAYER_SECRET_NOTE`.
-
-If `VITE_CLAIM_RELAYER_URL` is also unset, that same function hides the button (`visible: false`). Either way the page does not submit through the relayer.
-
-The relayer-auth fix (EIP-712 signed intents, tracked separately) is what re-enables relayer submit safely. Checking `embed_claim_secret` is not that fix.
+The claim API secret is retired. Do not set a claim secret on Pages. Relayer authentication is EIP-712 signed intents (PR #46). The connected wallet signs the claim. Live submit is authorized by the wallet signature, not a shared secret. Wallet submit still works. This workflow does not pass a claim secret into the build.
 
 ## Warning
 
-> **Warning:** Any `VITE_` variable is embedded in the public JavaScript bundle. Turning on `embed_claim_secret` puts `VITE_CLAIM_API_SECRET` in that bundle. The value is not confidential and must not be relied on as relayer authentication. The relayer-auth fix (EIP-712 signed intents, tracked separately) is what re-enables relayer submit safely.
-
-The job log prints that warning before the embed build. `VITE_CLAIM_API_SECRET` would be sent as `x-claim-secret` on live `POST /v1/claims`. It is not `ADMIN_SECRET` and it is not the relayer private key. Anyone who can load the site can read an embedded value from the built JavaScript.
+> **Warning:** Any `VITE_` variable is embedded in the public JavaScript bundle. `VITE_CLAIM_API_SECRET` is retired and must not be set. A value of that name in the bundle is not confidential and is not relayer authentication. Relayer authentication is EIP-712 signed intents (PR #46).
 
 Do not put `PRIVATE_KEY`, `RELAYER_PRIVATE_KEY`, `SPENCER_RUN_AUTH`, `LIVE_SUBMIT`, or `ADMIN_SECRET` on this workflow or on the Pages project. Those belong to Foundry or the Render claim relayer, not this static app. Dashboard environment variables would not be applied at build time anyway.
 
 `BASE_SEPOLIA_RPC_URL` at the repo root is for Foundry and the claim relayer. This app does not read it.
 
-A default deploy does not send `x-claim-secret`, because it does not submit through the relayer. When relayer submit is re-enabled, the Render service must allow the Pages origin in `CORS_ORIGINS` (`https://agent-a-wallet-ux.pages.dev`, or the custom domain) and must allow the `x-claim-secret` request header. The claim-relayer Blueprint example includes that Pages origin. Live claims are Base Sepolia (chain id 84532) only. Ethereum mainnet and Base mainnet are refused before the request is sent.
+`x-claim-secret` is retired with the claim API secret. When `VITE_CLAIM_RELAYER_URL` is set, the Render service must allow the Pages origin in `CORS_ORIGINS` (`https://agent-a-wallet-ux.pages.dev`, or the custom domain). The claim-relayer Blueprint example includes that Pages origin. Live claims are Base Sepolia (chain id 84532) only. Ethereum mainnet and Base mainnet are refused before the request is sent. The page does not embed a claim secret.
 
 ## Local command
 
-From `apps/wallet-ux`, with `VITE_CLAIM_RELAYER_URL` set if you want the disabled relayer button, and with `VITE_CLAIM_API_SECRET` unset:
+From `apps/wallet-ux`, with `VITE_CLAIM_RELAYER_URL` set if you want the relayer URL in the build. Leave `VITE_CLAIM_API_SECRET` unset. That name is retired.
 
 ```bash
 npm ci && npm run build && npx wrangler pages deploy dist --project-name=agent-a-wallet-ux --branch=main
 ```
 
-That matches a default build (`embed_claim_secret` false): the upload has no relayer submit. `dist/` is gitignored. The workflow's own upload is two steps, preview branch then `main`, because direct upload has no promote. A local upload with `--branch=main` publishes production directly and skips the preview checks.
+`dist/` is gitignored. The workflow's own upload is two steps, preview branch then `main`, because direct upload has no promote. A local upload with `--branch=main` publishes production directly and skips the preview checks.
 
-Setting `VITE_CLAIM_API_SECRET` for a local build embeds it in the public bundle, the same as checking `embed_claim_secret`. Leave it unset. Relayer submit comes back with the EIP-712 signed-intent work, tracked separately.
+Do not set `VITE_CLAIM_API_SECRET` for a local build. Spencer: delete any existing copy. Do not set a claim secret on Pages. The connected wallet signs the claim.
 
 A build check that does not upload:
 
@@ -94,7 +85,7 @@ The workflow fails the deploy unless `dist/assets` contains the live BotAttestat
 - `Submitting through the claim relayer` (`src/relayer.ts`)
 - `Submit through the claim relayer, or from your wallet.` (`src/FlowPreview.tsx`)
 
-When `embed_claim_secret` is false and `VITE_CLAIM_API_SECRET` is non-empty, the job also fails if `dist` or a served bundle contains that secret. The scan uses `grep -F -q` with the value in the environment and does not print it. It checks the raw value and these encodings: standard base64 with and without padding, URL-safe base64 with and without padding, URL-encoding, hex (lowercase and uppercase), and JSON escaping. An empty secret skips that scan. The scan does not run when `embed_claim_secret` is true.
+The job also fails if `dist` or a served bundle contains the header `x-claim-secret` or the literal string `VITE_CLAIM_API_SECRET`. The header match is case-insensitive. Both markers are also rejected in these encodings: standard base64 with and without padding, URL-safe base64 with and without padding, URL-encoding, hex (lowercase and uppercase), and JSON escaping. The scan does not read a secret from the environment. There is no input that skips it.
 
 [`scripts/guard-escrow-addresses.mjs`](scripts/guard-escrow-addresses.mjs) imports `ADDRESSES`, `FALLBACK_PIN`, and `SUPERSEDED`. `SUPERSEDED` in [`src/book.ts`](src/book.ts) is the blocked-address list. The script requires `ADDRESSES.botAttestationEscrow` and `FALLBACK_PIN.botAttestationEscrow` to be the live escrow, and `SUPERSEDED.botAttestationEscrow` to be the retired escrow. It fails if any live `ADDRESSES` slot is the retired escrow.
 
