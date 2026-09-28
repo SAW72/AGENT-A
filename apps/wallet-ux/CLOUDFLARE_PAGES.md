@@ -6,11 +6,23 @@ Wallet UX is a static Vite app. The claim relayer stays on Render (`claim-relaye
 
 [`wrangler.toml`](wrangler.toml) records the project name and `pages_build_output_dir = "./dist"`. That file is not a git connection. Cloudflare does not read it to build the site.
 
+## Before the first deploy
+
+GitHub auto-creates a missing environment the first time a job names it, and that auto-created environment has no protection. Create the `production` environment before the first **Run workflow**, or that first dispatch is unreviewed.
+
+1. Create the GitHub Environment named `production` (Settings → Environments) before any `workflow_dispatch`.
+2. Restrict that environment's deployment branches to `main` only.
+3. Add SAW72 as a required reviewer.
+4. Protect the `main` branch: require a pull request before merging, block force pushes, and block deletion.
+5. On that `production` environment, store `CLOUDFLARE_API_TOKEN` (Pages:Edit scope only) and `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Never store them as repository secrets. Spencer: delete any existing repository-level copies of those values.
+6. Store `VITE_CLAIM_RELAYER_URL` as a `production` environment variable (the public Base Sepolia claim-relayer URL, for example `https://bot-verifier-claim-relayer.onrender.com`). Spencer: delete any existing repository variable of the same name.
+7. Spencer: do not set `VITE_CLAIM_API_SECRET` anywhere while `embed_claim_secret` stays at its default `false`. Not a repository secret, not a `production` environment secret, and not a variable.
+
 ## Manual deploy
 
-Publish from GitHub with **Actions → Deploy wallet-ux → Run workflow** on `main`. The workflow is [`.github/workflows/deploy-wallet-ux.yml`](../../.github/workflows/deploy-wallet-ux.yml). `on` is `workflow_dispatch` only, so a push or a pull request does not publish. Leave the input `embed_claim_secret` at its default, `false`.
+Publish from GitHub with **Actions → Deploy wallet-ux → Run workflow** on `main`, only after the checklist above. The workflow is [`.github/workflows/deploy-wallet-ux.yml`](../../.github/workflows/deploy-wallet-ux.yml). `on` is `workflow_dispatch` only, so a push or a pull request does not publish. Leave the input `embed_claim_secret` at its default, `false`.
 
-The job runs only when `github.ref` is `refs/heads/main`. Its first step exits with an error if that ref is anything else. The job uses the GitHub Environment `production`. Spencer should restrict that environment's deployment branches to `main`, and can add required reviewers so a run waits for approval before it uploads.
+The job runs only when `github.ref` is `refs/heads/main`. Its first step exits with an error if that ref is anything else. The job uses the GitHub Environment `production`, so it reads that environment's secrets and variables.
 
 The job token permission is `contents: read`. It uses Node.js 22, from `.node-version` in this directory. There is no `.nvmrc`, and `package.json` has no `engines` field. That is the same major as the `wallet-ux` job in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). The job checks out that ref, then in `apps/wallet-ux` runs `npm ci`, `npm test`, and `npm run build`. Checkout is `actions/checkout` v7.0.1 (`3d3c42e5aac5ba805825da76410c181273ba90b1`). Node setup is `actions/setup-node` v7.0.0 (`820762786026740c76f36085b0efc47a31fe5020`). The job timeout is 15 minutes.
 
@@ -18,15 +30,17 @@ Upload uses `cloudflare/wrangler-action` v4.1.3 (`953926a2e2182532811c01a25e5364
 
 Direct Upload has no native promote. The job first uploads `dist` with `--branch=preview-<run id>`. It downloads that deployment's `index.html` and JavaScript and runs the bundle checks. Only after those checks pass does it upload the same `dist` again with `--branch=main`. That second upload is the production deployment. Both commands also pass the commit hash of the dispatched ref.
 
-The workflow does nothing until Spencer adds `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. If either is empty, the job fails before `npm ci` and does not upload. A default run does not pass `VITE_CLAIM_API_SECRET` into the build.
+After that, the job tries `wrangler pages deployment delete <preview deployment id> --project-name=agent-a-wallet-ux --force`, including when a later step failed (`if: always()`). `continue-on-error: true` means a cleanup failure does not fail a production deploy that already succeeded. Cloudflare will not delete the latest deployment on a branch, and `preview-<run id>` has only that one deployment, so the delete is expected to be refused. Pages does not expire preview deployments on its own. Each run can leave that single preview deployment in place: it is not the `main` production alias, and preview responses send `X-Robots-Tag: noindex`. Delete it from the dashboard only after another deployment exists on that same branch. Until then, leave it.
+
+The workflow does nothing until the `production` environment has `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. If either is empty, the job fails before `npm ci` and does not upload. A default run does not pass `VITE_CLAIM_API_SECRET` into the build, and that secret must not be set anywhere while the default stays `false`.
 
 | Name | Where | Role |
 | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Repository secret | API token with **Pages:Edit** scope only. Wrangler uses it to upload `dist`. |
-| `CLOUDFLARE_ACCOUNT_ID` | Repository secret | Cloudflare account that owns `agent-a-wallet-ux`. |
-| `VITE_CLAIM_RELAYER_URL` | Repository variable | Passed into every `npm run build`. Public Base Sepolia claim-relayer URL, for example `https://bot-verifier-claim-relayer.onrender.com`. |
+| `CLOUDFLARE_API_TOKEN` | `production` environment secret only. Never a repository secret. | API token with **Pages:Edit** scope only. Wrangler uses it to upload `dist`. Spencer: delete any repository-level copy. |
+| `CLOUDFLARE_ACCOUNT_ID` | `production` environment secret only. Never a repository secret. | Cloudflare account that owns `agent-a-wallet-ux`. Spencer: delete any repository-level copy. |
+| `VITE_CLAIM_RELAYER_URL` | `production` environment variable. Never a repository variable. | Passed into every `npm run build`. Spencer: delete any repository-level copy. |
 | `embed_claim_secret` | Workflow input, boolean, default `false` | When `false`, the build env does not include `VITE_CLAIM_API_SECRET`. When `true`, the job prints a warning and passes `secrets.VITE_CLAIM_API_SECRET` into that build only. |
-| `VITE_CLAIM_API_SECRET` | Repository secret | Used only when `embed_claim_secret` is `true`. See the warning below. |
+| `VITE_CLAIM_API_SECRET` | Do not set this anywhere while `embed_claim_secret` stays `false`. | Not a repository secret, not a `production` environment secret, and not a variable. See the warning below. |
 
 `VITE_BASE_SEPOLIA_RPC_URL` is optional and is not passed by the workflow. Leave it unset to use `https://sepolia.base.org`. Any URL must answer `eth_chainId` with `84532`.
 
@@ -86,7 +100,7 @@ When `embed_claim_secret` is false and `VITE_CLAIM_API_SECRET` is non-empty, the
 
 The retired address also appears in the top-level `notes` string of [`src/base-sepolia.json`](src/base-sepolia.json), which records that the previous escrow is retired. That sentence is not the `SUPERSEDED` literal, so the bundle does not contain the address only inside the blocked-list literal. The script allowlists three client sources: the `SUPERSEDED` entry, `retired.BotAttestationEscrow.address`, and that notes sentence. Any other client occurrence fails the job. The built `dist` and each served bundle must contain the retired address exactly as many times as those allowlisted sources. At this commit that count is 3.
 
-After each upload, the job reads the `deployment-url` output, fetches `index.html`, the `/assets/*.js` files it references, and any same-directory `./chunk.js` imports, and runs the live-escrow, phrase, retired-address count, and claim-secret checks on that JavaScript. A failed check stops the job before the production upload, or fails the job if the production upload already happened.
+After each upload, the job reads the `deployment-url` output and fetches `/`. Served `index.html` must reference the same `/assets/*` hashes as the built `dist/index.html`. The check then downloads those `/assets/*.js` files and any same-directory `./chunk.js` imports. The retired-address count and the claim-secret scan run on `index.html` together with that JavaScript, so an address or secret that appears only in the HTML still fails the job. A failed check stops the job before the production upload, or fails the job if the production upload already happened.
 
 ## Project settings
 

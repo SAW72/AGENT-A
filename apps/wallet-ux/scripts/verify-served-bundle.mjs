@@ -1,7 +1,22 @@
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+
+function runGuard(args) {
+  const result = spawnSync("node", args, { encoding: "utf8" })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.error) {
+    console.error(`Verify failed: could not run the bundle guard (${result.error.message}).`)
+    process.exit(1)
+  }
+  if (result.status !== 0) process.exit(result.status ?? 1)
+}
+
+function referencedAssets(html) {
+  return [...new Set([...html.matchAll(/\/assets\/[A-Za-z0-9._-]+\.(?:js|css)/g)].map((match) => match[0]))].sort()
+}
 
 const deploymentUrl = (process.env.DEPLOYMENT_URL ?? "").trim()
 if (!deploymentUrl) {
@@ -16,8 +31,24 @@ if (!indexResponse.ok) {
   process.exit(1)
 }
 const html = await indexResponse.text()
-const assetPattern = /\/assets\/[A-Za-z0-9._-]+\.js/g
-const pending = [...new Set([...html.matchAll(assetPattern)].map((match) => match[0]))]
+const distIndexPath = process.env.DIST_INDEX ?? "dist/index.html"
+let builtHtml = ""
+try {
+  builtHtml = readFileSync(distIndexPath, "utf8")
+} catch {
+  console.error(`Verify failed: built index ${distIndexPath} is missing.`)
+  process.exit(1)
+}
+const expectedAssets = referencedAssets(builtHtml)
+const servedAssets = referencedAssets(html)
+if (expectedAssets.length === 0 || expectedAssets.join("\n") !== servedAssets.join("\n")) {
+  console.error(
+    `Verify failed: served index.html does not reference the built asset hashes. Built: ${expectedAssets.join(", ") || "(none)"}. Served: ${servedAssets.join(", ") || "(none)"}.`,
+  )
+  process.exit(1)
+}
+console.log(`Served index.html references the built asset hashes: ${servedAssets.join(", ")}.`)
+const pending = servedAssets.filter((assetPath) => assetPath.endsWith(".js"))
 if (pending.length === 0) {
   console.error("Verify failed: deployed index HTML does not reference /assets/*.js.")
   process.exit(1)
@@ -40,7 +71,7 @@ try {
     }
     const text = await response.text()
     javascript += `${text}\n`
-    for (const match of text.matchAll(assetPattern)) {
+    for (const match of text.matchAll(/\/assets\/[A-Za-z0-9._-]+\.(?:js|css)/g)) {
       if (!seen.has(match[0])) pending.push(match[0])
     }
     for (const match of text.matchAll(/["'`]\.\/([A-Za-z0-9._-]+\.js)["'`]/g)) {
@@ -48,20 +79,19 @@ try {
       if (!seen.has(assetPath)) pending.push(assetPath)
     }
   }
-  writeFileSync(bundlePath, javascript)
+  writeFileSync(bundlePath, `${html}\n${javascript}`)
 
-  const escrow = spawnSync(
-    "node",
-    ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", "scripts/guard-escrow-addresses.mjs", bundlePath],
-    { stdio: "inherit" },
-  )
-  if (escrow.status !== 0) process.exit(escrow.status ?? 1)
+  runGuard([
+    "--experimental-strip-types",
+    "--disable-warning=ExperimentalWarning",
+    "scripts/guard-escrow-addresses.mjs",
+    bundlePath,
+  ])
 
   if (process.env.EMBED_CLAIM_SECRET === "true") {
     console.log("embed_claim_secret is true. Skipped the served claim-secret scan.")
   } else {
-    const secretScan = spawnSync("node", ["scripts/guard-claim-secret.mjs", bundlePath], { stdio: "inherit" })
-    if (secretScan.status !== 0) process.exit(secretScan.status ?? 1)
+    runGuard(["scripts/guard-claim-secret.mjs", bundlePath])
   }
 } finally {
   rmSync(directory, { recursive: true, force: true })

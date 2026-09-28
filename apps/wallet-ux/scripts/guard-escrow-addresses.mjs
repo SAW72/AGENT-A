@@ -3,22 +3,24 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
-register(new URL("./register-wallet-ux-ts.mjs", import.meta.url), pathToFileURL("./"))
-
-const { ADDRESSES, FALLBACK_PIN, SUPERSEDED } = await import("../src/addresses.ts")
-
-const LIVE_ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d"
-const RETIRED_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c"
-const PHRASES = [
+export const LIVE_ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d"
+export const RETIRED_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c"
+export const PHRASES = [
   "Submitting through the claim relayer",
   "Submit through the claim relayer, or from your wallet.",
 ]
 
 const retiredLower = RETIRED_ESCROW.toLowerCase()
 
+export class GuardError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = "GuardError"
+  }
+}
+
 function fail(message) {
-  console.error(`Escrow address guard failed: ${message}`)
-  process.exit(1)
+  throw new GuardError(message)
 }
 
 function countRetired(text) {
@@ -84,17 +86,17 @@ function jsonOccurrences() {
   return { count, paths: hits.map((hit) => `${hit.path} (${hit.count})`) }
 }
 
-function assertConfiguredEscrow() {
-  if (ADDRESSES.botAttestationEscrow !== LIVE_ESCROW) {
+export function assertConfiguredEscrow(addresses, fallbackPin, superseded) {
+  if (addresses.botAttestationEscrow !== LIVE_ESCROW) {
     fail(`ADDRESSES.botAttestationEscrow is not the live escrow ${LIVE_ESCROW}.`)
   }
-  if (FALLBACK_PIN.botAttestationEscrow !== LIVE_ESCROW) {
+  if (fallbackPin.botAttestationEscrow !== LIVE_ESCROW) {
     fail(`FALLBACK_PIN.botAttestationEscrow is not the live escrow ${LIVE_ESCROW}.`)
   }
-  if (SUPERSEDED.botAttestationEscrow !== RETIRED_ESCROW) {
+  if (superseded.botAttestationEscrow !== RETIRED_ESCROW) {
     fail("SUPERSEDED.botAttestationEscrow is not the retired escrow.")
   }
-  for (const [key, value] of Object.entries(ADDRESSES)) {
+  for (const [key, value] of Object.entries(addresses)) {
     if (typeof value === "string" && value.toLowerCase() === retiredLower) {
       fail(`ADDRESSES.${key} is the retired escrow, which is blocked and is not a live slot.`)
     }
@@ -114,7 +116,7 @@ function javascriptFrom(target) {
   return chunks
 }
 
-function assertBundle(target, expectedRetired) {
+export function assertBundle(target, expectedRetired) {
   const chunks = javascriptFrom(target)
   if (chunks.length === 0) fail(`${target} has no JavaScript bundle.`)
   const text = chunks.join("\n")
@@ -135,19 +137,35 @@ function assertBundle(target, expectedRetired) {
   )
 }
 
-assertConfiguredEscrow()
-const bookCount = bookOccurrences()
-const json = jsonOccurrences()
-const expectedRetired = bookCount + json.count
-if (expectedRetired < 2) {
-  fail("expected the retired escrow in SUPERSEDED and in the retired book entry.")
+function runCli(addresses, fallbackPin, superseded) {
+  try {
+    assertConfiguredEscrow(addresses, fallbackPin, superseded)
+    const bookCount = bookOccurrences()
+    const json = jsonOccurrences()
+    const expectedRetired = bookCount + json.count
+    if (expectedRetired < 2) {
+      fail("expected the retired escrow in SUPERSEDED and in the retired book entry.")
+    }
+    console.log(
+      `Configured escrow is ${LIVE_ESCROW}. Blocked list SUPERSEDED.botAttestationEscrow is ${RETIRED_ESCROW}.`,
+    )
+    console.log(`Allowlisted retired-escrow sources: src/book.ts SUPERSEDED (${bookCount}); ${json.paths.join(", ")}.`)
+    console.log(
+      "The top-level book notes sentence also names the retired escrow, so the bundle count is not blocked-list literals alone.",
+    )
+    for (const target of process.argv.slice(2)) assertBundle(target, expectedRetired)
+  } catch (error) {
+    if (error instanceof GuardError) {
+      console.error(`Escrow address guard failed: ${error.message}`)
+      process.exit(1)
+    }
+    throw error
+  }
 }
-console.log(
-  `Configured escrow is ${LIVE_ESCROW}. Blocked list SUPERSEDED.botAttestationEscrow is ${RETIRED_ESCROW}.`,
-)
-console.log(`Allowlisted retired-escrow sources: src/book.ts SUPERSEDED (${bookCount}); ${json.paths.join(", ")}.`)
-console.log(
-  "The top-level book notes sentence also names the retired escrow, so the bundle count is not blocked-list literals alone.",
-)
 
-for (const target of process.argv.slice(2)) assertBundle(target, expectedRetired)
+const entry = process.argv[1]
+if (entry && import.meta.url === pathToFileURL(entry).href) {
+  register(new URL("./register-wallet-ux-ts.mjs", import.meta.url), pathToFileURL("./"))
+  const { ADDRESSES, FALLBACK_PIN, SUPERSEDED } = await import("../src/addresses.ts")
+  runCli(ADDRESSES, FALLBACK_PIN, SUPERSEDED)
+}
