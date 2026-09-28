@@ -72,6 +72,7 @@ jobs:
       - name: Install
         run: npm ci
       - name: Test
+        # Includes src/**/*.test.ts and scripts/**/*.test.mjs (deploy guard scripts).
         run: npm test
       - name: Build
         run: npm run build
