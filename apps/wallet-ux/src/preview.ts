@@ -1,5 +1,6 @@
-import { encodeFunctionData, type Address, type Hex } from "viem"
+import { encodeAbiParameters, encodeFunctionData, keccak256, type Address, type Hex } from "viem"
 import { disputePanelAbi, escrowAbi } from "./abi"
+import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 
 export const MAX_DURATION_SECONDS = 30 * 24 * 60 * 60
 
@@ -28,6 +29,8 @@ export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "DisputeVotesCast", meaning: "This dispute already has votes, so it can't be linked to this claim." },
   { name: "DisputePredatesEscrow", meaning: "This dispute was opened before this claim, so it can't be linked." },
   { name: "DisputeChallengerNotParty", meaning: "The person who opened this dispute is neither the payer nor the payee, so it can't be linked to this claim." },
+  { name: "ReleaseNotAuthorized", meaning: "Only the payer can release an open escrow." },
+  { name: "NotParty", meaning: "This wallet is not a party to this escrow." },
   { name: "DisputeAfterExpiry", meaning: "The claim window has closed, so this dispute can't be linked." },
   { name: "DisputePending", meaning: "This claim can't be refunded because the dispute panel upheld the deal." },
   { name: "ZeroAddress", meaning: "A required wallet address was left blank." },
@@ -70,6 +73,24 @@ export function previewCreateEscrow(input: {
       args: [input.escrowId, input.payee, input.payerBotId, input.payeeBotId, input.durationSeconds],
     }),
   }
+}
+
+/**
+ * Subject a panel case must use for this escrow row.
+ * Matches `BotAttestationEscrow.panelSubject`: `keccak256(abi.encode(chainId, escrow, escrowId, createdAt))`.
+ */
+export function panelSubject(
+  escrow: Address,
+  escrowId: Hex,
+  createdAt: bigint,
+  chainId: number = BASE_SEPOLIA_CHAIN_ID,
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }, { type: "bytes32" }, { type: "uint256" }],
+      [BigInt(chainId), escrow, escrowId, createdAt],
+    ),
+  )
 }
 
 export function previewRelease(escrow: Address, escrowId: Hex): CallPreview {

@@ -11,6 +11,7 @@ import {
   MAX_DURATION_SECONDS,
   previewCreateEscrow,
   previewDispute,
+  panelSubject,
   previewOpenDispute,
   previewRefund,
   previewRelease,
@@ -285,20 +286,37 @@ function Field({
   value,
   onChange,
   hint,
+  readOnly = false,
 }: {
   id: string
   label: string
   value: string
   onChange: (value: string) => void
   hint?: string
+  readOnly?: boolean
 }) {
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} value={value} spellCheck={false} autoComplete="off" onChange={(event) => onChange(event.target.value)} />
+      <input
+        id={id}
+        value={value}
+        spellCheck={false}
+        autoComplete="off"
+        readOnly={readOnly}
+        onChange={(event) => onChange(event.target.value)}
+      />
       {hint ? <p className="hint">{hint}</p> : null}
     </div>
   )
+}
+
+function parseCreatedAt(value: string): bigint | null {
+  const text = value.trim()
+  if (!/^[0-9]+$/.test(text)) return null
+  const parsed = BigInt(text)
+  if (parsed >= 2n ** 256n) return null
+  return parsed
 }
 
 export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address }) {
@@ -351,6 +369,7 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
         }}
       />
       <OpenDisputeForm
+        escrow={escrow}
         panel={panel}
         onPreview={show}
         onError={(message) => {
@@ -505,25 +524,33 @@ function IdForm({
 }
 
 function OpenDisputeForm({
+  escrow,
   panel,
   onPreview,
   onError,
 }: {
+  escrow: Address
   panel: Address
   onPreview: (preview: CallPreview) => void
   onError: (message: string) => void
 }) {
   const [disputeId, setDisputeId] = useState("")
-  const [subjectHash, setSubjectHash] = useState("")
+  const [claimId, setClaimId] = useState("")
+  const [createdAt, setCreatedAt] = useState("")
   const [reason, setReason] = useState("")
+  const parsedClaim = parseBytes32(claimId)
+  const parsedCreatedAt = parseCreatedAt(createdAt)
+  const subjectHash =
+    parsedClaim && parsedCreatedAt !== null ? panelSubject(escrow, parsedClaim, parsedCreatedAt) : ""
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault()
         const id = parseBytes32(disputeId)
-        const subject = parseBytes32(subjectHash)
-        if (!id || !subject) {
+        const claim = parseBytes32(claimId)
+        const created = parseCreatedAt(createdAt)
+        if (!id || !claim || created === null) {
           onError(FORM_ERRORS.openIds)
           return
         }
@@ -531,17 +558,26 @@ function OpenDisputeForm({
           onError(FORM_ERRORS.openReason)
           return
         }
-        onPreview(previewOpenDispute(panel, id, subject, reason.trim()))
+        onPreview(previewOpenDispute(panel, id, panelSubject(escrow, claim, created), reason.trim()))
       }}
     >
       <h3>Open a dispute</h3>
       <Field id="open-dispute-id" label="Dispute identifier" value={disputeId} onChange={setDisputeId} />
+      <Field id="open-claim-id" label="Claim identifier" value={claimId} onChange={setClaimId} />
+      <Field
+        id="open-created-at"
+        label="Time the claim was created"
+        value={createdAt}
+        onChange={setCreatedAt}
+        hint="Seconds since 1970, the same time stored when the claim was created."
+      />
       <Field
         id="open-subject"
-        label="Claim identifier"
+        label="Subject"
         value={subjectHash}
-        onChange={setSubjectHash}
-        hint="Use the claim identifier. The panel stores this as the subject."
+        onChange={() => undefined}
+        readOnly
+        hint="Filled from the claim identifier and the time the claim was created. The panel stores this subject."
       />
       <Field id="open-reason" label="Reason" value={reason} onChange={setReason} />
       <button type="submit">Prepare this dispute</button>

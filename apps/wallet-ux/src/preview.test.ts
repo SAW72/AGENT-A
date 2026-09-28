@@ -9,6 +9,7 @@ import {
   MAX_DURATION_SECONDS,
   previewCreateEscrow,
   previewDispute,
+  panelSubject,
   previewOpenDispute,
   previewRefund,
   previewRelease,
@@ -61,7 +62,30 @@ describe("calldata preview", () => {
     expect(names).toContain("DisputeVotesCast")
     expect(names).toContain("DisputePredatesEscrow")
     expect(names).toContain("DisputeChallengerNotParty")
+    expect(names).toContain("ReleaseNotAuthorized")
+    expect(names).toContain("NotParty")
     expect(names).toContain("DisputeAfterExpiry")
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "ReleaseNotAuthorized")?.meaning).toBe(
+      "Only the payer can release an open escrow.",
+    )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "NotParty")?.meaning).toBe(
+      "This wallet is not a party to this escrow.",
+    )
+  })
+
+  it("fills the dispute subject from the claim id and the time the claim was created", () => {
+    const createdAt = 1_700_000_000n
+    const subject = panelSubject(escrow, id, createdAt)
+    expect(subject).toBe("0xbb13800c96edf91bb23cf6e0b3563c7f804d0f2215f3c390d62689d2a4ca1d7a")
+    expect(subject).not.toBe(id)
+    expect(panelSubject(escrow, id, createdAt)).toBe(subject)
+    expect(panelSubject(escrow, other, createdAt)).not.toBe(subject)
+    expect(panelSubject(panel, id, createdAt)).not.toBe(subject)
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "FlowPreview.tsx"), "utf8")
+    expect(source).toContain("panelSubject(escrow, claim, created)")
+    expect(source).toContain('id="open-subject"')
+    expect(source).toContain("readOnly")
+    expect(source).not.toContain("Use the claim identifier. The panel stores this as the subject.")
   })
 })
 

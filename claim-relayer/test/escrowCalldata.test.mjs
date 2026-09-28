@@ -41,7 +41,8 @@ describe("escrow calldata", () => {
     assert.equal(release.selector, selectorFor("release(bytes32)"));
     assert.equal(release.calldata, release.selector + ESCROW_ID.slice(2));
     assert.equal(release.valueWei, "0");
-    assert.equal(release.senderConstraint, "permissionless");
+    assert.equal(release.senderConstraint, "payer_while_open");
+    assert.equal(encodeEscrowAction({ action: "refund", escrowId: ESCROW_ID }).senderConstraint, "permissionless");
 
     const refund = encodeEscrowAction({ action: "refund", claimId: ESCROW_ID });
     assert.equal(refund.calldata.slice(0, 10), selectorFor("refund(bytes32)"));

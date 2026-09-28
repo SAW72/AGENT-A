@@ -64,13 +64,17 @@ describe("submit target", () => {
 
   it("states who sends each prepared transaction in plain English", () => {
     expect(submitSenderNote("createEscrow")).toMatch(/allowed to fund claims for the payer/)
-    expect(submitSenderNote("release")).toMatch(/Anyone can send a payout or a refund/)
+    expect(submitSenderNote("release")).toBe(
+      "Only the payer can release an open escrow. The connected wallet sends this payout on Base Sepolia.",
+    )
+    expect(submitSenderNote("refund")).toBe("Anyone can send a refund. The connected wallet sends this on Base Sepolia.")
     expect(submitSenderNote("dispute")).toBe("The payer or the payee has to send this. The connected wallet is the sender.")
     expect(previewCardCopy("dispute", false)).toBe(
       "This prepares linking a dispute to a claim. Submit sends it from the connected wallet on Base Sepolia only.",
     )
     expect(previewCardCopy("dispute", true)).not.toMatch(/claim relayer/)
-    expect(previewCardCopy("release", true)).toMatch(/claim relayer on Base Sepolia/)
+    expect(previewCardCopy("release", true)).not.toMatch(/claim relayer/)
+    expect(previewCardCopy("release", true)).toMatch(/connected wallet on Base Sepolia only/)
     expect(previewCardCopy("refund", true)).toMatch(/claim relayer on Base Sepolia/)
     expect(previewCardCopy("openDispute", true)).not.toMatch(/claim relayer/)
     expect(previewCardCopy("createEscrow", true)).not.toMatch(/claim relayer/)

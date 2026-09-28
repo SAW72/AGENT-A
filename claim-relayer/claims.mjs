@@ -76,7 +76,10 @@ export function senderNoteFor(action) {
   if (action === "dispute") {
     return "dispute() succeeds only when the relayer signer is the payer or the payee.";
   }
-  return "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.";
+  if (action === "release") {
+    return "release is not relayed. While the escrow is open, only the payer can release it from their own wallet. After an upheld dispute, the payer or the payee releases from their own wallet.";
+  }
+  return "refund is permissionless. The relayer signs the credit. The credited account withdraws its own balance.";
 }
 
 export function liveSubmitError(config) {

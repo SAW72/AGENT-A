@@ -105,7 +105,7 @@ describe("claim relayer HTTP", () => {
       assert.equal(claim.json.signature, "release(bytes32)");
       assert.equal(claim.json.calldataStatus, "encoded");
       assert.equal(claim.json.valueWei, "0");
-      assert.equal(claim.json.senderConstraint, "permissionless");
+      assert.equal(claim.json.senderConstraint, "payer_while_open");
       assert.equal(claim.json.calldata, claim.json.selector + escrowId.slice(2));
       assert.equal(claim.json.reason, "escrow_booked_spencer_run_auth_required");
     } finally {
@@ -249,7 +249,7 @@ describe("claim relayer HTTP", () => {
 
       const releaseBody = await signedLiveBody({
         account: accounts.payer,
-        action: "release",
+        action: "refund",
         escrowId,
         nonce: "11",
         deadline: deadlineAt(120),
@@ -360,7 +360,7 @@ describe("claim relayer HTTP", () => {
         "/v1/claims",
         await signedLiveBody({
           account: accounts.payer,
-          action: "release",
+          action: "refund",
           escrowId: releaseId,
           nonce: "21",
           deadline: deadlineAt(120),
@@ -548,7 +548,7 @@ describe("claim relayer HTTP", () => {
         "/v1/claims",
         await signedLiveBody({
           account: accounts.payer,
-          action: "release",
+          action: "refund",
           escrowId,
           nonce: "41",
           deadline: deadlineAt(120),
@@ -692,7 +692,7 @@ describe("claim relayer HTTP", () => {
       releaseBodies.push(
         await signedLiveBody({
           account: accounts.payer,
-          action: "release",
+          action: "refund",
           escrowId,
           nonce,
           deadline: deadlineAt(120),
@@ -748,9 +748,9 @@ describe("claim relayer HTTP", () => {
         error: "broadcast_failed",
         txHash: null,
         dryRun: false,
-        action: "release",
+        action: "refund",
         senderConstraint: "permissionless",
-        senderNote: "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.",
+        senderNote: "refund is permissionless. The relayer signs the credit. The credited account withdraws its own balance.",
         revert_data: revert,
       });
       assert.equal(decoded.raw.includes(rpcUrl), false);

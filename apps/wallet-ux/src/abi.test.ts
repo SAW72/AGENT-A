@@ -43,6 +43,7 @@ describe("forge ABIs", () => {
       "dispute",
       "withdraw",
       "withdrawTo",
+      "panelSubject",
     ]) {
       expect(names(escrowAbi).has(name)).toBe(true)
     }
@@ -55,6 +56,8 @@ describe("forge ABIs", () => {
       "DisputePredatesEscrow",
       "DisputeChallengerNotParty",
       "DisputeAfterExpiry",
+      "ReleaseNotAuthorized",
+      "NotParty",
       "EscrowNotFound",
       "WithdrawFailed",
     ]) {

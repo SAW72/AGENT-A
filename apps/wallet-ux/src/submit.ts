@@ -77,7 +77,13 @@ export function submitSenderNote(functionName: string): string {
   if (functionName === "openDispute") {
     return "The connected wallet sends this dispute to the panel on Base Sepolia."
   }
-  return "Anyone can send a payout or a refund. The connected wallet sends this on Base Sepolia."
+  if (functionName === "release") {
+    return "Only the payer can release an open escrow. The connected wallet sends this payout on Base Sepolia."
+  }
+  if (functionName === "refund") {
+    return "Anyone can send a refund. The connected wallet sends this on Base Sepolia."
+  }
+  return "The connected wallet sends this on Base Sepolia."
 }
 
 export function previewCardCopy(functionName: string, relayerConfigured: boolean): string {
@@ -94,8 +100,8 @@ export function previewCardCopy(functionName: string, relayerConfigured: boolean
               ? "This prepares opening a dispute."
               : "This prepares a transaction."
   const relayer =
-    relayerConfigured && (functionName === "release" || functionName === "refund")
-      ? " Escrow steps can also be sent through the claim relayer on Base Sepolia."
+    relayerConfigured && functionName === "refund"
+      ? " A refund can also be sent through the claim relayer on Base Sepolia."
       : ""
   return `${lead} Submit sends it from the connected wallet on Base Sepolia only.${relayer}`
 }
@@ -107,7 +113,7 @@ export const FORM_ERRORS = {
   valueZero: "Enter an amount greater than zero. Nothing was sent.",
   releaseId: "Enter the claim identifier before releasing this claim.",
   refundId: "Enter the claim identifier before refunding this claim.",
-  openIds: "Enter the dispute identifier and the claim identifier before opening a dispute.",
+  openIds: "Enter the dispute identifier, the claim identifier, and the time the claim was created before opening a dispute.",
   openReason: "Enter a reason before opening a dispute.",
   disputeClaim: "Enter the claim identifier before opening a dispute.",
   disputeId: "Enter the dispute identifier before opening a dispute.",

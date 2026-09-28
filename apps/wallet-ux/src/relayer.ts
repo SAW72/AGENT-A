@@ -17,7 +17,7 @@ import type { CallPreview } from "./preview"
 import { REVERT_FALLBACK_TEXT } from "./revert"
 import { evaluateEscrowSubmit } from "./submit"
 
-const RELAYER_ACTIONS = ["release", "refund"] as const
+const RELAYER_ACTIONS = ["refund"] as const
 
 export type RelayerAction = (typeof RELAYER_ACTIONS)[number]
 
@@ -162,6 +162,7 @@ const RELAYER_PLAIN: Record<string, string> = {
   mainnet_refused: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   wrong_chain: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   action_not_claim: "This step has to be sent from your wallet, not the claim relayer.",
+  release_not_relayable: "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
   invalid_relayer_url: "The claim relayer address is not valid. Nothing was sent.",
   invalid_bytes32: "A required identifier is missing or not the right length. Nothing was sent.",
   invalid_claim_id: "The claim identifier was not accepted. Nothing was sent.",
@@ -248,7 +249,7 @@ function isRelayerAction(name: string): name is RelayerAction {
 }
 
 export function previewSupportsRelayer(functionName: string): boolean {
-  // Release and refund only. Create, dispute, withdraw, and withdrawTo stay on the connected wallet.
+  // Refund only. Release stays on the payer's wallet. Create, dispute, withdraw, and withdrawTo stay there too.
   return isRelayerAction(functionName)
 }
 
@@ -288,6 +289,13 @@ function asHex32(value: unknown, field: string): Hex {
 
 export function claimBodyFromPreview(preview: CallPreview): LiveClaimBody {
   assertRelayerChain(BASE_SEPOLIA_CHAIN_ID)
+  if (preview.functionName === "release") {
+    throw new RelayerRequestError(
+      "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
+      null,
+      "release_not_relayable",
+    )
+  }
   if (!isRelayerAction(preview.functionName)) {
     throw new RelayerRequestError(
       "This step has to be sent from your wallet, not the claim relayer.",
@@ -721,7 +729,14 @@ export function claimSignArgs(input: {
 
 function actionFromSignedIndex(index: number): RelayerAction {
   const action = CLAIM_INTENT_ACTIONS[index]
-  if (action !== "release" && action !== "refund") {
+  if (action === "release") {
+    throw new RelayerRequestError(
+      "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
+      null,
+      "release_not_relayable",
+    )
+  }
+  if (action !== "refund") {
     throw new RelayerRequestError(
       "This step has to be sent from your wallet, not the claim relayer.",
       null,
