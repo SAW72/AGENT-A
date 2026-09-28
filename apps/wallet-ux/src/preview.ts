@@ -16,6 +16,24 @@ export type ErrorGlossaryEntry = {
   meaning: string
 }
 
+/** Shown when a refund hits an unresolved dispute inside the 7-day ruling window. */
+export const RULING_PENDING_TEXT =
+  "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled."
+
+export const POST_EXPIRY_REFUND_INTRO = "After the claim ends, a refund is decided in this order."
+
+/** Post-expiry refund checks, in contract order. */
+export const POST_EXPIRY_REFUND_ORDER = [
+  { state: "Open", error: null, outcome: "The payer is refunded." },
+  { state: "Disputed, resolved and upheld", error: "DisputePending", outcome: "The payee should release." },
+  {
+    state: "Disputed, unresolved, within 7 days after the claim ends",
+    error: "RulingPending",
+    outcome: RULING_PENDING_TEXT,
+  },
+  { state: "Otherwise", error: null, outcome: "The payer is refunded." },
+] as const
+
 /** Plain-English meanings for contract reverts. These builders do not submit. */
 export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "FundingBeforeGovernance", meaning: "New claims can't be created yet. The contract owner still needs to accept the governance handover." },
@@ -33,6 +51,7 @@ export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "NotParty", meaning: "This wallet is not a party to this escrow." },
   { name: "DisputeAfterExpiry", meaning: "The claim window has closed, so this dispute can't be linked." },
   { name: "DisputePending", meaning: "This claim can't be refunded because the dispute panel upheld the deal." },
+  { name: "RulingPending", meaning: RULING_PENDING_TEXT },
   { name: "ZeroAddress", meaning: "A required wallet address was left blank." },
   { name: "InvalidGovernance", meaning: "This contract was set up with its deployer as the governor, which isn't allowed." },
   { name: "NotGovernance", meaning: "Only the governor can do that, and the contract owner must already be the governor." },

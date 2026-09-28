@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem"
 import { useAccount, usePublicClient, useSendTransaction, useWalletClient } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
@@ -9,6 +9,8 @@ import { resolveWalletChainId } from "./guard"
 import {
   ERROR_GLOSSARY,
   MAX_DURATION_SECONDS,
+  POST_EXPIRY_REFUND_INTRO,
+  POST_EXPIRY_REFUND_ORDER,
   previewCreateEscrow,
   previewDispute,
   panelSubject,
@@ -362,6 +364,7 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
         title="Refund a claim"
         buttonLabel="Prepare this refund"
         missingId={FORM_ERRORS.refundId}
+        intro={<PostExpiryRefundOrder />}
         onSubmit={(escrowId) => show(previewRefund(escrow, escrowId))}
         onError={(message) => {
           setPreview(null)
@@ -488,11 +491,28 @@ function CreateForm({
   )
 }
 
+function PostExpiryRefundOrder() {
+  return (
+    <div data-testid="post-expiry-refund-order">
+      <p className="muted">{POST_EXPIRY_REFUND_INTRO}</p>
+      <ol className="plain">
+        {POST_EXPIRY_REFUND_ORDER.map((step) => (
+          <li key={step.state}>
+            <strong>{step.state}.</strong> {step.error ? <span className="mono">{step.error}. </span> : null}
+            {step.outcome}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 function IdForm({
   idPrefix,
   title,
   buttonLabel,
   missingId,
+  intro,
   onSubmit,
   onError,
 }: {
@@ -500,6 +520,7 @@ function IdForm({
   title: string
   buttonLabel: string
   missingId: string
+  intro?: ReactNode
   onSubmit: (escrowId: `0x${string}`) => void
   onError: (message: string) => void
 }) {
@@ -517,6 +538,7 @@ function IdForm({
       }}
     >
       <h3>{title}</h3>
+      {intro}
       <Field id={`${idPrefix}-id`} label="Claim identifier" value={escrowId} onChange={setEscrowId} />
       <button type="submit">{buttonLabel}</button>
     </form>

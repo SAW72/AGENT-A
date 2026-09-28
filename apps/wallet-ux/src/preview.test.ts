@@ -1,4 +1,4 @@
-import { decodeFunctionData, parseEther } from "viem"
+import { decodeFunctionData, parseEther, toFunctionSelector } from "viem"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -7,6 +7,8 @@ import { disputePanelAbi, escrowAbi } from "./abi"
 import {
   ERROR_GLOSSARY,
   MAX_DURATION_SECONDS,
+  POST_EXPIRY_REFUND_ORDER,
+  RULING_PENDING_TEXT,
   previewCreateEscrow,
   previewDispute,
   panelSubject,
@@ -71,6 +73,24 @@ describe("calldata preview", () => {
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "NotParty")?.meaning).toBe(
       "This wallet is not a party to this escrow.",
     )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "RulingPending")?.meaning).toBe(RULING_PENDING_TEXT)
+    expect(toFunctionSelector("RulingPending()")).toBe("0x3a0621bd")
+    expect(toFunctionSelector("RULING_GRACE()")).toBe("0x3cfbadae")
+    expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.error)).toEqual([
+      null,
+      "DisputePending",
+      "RulingPending",
+      null,
+    ])
+    expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.outcome)).toEqual([
+      "The payer is refunded.",
+      "The payee should release.",
+      RULING_PENDING_TEXT,
+      "The payer is refunded.",
+    ])
+    const flow = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "FlowPreview.tsx"), "utf8")
+    expect(flow).toContain('data-testid="post-expiry-refund-order"')
+    expect(flow).toContain("POST_EXPIRY_REFUND_ORDER")
   })
 
   it("fills the dispute subject from the claim id and the time the claim was created", () => {
