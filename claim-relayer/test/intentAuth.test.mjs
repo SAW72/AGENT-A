@@ -5,7 +5,6 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { keccak256 } from "viem";
 import { createAbuseGuard } from "../abuseLimits.mjs";
 import { createClaimRelayer } from "../app.mjs";
 import { RETIRED_ESCROW } from "../claimIntent.mjs";
@@ -20,7 +19,7 @@ import { BOOKED_ESCROW, NOW_MS, deadlineAt, signedLiveBody, testAccounts, tracki
 const TX = "0x" + "ab".repeat(32);
 
 function request(port, method, path, body, headers = {}) {
-  const payload = body === undefined ? null : JSON.stringify(body);
+  const payload = body === undefined ? null : typeof body === "string" ? body : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -188,7 +187,7 @@ describe("signed claim intent auth", () => {
     }
   });
 
-  it("returns the original tx hash for a replayed nonce and does not broadcast again", async () => {
+  it("rejects a replayed nonce and does not broadcast again", async () => {
     const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
     const ctx = await boot({}, { chain });
     try {
@@ -196,11 +195,10 @@ describe("signed claim intent auth", () => {
       const first = await request(ctx.port, "POST", "/v1/claims", body);
       assert.equal(first.status, 200);
       assert.equal(first.json.txHash, TX);
-      assert.equal(first.json.replay, undefined);
       const second = await request(ctx.port, "POST", "/v1/claims", body);
-      assert.equal(second.status, 200);
-      assert.equal(second.json.txHash, TX);
-      assert.equal(second.json.replay, true);
+      assert.equal(second.status, 409);
+      assert.equal(second.json.error, "nonce_replay");
+      assert.equal(second.json.txHash, null);
       assert.equal(ctx.sent.length, 1);
       assert.equal(chain.calls.simulations.length, 1);
     } finally {
@@ -208,26 +206,43 @@ describe("signed claim intent auth", () => {
     }
   });
 
-  it("rejects a calldata hash mismatch and a disallowed selector", async () => {
+  it("rejects an escrow id mismatch, trailing bytes, and a supplied value", async () => {
     const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
     const ctx = await boot({}, { chain });
     try {
-      const body = await releaseBody(accounts.payer, { nonce: "111" });
-      body.calldata = "0x" + "ee".repeat(36);
-      const mismatch = await request(ctx.port, "POST", "/v1/claims", body);
+      const otherId = "0x" + "22".repeat(32);
+      const mismatched = await releaseBody(accounts.payer, { nonce: "111" });
+      mismatched.calldata = encodeEscrowAction({ action: "release", escrowId: otherId }).calldata;
+      const mismatch = await request(ctx.port, "POST", "/v1/claims", mismatched);
       assert.equal(mismatch.status, 400);
-      assert.equal(mismatch.json.error, "calldata_hash_mismatch");
-      assert.equal(chain.calls.reads.length, 1);
+      assert.equal(mismatch.json.error, "calldata_mismatch");
+      assert.equal(chain.calls.reads.length, 0);
       assert.equal(chain.calls.simulations.length, 0);
       assert.equal(ctx.sent.length, 0);
 
-      const badCalldata = "0xdeadbeef" + "ab".repeat(32);
-      const bad = await releaseBody(accounts.payer, { nonce: "112", calldata: badCalldata });
-      const selector = await request(ctx.port, "POST", "/v1/claims", bad);
-      assert.equal(selector.status, 400);
-      assert.equal(selector.json.error, "selector_not_allowed");
+      const trailing = await releaseBody(accounts.payer, { nonce: "112" });
+      trailing.calldata = `${trailing.calldata}00`;
+      const extra = await request(ctx.port, "POST", "/v1/claims", trailing);
+      assert.equal(extra.status, 400);
+      assert.equal(extra.json.error, "trailing_bytes");
       assert.equal(ctx.sent.length, 0);
-      assert.equal(keccak256(badCalldata), bad.intent.calldataHash);
+
+      const valued = await releaseBody(accounts.payer, { nonce: "113" });
+      valued.amountWei = "1";
+      const value = await request(ctx.port, "POST", "/v1/claims", valued);
+      assert.equal(value.status, 400);
+      assert.equal(value.json.error, "value_not_allowed");
+      assert.equal(chain.calls.reads.length, 0);
+      assert.equal(ctx.sent.length, 0);
+
+      const bound = await releaseBody(accounts.payer, { nonce: "114" });
+      delete bound.calldata;
+      const accepted = await request(ctx.port, "POST", "/v1/claims", bound);
+      assert.equal(accepted.status, 200);
+      const expected = encodeEscrowAction({ action: "release", escrowId });
+      assert.equal(ctx.sent[0].data.toLowerCase(), expected.calldata.toLowerCase());
+      assert.equal(ctx.sent[0].valueWei, "0");
+      assert.equal(accepted.json.valueWei, "0");
     } finally {
       await ctx.close();
     }
@@ -273,7 +288,7 @@ describe("signed claim intent auth", () => {
     const off = await boot({}, { chain });
     try {
       const body = await releaseBody(accounts.payer, { nonce: "115" });
-      body.signature = "0x" + "22".repeat(65);
+      body.signature = "0x" + "22".repeat(80);
       const refused = await request(off.port, "POST", "/v1/claims", body);
       assert.equal(refused.status, 401);
       assert.equal(refused.json.error, "invalid_signature");
@@ -414,7 +429,167 @@ describe("signed claim intent auth", () => {
     }
   });
 
+  it("rejects createEscrow, dispute, withdraw, and withdrawTo before any chain read", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({}, { chain });
+    try {
+      for (const action of ["createEscrow", "dispute", "withdraw", "withdrawTo"]) {
+        const res = await request(ctx.port, "POST", "/v1/claims", {
+          live: true,
+          signature: "0x" + "11".repeat(65),
+          intent: {
+            action,
+            escrowId,
+            sender: accounts.payer.address,
+            nonce: "1",
+            deadline: deadlineAt(120),
+            chainId: 84532,
+            verifyingContract: BOOKED_ESCROW,
+          },
+        });
+        assert.equal(res.status, 400, action);
+        assert.equal(res.json.error, "action_not_claim", action);
+        assert.equal(res.json.txHash, null);
+      }
+      assert.equal(chain.calls.reads.length, 0);
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(chain.calls.simulations.length, 0);
+      assert.equal(ctx.sent.length, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("rejects a high-s signature and a bad v before recovery", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({ ERC1271_ENABLED: "1" }, { chain });
+    try {
+      const high = await releaseBody(accounts.payer, { nonce: "501" });
+      high.signature = malleableHighS(high.signature);
+      const highRes = await request(ctx.port, "POST", "/v1/claims", high);
+      assert.equal(highRes.status, 400);
+      assert.equal(highRes.json.error, "high_s");
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(chain.calls.reads.length, 0);
+      assert.equal(ctx.sent.length, 0);
+
+      const badV = await releaseBody(accounts.payer, { nonce: "502" });
+      badV.signature = `${badV.signature.slice(0, 130)}02`;
+      const badRes = await request(ctx.port, "POST", "/v1/claims", badV);
+      assert.equal(badRes.status, 400);
+      assert.equal(badRes.json.error, "invalid_signature");
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(ctx.sent.length, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("lets exactly one of two concurrent same-nonce requests through", async () => {
+    let releaseGate = () => {};
+    const gate = new Promise((resolve) => {
+      releaseGate = resolve;
+    });
+    let started = 0;
+    const chain = trackingChain({
+      payer: accounts.payer.address,
+      payee: accounts.payee.address,
+      simulate: async () => {
+        started += 1;
+        if (started === 1) await gate;
+        return { ok: true, gasUsed: 50_000n, revertData: null };
+      },
+    });
+    const ctx = await boot({}, { chain });
+    try {
+      const body = await releaseBody(accounts.payer, { nonce: "601" });
+      const first = request(ctx.port, "POST", "/v1/claims", body);
+      const waitStarted = Date.now();
+      while (started < 1) {
+        if (Date.now() - waitStarted > 2000) throw new Error("first claim did not reach simulation");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const second = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(second.status, 409);
+      assert.equal(second.json.error, "nonce_in_flight");
+      releaseGate();
+      const firstRes = await first;
+      assert.equal(firstRes.status, 200);
+      assert.equal(firstRes.json.txHash, TX);
+      assert.equal(ctx.sent.length, 1);
+      assert.equal(chain.calls.simulations.length, 1);
+    } finally {
+      releaseGate();
+      await ctx.close();
+    }
+  });
+
+  it("returns 429 from the IP bucket before the body is parsed", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({ CLAIM_RATE_IP: "1" }, { chain });
+    try {
+      const first = await request(ctx.port, "POST", "/v1/claims", await releaseBody(accounts.payer, { nonce: "701" }));
+      assert.equal(first.status, 200);
+      const reads = chain.calls.reads.length;
+      const second = await request(ctx.port, "POST", "/v1/claims", "not-json");
+      assert.equal(second.status, 429);
+      assert.equal(second.json.error, "rate_limited");
+      assert.equal(chain.calls.reads.length, reads);
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(ctx.sent.length, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("counts only the rightmost X-Forwarded-For hop", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({ CLAIM_RATE_IP: "1" }, { chain });
+    try {
+      const first = await request(
+        ctx.port,
+        "POST",
+        "/v1/claims",
+        await releaseBody(accounts.payer, { nonce: "801" }),
+        { "x-forwarded-for": "1.1.1.1, 203.0.113.9" },
+      );
+      assert.equal(first.status, 200);
+      const spoofed = await request(
+        ctx.port,
+        "POST",
+        "/v1/claims",
+        await releaseBody(accounts.payer, { nonce: "802" }),
+        { "x-forwarded-for": "203.0.113.9" },
+      );
+      assert.equal(spoofed.status, 429);
+      assert.equal(spoofed.json.error, "rate_limited");
+      const other = await request(
+        ctx.port,
+        "POST",
+        "/v1/claims",
+        await releaseBody(accounts.payer, { nonce: "803" }),
+        { "x-forwarded-for": "1.1.1.1, 203.0.113.10" },
+      );
+      assert.equal(other.status, 200);
+      assert.equal(ctx.sent.length, 2);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("uses the booked escrow as the verifying contract", () => {
     assert.equal(BOOKED_ESCROW.toLowerCase(), "0x1069aa6597f08f1e8b8ad39aa40ede1d0c77298d");
   });
 });
+
+const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+
+function malleableHighS(signature) {
+  const hex = String(signature).slice(2).toLowerCase();
+  const r = hex.slice(0, 64);
+  const s = BigInt(`0x${hex.slice(64, 128)}`);
+  const v = Number.parseInt(hex.slice(128, 130), 16);
+  const flippedS = (SECP256K1_N - s).toString(16).padStart(64, "0");
+  const flippedV = v === 27 ? 28 : v === 28 ? 27 : v === 0 ? 1 : 0;
+  return `0x${r}${flippedS}${flippedV.toString(16).padStart(2, "0")}`;
+}

@@ -26,6 +26,8 @@ export function createAbuseGuard(limits, opts = {}) {
   const now = opts.now || Date.now;
   /** @type {{ atMs: number, sender: string, ip: string, escrowId: string, gasWei: bigint }[]} */
   const events = [];
+  /** @type {Map<string, { tokens: number, atMs: number }>} */
+  const buckets = new Map();
   let chain = Promise.resolve();
 
   function withLock(fn) {
@@ -68,6 +70,31 @@ export function createAbuseGuard(limits, opts = {}) {
   }
 
   return {
+    /**
+     * Per-IP token bucket. Call this before the body is parsed.
+     * Capacity is the IP limit. Tokens refill across the rate window.
+     * @param {string} ip
+     * @param {number} [atMs]
+     */
+    takeIp(ip, atMs) {
+      return withLock(async () => {
+        const nowMs = atMs ?? now();
+        const capacity = limits.ipLimit;
+        const refillPerMs = capacity / limits.windowMs;
+        const key = String(ip || "unknown");
+        const bucket = buckets.get(key) || { tokens: capacity, atMs: nowMs };
+        const elapsed = Math.max(0, nowMs - bucket.atMs);
+        bucket.tokens = Math.min(capacity, bucket.tokens + elapsed * refillPerMs);
+        bucket.atMs = nowMs;
+        if (bucket.tokens < 1) {
+          buckets.set(key, bucket);
+          throw httpError(429, "rate_limited");
+        }
+        bucket.tokens -= 1;
+        buckets.set(key, bucket);
+      });
+    },
+
     /**
      * Reject when this claim would pass a limit. Does not record it.
      * @param {{ sender: string, ip: string, escrowId: string, gasWei?: bigint, atMs?: number }} input

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { RpcRequestError } from "viem";
+import { RpcRequestError, keccak256 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { assertSepoliaRawTx, createSepoliaBroadcaster } from "../broadcast.mjs";
 import { BOOKED_SEPOLIA_ESCROW } from "../config.mjs";
@@ -130,6 +130,47 @@ describe("sepolia broadcaster", () => {
     assertSepoliaRawTx(raw);
     assert.equal(String(raw).toLowerCase().includes(KEY.slice(2)), false);
     assert.equal(JSON.stringify(result).includes(KEY.slice(2)), false);
+  });
+
+  it("rebroadcasts the same raw transaction after a timeout", async () => {
+    const seen = [];
+    const raws = [];
+    const broadcaster = createSepoliaBroadcaster({
+      privateKey: KEY,
+      request: async ({ method, params }) => {
+        seen.push(method);
+        if (method === "eth_chainId") return "0x14a34";
+        if (method === "eth_fillTransaction") throw new Error("eth_fillTransaction is not available");
+        if (method === "eth_getTransactionCount") return "0x4";
+        if (method === "eth_getBlockByNumber") return sepoliaBlock();
+        if (method === "eth_maxPriorityFeePerGas") return "0x59682f00";
+        if (method === "eth_gasPrice") return "0x3b9aca00";
+        if (method === "eth_estimateGas") return "0x030d40";
+        if (method === "eth_call") return "0x";
+        if (method === "eth_sendRawTransaction") {
+          raws.push(params[0]);
+          if (raws.length === 1) throw new Error("timeout");
+          return "0x" + "cd".repeat(32);
+        }
+        throw new Error(`unexpected ${method}`);
+      },
+    });
+    const result = await broadcaster.send({
+      chainId: 84532,
+      to: BOOKED_SEPOLIA_ESCROW,
+      data: "0x" + "12".repeat(4) + ESCROW_ID.slice(2),
+      valueWei: "0",
+    });
+    assert.equal(raws.length, 2);
+    assert.equal(raws[0], raws[1]);
+    assert.equal(keccak256(raws[0]), keccak256(raws[1]));
+    assert.equal(result.signedHash, keccak256(raws[0]));
+    assert.equal(result.txHash, "0x" + "cd".repeat(32));
+    const nonceReads = seen.filter((method) => method === "eth_getTransactionCount");
+    assert.equal(nonceReads.length, 1);
+    const firstSend = seen.indexOf("eth_sendRawTransaction");
+    assert.equal(seen.indexOf("eth_getTransactionCount") < firstSend, true);
+    assert.equal(seen.filter((method) => method === "eth_sendRawTransaction").length, 2);
   });
 
   it("drops the private key from a broadcast failure", async () => {

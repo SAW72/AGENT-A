@@ -69,7 +69,9 @@ describe("submit target", () => {
     expect(previewCardCopy("dispute", false)).toBe(
       "This prepares linking a dispute to a claim. Submit sends it from the connected wallet on Base Sepolia only.",
     )
-    expect(previewCardCopy("dispute", true)).toMatch(/claim relayer on Base Sepolia/)
+    expect(previewCardCopy("dispute", true)).not.toMatch(/claim relayer/)
+    expect(previewCardCopy("release", true)).toMatch(/claim relayer on Base Sepolia/)
+    expect(previewCardCopy("refund", true)).toMatch(/claim relayer on Base Sepolia/)
     expect(previewCardCopy("openDispute", true)).not.toMatch(/claim relayer/)
     expect(previewCardCopy("createEscrow", true)).not.toMatch(/claim relayer/)
     expect(FORM_ERRORS.disputeClaim).toBe("Enter the claim identifier before opening a dispute.")

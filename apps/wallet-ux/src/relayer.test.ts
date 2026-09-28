@@ -57,7 +57,7 @@ const txHash = `0x${"ef".repeat(32)}` as const
 const relayerUrl = "https://bot-verifier-claim-relayer.onrender.com"
 const TEST_MNEMONIC = "test test test test test test test test test test test junk"
 const payerAccount = mnemonicToAccount(TEST_MNEMONIC)
-const CLAIM_INTENT_TYPEHASH = "0x34ba3a41e51e53513e455b5e4bc91be46317c71f0430096556c954dc76195242"
+const CLAIM_INTENT_TYPEHASH = "0x1f13fdcc6f1390de5e43ffa26909f5e100cb78aaa1cf33d9abdf7d71a4cde0d2"
 
 function signerInput(sign?: (args: ClaimSignArgs) => Promise<Hex>) {
   return {
@@ -71,12 +71,10 @@ function liveBody(preview: ReturnType<typeof previewRelease>, chainId = 84532): 
   const claim = claimBodyFromPreview(preview)
   return {
     live: true,
-    calldata: preview.calldata,
     signature: `0x${"11".repeat(65)}`,
     intent: {
       action: claim.action,
       escrowId: claim.claimId,
-      calldataHash: keccak256(preview.calldata),
       sender: payerAccount.address,
       nonce: "7",
       deadline: "1893456000",
@@ -145,7 +143,8 @@ describe("postLiveClaim", () => {
     expect(headers.get("content-type")).toBe("application/json")
     const body = JSON.parse(String(captured.init.body)) as SignedLiveClaim
     expect(body.live).toBe(true)
-    expect(body.calldata).toBe(releasePreview.calldata)
+    expect(body).not.toHaveProperty("calldata")
+    expect(body.intent).not.toHaveProperty("calldataHash")
     expect(body.intent.chainId).toBe(84532)
     expect(body.intent.action).toBe("release")
     expect(body.intent.escrowId).toBe(id)
@@ -217,27 +216,23 @@ describe("postLiveClaim", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_relayer_url" })
     expect(fetches).toBe(0)
-    expect(() => claimBodyFromPreview(previewOpenDispute(panel, other, id, "wallet only"))).toThrow(/openDispute/)
-  })
-
-  it("builds a createEscrow live body from the wallet preview", () => {
-    const body = claimBodyFromPreview(
-      previewCreateEscrow({
-        escrow,
-        escrowId: id,
-        payee,
-        payerBotId: id,
-        payeeBotId: other,
-        durationSeconds: 3600n,
-        valueWei: parseEther("0.01"),
-      }),
+    expect(() => claimBodyFromPreview(previewOpenDispute(panel, other, id, "wallet only"))).toThrow(
+      /your wallet/,
     )
-    expect(body.action).toBe("createEscrow")
-    expect(body.live).toBe(true)
-    expect(body.chainId).toBe(84532)
-    expect(body.amountWei).toBe(parseEther("0.01").toString())
-    expect(body.payee).toBe(payee)
-    expect(body.durationSeconds).toBe("3600")
+    expect(() =>
+      claimBodyFromPreview(
+        previewCreateEscrow({
+          escrow,
+          escrowId: id,
+          payee,
+          payerBotId: id,
+          payeeBotId: other,
+          durationSeconds: 3600n,
+          valueWei: parseEther("0.01"),
+        }),
+      ),
+    ).toThrow(/your wallet/)
+    expect(() => claimBodyFromPreview(previewDispute(escrow, id, other))).toThrow(/your wallet/)
   })
 })
 
@@ -358,21 +353,12 @@ function rpcRevert(data: Hex) {
   return new CallExecutionError(reverted, { to: escrow, data: "0x" })
 }
 
-/** Encode the dispute body the same way claim-relayer/escrowCalldata.mjs does, without that package's install. */
-function relayerDisputeCalldata(body: { claimId: string; disputeId: string }): string {
-  const calldataSource = readFileSync(join(relayerPackage, "escrowCalldata.mjs"), "utf8")
+function assertServerBuildsCalldata(): void {
   const claimsSource = readFileSync(join(relayerPackage, "claims.mjs"), "utf8")
-  expect(calldataSource).toContain('dispute: "dispute(bytes32,bytes32)"')
-  expect(calldataSource).toMatch(/if \(action === "dispute"\) \{[\s\S]*assertNoValue\(body\)[\s\S]*bytes32Word\(body\.disputeId, "disputeId"\)/)
-  expect(calldataSource).toContain("return bytes32Word(body.claimId, \"claimId\")")
-  expect(claimsSource).toContain("return body.live === true || body.liveSubmit === true")
+  const liveSource = readFileSync(join(relayerPackage, "liveAuth.mjs"), "utf8")
   expect(claimsSource).toContain("const encoded = prepared?.encoded || describeCalldata(body)")
-  expect(claimsSource).toContain("const claimId = parseClaimId(prepared?.claimId || body.claimId)")
-  if (!/^0x[0-9a-fA-F]{64}$/.test(body.claimId) || !/^0x[0-9a-fA-F]{64}$/.test(body.disputeId)) {
-    throw new Error("relayer dispute body failed bytes32 validation")
-  }
-  const selector = keccak256(toBytes("dispute(bytes32,bytes32)")).slice(0, 10)
-  return `${selector}${body.claimId.slice(2).toLowerCase()}${body.disputeId.slice(2).toLowerCase()}`
+  expect(liveSource).toContain('const LIVE_ACTIONS = new Set(["release", "refund"])')
+  expect(liveSource).toContain("encodeEscrowAction({ action: intent.action, escrowId: intent.escrowId })")
 }
 
 function readyClient(receipt: { status: "success" | "reverted" } | Error) {
@@ -385,10 +371,10 @@ function readyClient(receipt: { status: "success" | "reverted" } | Error) {
   }
 }
 
-describe("dispute submit via the claim relayer", () => {
-  const dispute = previewDispute(escrow, id, other)
+describe("release submit via the claim relayer", () => {
+  const release = previewRelease(escrow, id)
 
-  it("posts the exact live dispute body the relayer handler validates", async () => {
+  it("posts a signed release and lets the relayer build the calldata", async () => {
     const phases: string[] = []
     let posted = ""
     let method = ""
@@ -398,7 +384,7 @@ describe("dispute submit via the claim relayer", () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client,
       onPhase: (phase) => phases.push(phase),
       fetchImpl: async (url, init) => {
@@ -422,21 +408,19 @@ describe("dispute submit via the claim relayer", () => {
     expect(secretHeader).toBeNull()
     const body = JSON.parse(posted) as SignedLiveClaim
     expect(body.live).toBe(true)
-    expect(body.calldata.toLowerCase()).toBe(dispute.calldata.toLowerCase())
-    expect(body.intent.action).toBe("dispute")
+    expect(body).not.toHaveProperty("calldata")
+    expect(body.intent).not.toHaveProperty("calldataHash")
+    expect(body.intent.action).toBe("release")
     expect(body.intent.escrowId).toBe(id)
     expect(body.intent.chainId).toBe(84532)
     expect(body.intent.verifyingContract).toBe(escrow)
     expect(body.intent.sender).toBe(payerAccount.address)
-    expect(body.intent.calldataHash).toBe(keccak256(dispute.calldata))
     expect(body).not.toHaveProperty("amountWei")
-    expect(body.intent).not.toHaveProperty("disputeId")
-    const accepted = relayerDisputeCalldata({ claimId: id, disputeId: other })
-    expect(accepted.toLowerCase()).toBe(dispute.calldata.toLowerCase())
+    assertServerBuildsCalldata()
     expect(client.call).toHaveBeenCalledWith({
       account: "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861",
       to: escrow,
-      data: dispute.calldata,
+      data: release.calldata,
       value: 0n,
     })
     expect(result).toEqual({ ok: true, txHash })
@@ -467,6 +451,19 @@ describe("dispute submit via the claim relayer", () => {
       expect(result.code).toBe("action_not_claim")
       expect(result.presentation.main).toBe("This step has to be sent from your wallet, not the claim relayer.")
     }
+    const dispute = await runRelayerSubmission({
+      url: relayerUrl,
+      ...signerInput(),
+      preview: previewDispute(escrow, id, other),
+      client,
+      fetchImpl: async () => {
+        fetches += 1
+        return jsonResponse(200, { ok: true, mode: "live", txHash })
+      },
+    })
+    expect(fetches).toBe(0)
+    expect(dispute.ok).toBe(false)
+    if (!dispute.ok) expect(dispute.code).toBe("action_not_claim")
   })
 
   it("does not post when the relayer-wallet simulation reverts", async () => {
@@ -480,7 +477,7 @@ describe("dispute submit via the claim relayer", () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client,
       fetchImpl: async () => {
         fetches += 1
@@ -499,7 +496,7 @@ describe("dispute submit via the claim relayer", () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client: readyClient({ status: "success" }),
       fetchTimeoutMs: 20,
       fetchImpl: () => new Promise(() => undefined),
@@ -518,7 +515,7 @@ describe("dispute submit via the claim relayer", () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client: readyClient(Object.assign(new Error("Timed out while waiting for transaction."), { name: "WaitForTransactionReceiptTimeoutError" })),
       fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
     })
@@ -544,7 +541,7 @@ describe("dispute submit via the claim relayer", () => {
     const decoded = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client,
       fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
     })
@@ -557,7 +554,7 @@ describe("dispute submit via the claim relayer", () => {
     const plain = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client: readyClient({ status: "reverted" }),
       fetchImpl: async () => jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow }),
     })
@@ -573,7 +570,7 @@ describe("dispute submit via the claim relayer", () => {
 })
 
 describe("relayer response copy", () => {
-  const dispute = previewDispute(escrow, id, other)
+  const release = previewRelease(escrow, id)
   const cases: { status: number; body: Record<string, unknown>; main: string; detail: string }[] = [
     {
       status: 400,
@@ -619,6 +616,24 @@ describe("relayer response copy", () => {
     },
     {
       status: 400,
+      body: { ok: false, error: "high_s" },
+      main: "This approval signature is not in the required form. Nothing was sent.",
+      detail: "Details: 400 high_s",
+    },
+    {
+      status: 400,
+      body: { ok: false, error: "trailing_bytes" },
+      main: "The prepared transaction has extra data, so it was not submitted.",
+      detail: "Details: 400 trailing_bytes",
+    },
+    {
+      status: 409,
+      body: { ok: false, error: "nonce_replay" },
+      main: "This approval was already used. Nothing was sent.",
+      detail: "Details: 409 nonce_replay",
+    },
+    {
+      status: 400,
       body: {
         ok: false,
         error: "retired_or_superseded_address",
@@ -653,7 +668,7 @@ describe("relayer response copy", () => {
       const result = await runRelayerSubmission({
         url: relayerUrl,
         ...signerInput(),
-        preview: dispute,
+        preview: release,
         client: readyClient({ status: "success" }),
         fetchImpl: async () => jsonResponse(item.status, item.body),
       })
@@ -673,7 +688,7 @@ describe("relayer response copy", () => {
     const result = await runRelayerSubmission({
       url: relayerUrl,
       ...signerInput(),
-      preview: dispute,
+      preview: release,
       client,
       fetchImpl: async () =>
         jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: retiredEscrow }),
@@ -718,6 +733,15 @@ describe("relayer button", () => {
         action: "createEscrow",
       }).visible,
     ).toBe(false)
+    expect(
+      relayerButtonModel({
+        url: relayerUrl,
+        health: "ok",
+        phase: "idle",
+        gate: { ok: true },
+        action: "dispute",
+      }).visible,
+    ).toBe(false)
   })
 
   it("enables the button only when health is ok, and explains checking, down, and paused", () => {
@@ -726,7 +750,7 @@ describe("relayer button", () => {
       health: "unknown",
       phase: "idle",
       gate: { ok: true },
-      action: "dispute",
+      action: "release",
     })
     expect(checking).toMatchObject({ visible: true, disabled: true, note: RELAYER_CHECKING_NOTE })
     const down = relayerButtonModel({
@@ -734,7 +758,7 @@ describe("relayer button", () => {
       health: "down",
       phase: "idle",
       gate: { ok: true },
-      action: "dispute",
+      action: "release",
     })
     expect(down).toMatchObject({ visible: true, disabled: true, note: RELAYER_DOWN_NOTE })
     const paused = relayerButtonModel({
@@ -750,7 +774,7 @@ describe("relayer button", () => {
       health: "ok",
       phase: "idle",
       gate: { ok: true },
-      action: "dispute",
+      action: "release",
     })
     expect(ready).toMatchObject({ visible: true, disabled: false, label: "Submit via claim relayer", note: null })
   })
@@ -761,7 +785,7 @@ describe("relayer button", () => {
       health: "ok",
       phase: "submitting",
       gate: { ok: true },
-      action: "dispute",
+      action: "release",
     })
     const waiting = relayerButtonModel({
       url: relayerUrl,
@@ -830,7 +854,7 @@ describe("signed claim intent", () => {
   })
 
   it("signs with the connected wallet and posts that signature to a mock relayer", async () => {
-    const dispute = previewDispute(escrow, id, other)
+    const release = previewRelease(escrow, id)
     const order: string[] = []
     let posted = ""
     let headerNames: string[] = []
@@ -843,7 +867,7 @@ describe("signed claim intent", () => {
     }
     const result = await runRelayerSubmission({
       url: relayerUrl,
-      preview: dispute,
+      preview: release,
       ...signerInput(async (args) => {
         order.push("sign")
         return payerAccount.signTypedData(args)
@@ -861,7 +885,8 @@ describe("signed claim intent", () => {
     expect(order).toEqual(["simulate", "sign", "post"])
     expect(headerNames).not.toContain("x-claim-secret")
     const body = JSON.parse(posted) as SignedLiveClaim
-    expect(body.calldata.toLowerCase()).toBe(dispute.calldata.toLowerCase())
+    expect(body).not.toHaveProperty("calldata")
+    expect(body.intent.action).toBe("release")
     expect(body.intent.nonce).toBe("42")
     expect(body.intent.deadline).toBe(String(1_780_000_000 + 240))
     const recovered = await recoverTypedDataAddress({
@@ -874,9 +899,8 @@ describe("signed claim intent", () => {
       types: CLAIM_INTENT_TYPES,
       primaryType: CLAIM_INTENT_PRIMARY_TYPE,
       message: {
-        action: 3,
+        action: 0,
         escrowId: id,
-        calldataHash: keccak256(dispute.calldata),
         sender: payerAccount.address,
         nonce: 42n,
         deadline: BigInt(1_780_000_000 + 240),

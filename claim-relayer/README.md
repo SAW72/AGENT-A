@@ -138,24 +138,30 @@ CORS preflight allows `content-type`, `x-admin-secret`, and `authorization`. Whe
 
 ## Auth model
 
-Browser callers of live `POST /v1/claims` send `{ intent, signature, calldata, live: true }`. The wallet signs EIP-712 typed data (`eth_signTypedData_v4`) over `ClaimIntent`. The domain name is `AgentBV Claim Relayer`, version `1`, `chainId` is the configured chain, and `verifyingContract` is the configured escrow. The type string is pinned:
+Browser callers of live `POST /v1/claims` send `{ intent, signature, live: true }`. The wallet signs EIP-712 typed data (`eth_signTypedData_v4`) over `ClaimIntent`. The domain name is `AgentBV Claim Relayer`, version `1`, `chainId` is the configured chain, and `verifyingContract` is the configured escrow. The type string is pinned:
 
-`ClaimIntent(uint8 action,bytes32 escrowId,bytes32 calldataHash,address sender,uint256 nonce,uint256 deadline)`
+`ClaimIntent(uint8 action,bytes32 escrowId,address sender,uint256 nonce,uint256 deadline)`
 
-Action order is `0 createEscrow`, `1 release`, `2 refund`, `3 dispute`. `calldataHash` is `keccak256` of the exact calldata bytes. `deadline` is a unix second. The schema lives in `claimIntent.json`. Wallet UX keeps a copy of the same fields and a test fails if the two copies differ.
+Action order is `0 release`, `1 refund`. `deadline` is a unix second. The schema lives in `claimIntent.json`. Wallet UX keeps a copy of the same fields and a test fails if the two copies differ. Calldata is not part of the signed struct. The server builds `release(bytes32)` or `refund(bytes32)` from `action` and `escrowId` and broadcasts those bytes. A client `calldata` field, if present, must match that encoding exactly. A different encoding is **400** `calldata_mismatch`. Extra bytes after the encoding are **400** `trailing_bytes`. The client bytes are never sent.
 
 There is no shared browser secret. `CLAIM_API_SECRET` and the `x-claim-secret` header are removed. Wallet UX is the only production caller of live claims. Tests and docs are not a second caller, so no server-to-server HMAC was added. A header that used to carry a secret is ignored.
 
-Verification order, and only then simulate and broadcast:
+The live allowlist is `release` and `refund` only. `createEscrow`, `dispute`, `withdraw`, and `withdrawTo` are **400** `action_not_claim` before signature recovery. `createEscrow` stays on the connected wallet. `dispute` requires `msg.sender` to be a party, so a relayed dispute always reverts. `withdraw` and `withdrawTo` spend `pendingWithdrawals[msg.sender]`. The relayer key is that sender, so those calls would move the relayer's own credit, not the user's. They stay disabled.
+
+A per-IP token bucket runs after the kill switch and before the body is parsed. It returns **429** `rate_limited`. Render's proxy appends the connecting client to `X-Forwarded-For`, so only the rightmost hop is trusted. A missing header uses the socket address. `X-Real-IP` and Cloudflare headers are not read. This service is not behind Cloudflare.
+
+ECDSA signatures must be 65 bytes with `v` in `{0, 1, 27, 28}` and low `s` (`s` at most `secp256k1n / 2`). Anything else on a 65-byte signature is **400** `invalid_signature` or **400** `high_s`, before `ecrecover`. The transaction is signed once. A timeout rebroadcasts that same raw transaction. It does not sign again with a new nonce or gas price.
+
+Verification order, and only then simulate and broadcast the server-built calldata:
 
 1. Domain `chainId` and `verifyingContract` must equal configured `CHAIN_ID` and `ESCROW_ADDRESS`. The retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is rejected. Chain ids `1` and `8453` are rejected.
 2. `deadline` is in the future and at most 300 seconds ahead.
-3. `ecrecover` of the signature equals `intent.sender`. ERC-1271 `isValidSignature` runs only when `ERC1271_ENABLED=1`. The default is off.
-4. `sender` is the payer or the payee of `escrowId`, read on chain at `latest`. A missing id, including a `createEscrow` for an id that is not on the escrow yet, is **404** `escrow_not_found`. New escrows are submitted from the connected wallet. The relayer does not fund them.
-5. `keccak256(calldata)` equals `calldataHash`, and the selector is on the existing allowlist for that action.
-6. `(sender, nonce)` is claimed once. A replay returns the stored HTTP status and body, including the original transaction hash, and does not broadcast again. That pair is the idempotency key.
+3. `ecrecover` of the low-`s` signature equals `intent.sender`. ERC-1271 `isValidSignature` runs only when `ERC1271_ENABLED=1`, and only for a signature that is not a 65-byte ECDSA signature. The default is off.
+4. The server builds calldata from the signed `action` and `escrowId`. A supplied value is refused. Client calldata is checked and then discarded.
+5. `sender` is the payer or the payee of that same `escrowId`, read on chain at `latest`. A missing id is **404** `escrow_not_found`.
+6. `(sender, nonce)` is claimed once. A replay is **409** `nonce_replay` and is not broadcast. A second request while the first is still in flight is **409** `nonce_in_flight`.
 
-The on-chain `msg.sender` is still the relayer key. The signature says who may ask the relayer to spend gas. `dispute` can still revert unless that relayer key is itself a party.
+The on-chain `msg.sender` is still the relayer key. The signature says who may ask the relayer to spend gas. `release` and `refund` only credit `pendingWithdrawals`. The credited account withdraws its own balance.
 
 ### Threat table
 
@@ -165,10 +171,13 @@ The on-chain `msg.sender` is still the relayer key. The signature says who may a
 | Deadline window of at most 300 seconds | A signature that stays valid long enough to submit later. |
 | Recovered signer equals `sender` | Someone submitting a signature they did not make. |
 | ERC-1271, off unless `ERC1271_ENABLED=1` | Contract wallets that cannot `ecrecover`. Left off until that path is reviewed. |
-| Sender is payer or payee of an escrow that exists | A stranger, and a live `createEscrow` for an id that is not on the escrow yet. |
-| Calldata hash and allowlisted selector | Reusing a signature for different calldata, or a call outside the claim allowlist. |
-| Single-use `(sender, nonce)` | A second broadcast of the same approval. The replay returns the stored result. |
-| Per-sender and per-IP rate limits | A burst from one wallet or one network address. |
+| Sender is payer or payee of the signed escrow id | A stranger asking the relayer to spend gas on someone else's claim. |
+| Server-built calldata for that same escrow id | Relaying client bytes, a mismatched escrow id, or trailing bytes. |
+| Live allowlist of `release` and `refund` only | Relaying `createEscrow`, `dispute`, `withdraw`, or `withdrawTo`. |
+| Single-use `(sender, nonce)` | A second broadcast of the same approval. A replay is rejected. |
+| Per-IP token bucket before the body is read | A burst that would otherwise reach signature recovery. The rightmost `X-Forwarded-For` hop is the client. |
+| Low `s` and `v` in `{0, 1, 27, 28}` | A malleable signature. |
+| Sign once, rebroadcast the same raw transaction | A timeout that would otherwise sign a second nonce. |
 | Per-escrow cap | Repeated submits against one claim. |
 | Daily gas budget | The relayer spending more than the configured gas for the day. |
 | Kill switch | Quote and claim traffic while the service is paused. |
@@ -177,7 +186,14 @@ Rate limits, the escrow cap, and the gas budget are abuse controls. They are not
 
 ### Intent nonce store
 
-Production uses the file-backed store (`createFileIntentNonceStore`) at `INTENT_NONCE_PATH`. The default is `./data/intent-nonces.jsonl`. On Render the Blueprint sets `/tmp/claim-relayer/intent-nonces.jsonl`. That disk is ephemeral, same as the claim log, and a restart forgets in-flight nonces. Run one web instance. Tests use the in-memory store. The quote reservation in `nonceStore.mjs` is a different store and is unchanged. Signatures are not written to the claim log.
+Production uses the file-backed store (`createFileIntentNonceStore`) at `INTENT_NONCE_PATH`. The default is `./data/intent-nonces.jsonl`. On Render the Blueprint sets `/tmp/claim-relayer/intent-nonces.jsonl`. That disk is ephemeral, same as the claim log, and a restart forgets used nonces. That is accepted for Base Sepolia. Run one web instance. Tests use the in-memory store. The quote reservation in `nonceStore.mjs` is a different store and is unchanged. Signatures are not written to the claim log.
+
+### Deferred to mainnet
+
+- A Render Key Value nonce store (`SET NX PX`) so a restart cannot forget a used nonce. `/tmp` is enough for this testnet.
+- Persistent abuse limits and a live gas price. The current windows and `CLAIM_GAS_PRICE_WEI` live in one process.
+- ERC-1271 smart-wallet signers. The flag stays off.
+- A note for a future Cloudflare proxy. This service trusts Render's rightmost `X-Forwarded-For` hop only.
 
 ## Error codes
 
@@ -187,22 +203,24 @@ Production uses the file-backed store (`createFileIntentNonceStore`) at `INTENT_
 | 503 | `relayer_key_missing` | The signed intent was accepted and `RELAYER_PRIVATE_KEY` is unset. Nothing is signed. |
 | 502 | `broadcast_failed` | The Sepolia RPC rejected the send, or gas estimation reverted. `txHash` is null. `senderConstraint` says who the contract requires. `revert_data` is the raw revert bytes as a `0x` lowercase hex string, or `null` when the RPC error has no revert bytes. |
 | 409 | `live_submit_blocked` | Client asked for a live transaction and the gate is closed, or asked a quote to broadcast. `reason` is `escrow_not_booked`, `escrow_not_booked_sepolia`, `escrow_booked_spencer_run_auth_required`, `live_submit_off`, or `quote_does_not_broadcast`. |
-| 400 | `action_not_claim` | `action` is not `createEscrow`, `release`, `refund`, or `dispute`. Governance setters are refused. |
+| 400 | `action_not_claim` | Live `action` is not `release` or `refund`. `createEscrow`, `dispute`, `withdraw`, `withdrawTo`, and governance setters are refused. |
 | 400 | `invalid_bytes32` | `escrowId` / bot id / `disputeId` is not a non-zero bytes32. |
 | 400 | `invalid_duration` | `durationSeconds` is outside `1..2592000` (`30 days` on the contract). |
-| 400 | `value_not_allowed` | `amountWei` was sent with `release`, `refund`, or `dispute`. |
+| 400 | `value_not_allowed` | A live release or refund included `amountWei`, `valueWei`, or `value`. The broadcast value is `0`. |
 | 400 | `mainnet_refused` | Domain or body `chainId` is `1` or `8453`. |
 | 400 | `wrong_chain` | Any chain other than `84532`. |
 | 400 | `retired_or_superseded_address` | The signed verifying contract is the retired escrow. |
 | 409 | `domain_mismatch` | The signed verifying contract is not the configured escrow. |
 | 400 | `intent_required` | A live claim did not include an intent object. |
-| 401 | `invalid_signature` | The signature does not recover to `intent.sender`. |
+| 401 | `invalid_signature` | The signature does not recover to `intent.sender`, or `ERC1271_ENABLED` is off. |
 | 400 | `deadline_expired` | `deadline` is not in the future. |
 | 400 | `deadline_too_far` | `deadline` is more than 300 seconds ahead. |
 | 403 | `not_a_party` | The signer is not the payer or the payee. |
 | 404 | `escrow_not_found` | That escrow id is not on the contract at `latest`. |
-| 400 | `calldata_hash_mismatch` | `keccak256` of the calldata is not the signed hash. |
-| 400 | `selector_not_allowed` | The selector is off the allowlist, or it does not match the signed action. |
+| 400 | `high_s` | A 65-byte signature has `s` above `secp256k1n / 2`. |
+| 400 | `calldata_mismatch` | Client calldata is not the server encoding of the signed action and escrow id. |
+| 400 | `trailing_bytes` | Client calldata starts with the server encoding and then continues. |
+| 409 | `nonce_replay` | This `(sender, nonce)` was already used. Nothing is broadcast again. |
 | 409 | `nonce_in_flight` | This `(sender, nonce)` is already being submitted. |
 | 429 | `rate_limited` | The sender or IP window is full. |
 | 429 | `escrow_cap` | This escrow has hit its window cap. |
@@ -225,7 +243,7 @@ A live claim that fails while sending returns this body. `revert_data` is always
   "dryRun": false,
   "action": "release",
   "senderConstraint": "permissionless",
-  "senderNote": "release and refund are permissionless. The relayer signer sends this transaction.",
+  "senderNote": "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.",
   "revert_data": null
 }
 ```
@@ -261,7 +279,7 @@ Calldata is encoded in `escrowCalldata.mjs` from the signatures in `contracts/Bo
 
 Selectors are `keccak256` of those strings. `setDenylist`, `setVault`, and `setDisputePanel` are not claim actions.
 
-The public funding wallet is not assumed to be a Vault operator. A live `createEscrow` is not broadcast until that escrow id already exists, so the relayer does not fund a new escrow. `dispute` can revert unless the relayer key is the payer or the payee. `release` and `refund` are permissionless on chain. The EIP-712 signer must still be the payer or the payee before the relayer will send them.
+The public funding wallet is not assumed to be a Vault operator. Live submit does not broadcast `createEscrow`, `dispute`, `withdraw`, or `withdrawTo`. `release` and `refund` are permissionless on chain and only credit a balance. The EIP-712 signer must still be the payer or the payee before the relayer will send them. The credited account calls `withdraw` or `withdrawTo` from its own wallet.
 
 `npm run readonly` performs `eth_chainId`, `eth_getCode`, and `eth_call` only (`owner`, `governance`, `disputePanel`, `arbitratorCount`). It is not part of `npm test`. It refuses every chain other than 84532.
 

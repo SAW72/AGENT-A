@@ -11,15 +11,14 @@ export const CLAIM_INTENT_PRIMARY_TYPE = "ClaimIntent" as const
 export const CLAIM_DEADLINE_SKEW_SECONDS = 240
 
 export const CLAIM_INTENT_TYPE_STRING =
-  "ClaimIntent(uint8 action,bytes32 escrowId,bytes32 calldataHash,address sender,uint256 nonce,uint256 deadline)"
+  "ClaimIntent(uint8 action,bytes32 escrowId,address sender,uint256 nonce,uint256 deadline)"
 
-export const CLAIM_INTENT_ACTIONS = ["createEscrow", "release", "refund", "dispute"] as const
+export const CLAIM_INTENT_ACTIONS = ["release", "refund"] as const
 
 export const CLAIM_INTENT_TYPES = {
   ClaimIntent: [
     { name: "action", type: "uint8" },
     { name: "escrowId", type: "bytes32" },
-    { name: "calldataHash", type: "bytes32" },
     { name: "sender", type: "address" },
     { name: "nonce", type: "uint256" },
     { name: "deadline", type: "uint256" },

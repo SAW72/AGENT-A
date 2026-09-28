@@ -63,6 +63,14 @@ function sendJson(res, req, status, body, corsHeaders) {
   res.end(payload);
 }
 
+/**
+ * Render's public proxy is the only hop in front of this process.
+ * It appends the connecting client to X-Forwarded-For, so a caller can
+ * prepend spoofed addresses. Only the rightmost hop is trusted.
+ * Missing header (local tests, or a request that did not pass that proxy)
+ * falls back to the socket address. X-Real-IP and Cloudflare headers are
+ * not read. This service is not behind Cloudflare.
+ */
 function clientIp(req) {
   const forwarded = String(req.headers["x-forwarded-for"] || "");
   const hops = forwarded
@@ -253,6 +261,9 @@ export function createClaimRelayer(deps) {
 
       if (req.method === "POST" && path === "/v1/claims") {
         if (refuseIfKilled(res, req)) return;
+        if (abuse && typeof abuse.takeIp === "function") {
+          await abuse.takeIp(clientIp(req), now());
+        }
         const body = await readBody(req);
         assertBaseSepolia(body);
         if (wantsLiveSubmit(body)) {
@@ -266,17 +277,6 @@ export function createClaimRelayer(deps) {
             nowMs: now(),
             ip: clientIp(req),
           });
-          if (prepared.kind === "replay") {
-            const replayBody = { ...prepared.body, replay: true };
-            await claimLog.append({
-              event: "claim_replay",
-              txHash: replayBody.txHash,
-              chainId: config.chainId,
-              ok: replayBody.ok === true,
-            });
-            sendJson(res, req, prepared.status, replayBody, corsHeaders);
-            return;
-          }
           let result;
           try {
             result = await submitLiveClaim({

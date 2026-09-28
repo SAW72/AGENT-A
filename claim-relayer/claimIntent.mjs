@@ -1,13 +1,13 @@
 /**
  * EIP-712 ClaimIntent. The JSON file is the single schema shared with wallet-ux.
- * Action enum order is the `actions` array: 0 createEscrow, 1 release, 2 refund, 3 dispute.
+ * Action enum order is the `actions` array: 0 release, 1 refund.
+ * createEscrow, dispute, withdraw, and withdrawTo are not in this list.
  */
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   getAddress,
-  hexToBytes,
   isAddress,
   isHex,
   keccak256,
@@ -16,7 +16,6 @@ import {
 } from "viem";
 import { SUPERSEDED } from "./addressBook.mjs";
 import { httpError } from "./config.mjs";
-import { ESCROW_SIGNATURES, selectorFor } from "./escrowCalldata.mjs";
 
 export const CLAIM_INTENT_SCHEMA = JSON.parse(
   readFileSync(fileURLToPath(new URL("./claimIntent.json", import.meta.url)), "utf8"),
@@ -30,11 +29,10 @@ export const RETIRED_ESCROW = SUPERSEDED.botAttestationEscrow;
 const ACTION_INDEX = new Map(CLAIM_INTENT_SCHEMA.actions.map((name, index) => [name, index]));
 const INDEX_ACTION = new Map(CLAIM_INTENT_SCHEMA.actions.map((name, index) => [index, name]));
 
-const SELECTOR_ACTION = new Map(
-  Object.entries(ESCROW_SIGNATURES).map(([action, signature]) => [selectorFor(signature), action]),
-);
-
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/** secp256k1n / 2. Signatures with s above this are malleable and are rejected. */
+export const SECP256K1_HALF_N = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0n;
 
 export function claimIntentTypes() {
   return { ClaimIntent: CLAIM_INTENT_SCHEMA.types.ClaimIntent.map((field) => ({ ...field })) };
@@ -105,13 +103,10 @@ export function parseClaimIntent(body) {
   }
   const signature = String(body.signature ?? "").trim();
   if (!isHex(signature) || signature.length < 10) throw httpError(400, "invalid_signature");
-  const calldata = String(body.calldata ?? "").trim();
-  if (!isHex(calldata) || calldata.length < 10) throw httpError(400, "invalid_calldata");
 
   const action = actionName(intent.action);
-  if (!action) throw httpError(400, "action_not_claim", { field: "action" });
+  if (!action) throw httpError(400, "action_not_claim", { field: "action", txHash: null, dryRun: false });
   const escrowId = parseBytes32(intent.escrowId, "escrowId");
-  const calldataHash = parseBytes32(intent.calldataHash, "calldataHash");
   const senderText = String(intent.sender ?? "").trim();
   if (!isAddress(senderText) || sameAddress(senderText, ZERO_ADDRESS)) {
     throw httpError(400, "invalid_address", { field: "sender" });
@@ -135,15 +130,28 @@ export function parseClaimIntent(body) {
     action,
     actionIndex: actionIndex(action),
     escrowId,
-    calldataHash,
     sender: getAddress(senderText),
     nonce,
     deadline,
     chainId,
     verifyingContract: getAddress(verifyingText),
     signature,
-    calldata,
   };
+}
+
+/**
+ * 65-byte ECDSA signatures must use low s and v in {0, 1, 27, 28}.
+ * Longer signatures are left for ERC-1271 when that flag is on.
+ * @returns {"ecdsa" | "other"}
+ */
+export function assertLowS(signature) {
+  const hex = String(signature || "").toLowerCase();
+  if (!/^0x[0-9a-f]{130}$/.test(hex)) return "other";
+  const s = BigInt(`0x${hex.slice(66, 130)}`);
+  const v = Number.parseInt(hex.slice(130, 132), 16);
+  if (v !== 0 && v !== 1 && v !== 27 && v !== 28) throw httpError(400, "invalid_signature");
+  if (s > SECP256K1_HALF_N) throw httpError(400, "high_s");
+  return "ecdsa";
 }
 
 /**
@@ -187,7 +195,6 @@ export function typedDataFor(intent, config) {
     message: {
       action: intent.actionIndex,
       escrowId: intent.escrowId,
-      calldataHash: intent.calldataHash,
       sender: intent.sender,
       nonce: intent.nonce,
       deadline: intent.deadline,
@@ -200,37 +207,21 @@ export function typedDataFor(intent, config) {
  * ERC-1271 runs only when ERC1271_ENABLED is on, and only after ECDSA does not match.
  */
 export async function assertIntentSigner(intent, config, chain) {
+  const shape = assertLowS(intent.signature);
   const typed = typedDataFor(intent, config);
   let recovered = null;
-  try {
-    recovered = await recoverTypedDataAddress({ ...typed, signature: intent.signature });
-  } catch {
-    recovered = null;
+  if (shape === "ecdsa") {
+    try {
+      recovered = await recoverTypedDataAddress({ ...typed, signature: intent.signature });
+    } catch {
+      recovered = null;
+    }
+    if (recovered && sameAddress(recovered, intent.sender)) return;
   }
-  if (recovered && sameAddress(recovered, intent.sender)) return;
   if (!config.erc1271Enabled) throw httpError(401, "invalid_signature");
   if (!chain || typeof chain.isValidSignature !== "function") throw httpError(401, "invalid_signature");
   const magic = await chain.isValidSignature(intent.sender, typed, intent.signature);
   if (magic !== true) throw httpError(401, "invalid_signature");
-}
-
-/**
- * Step 5. keccak256(calldata) matches the signed hash, and the selector is allowlisted
- * for the signed action.
- */
-export function assertCalldataBinding(intent) {
-  let digest;
-  try {
-    digest = keccak256(hexToBytes(intent.calldata));
-  } catch {
-    throw httpError(400, "invalid_calldata");
-  }
-  if (digest.toLowerCase() !== intent.calldataHash) throw httpError(400, "calldata_hash_mismatch");
-  const selector = intent.calldata.slice(0, 10).toLowerCase();
-  const allowed = SELECTOR_ACTION.get(selector);
-  if (!allowed) throw httpError(400, "selector_not_allowed", { selector });
-  if (allowed !== intent.action) throw httpError(400, "selector_not_allowed", { selector });
-  return { selector, action: allowed };
 }
 
 export function nonceKey(sender, nonce) {

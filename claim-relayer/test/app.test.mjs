@@ -304,27 +304,21 @@ describe("claim relayer HTTP", () => {
       assert.equal(ethereum.json.error, "mainnet_refused");
       assert.equal(sent.length, 1);
 
-      const created = await request(
-        ctx.port,
-        "POST",
-        "/v1/claims",
-        await signedLiveBody({
-          account: accounts.payer,
+      const created = await request(ctx.port, "POST", "/v1/claims", {
+        live: true,
+        signature: "0x" + "11".repeat(65),
+        intent: {
           action: "createEscrow",
           escrowId: createId,
+          sender: accounts.payer.address,
           nonce: "12",
           deadline: deadlineAt(120),
-          fields: {
-            payee: PAYEE,
-            payerBotId: "0x" + "44".repeat(32),
-            payeeBotId: "0x" + "55".repeat(32),
-            durationSeconds: "3600",
-            amountWei: "1000",
-          },
-        }),
-      );
-      assert.equal(created.status, 404);
-      assert.equal(created.json.error, "escrow_not_found");
+          chainId: 84532,
+          verifyingContract: "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
+        },
+      });
+      assert.equal(created.status, 400);
+      assert.equal(created.json.error, "action_not_claim");
       assert.equal(created.json.txHash, null);
       assert.equal(sent.length, 1);
 
@@ -377,27 +371,21 @@ describe("claim relayer HTTP", () => {
       assert.equal(missing.json.revert_data, null);
       assert.equal(missing.json.senderConstraint, "permissionless");
 
-      const create = await request(
-        ctx.port,
-        "POST",
-        "/v1/claims",
-        await signedLiveBody({
-          account: accounts.payer,
+      const create = await request(ctx.port, "POST", "/v1/claims", {
+        live: true,
+        signature: "0x" + "11".repeat(65),
+        intent: {
           action: "createEscrow",
           escrowId: createId,
+          sender: accounts.payer.address,
           nonce: "22",
           deadline: deadlineAt(120),
-          fields: {
-            payee: PAYEE,
-            payerBotId: "0x" + "44".repeat(32),
-            payeeBotId: "0x" + "55".repeat(32),
-            durationSeconds: "3600",
-            amountWei: "1000",
-          },
-        }),
-      );
-      assert.equal(create.status, 404);
-      assert.equal(create.json.error, "escrow_not_found");
+          chainId: 84532,
+          verifyingContract: "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d",
+        },
+      });
+      assert.equal(create.status, 400);
+      assert.equal(create.json.error, "action_not_claim");
       assert.equal(create.json.txHash, null);
       assert.equal(JSON.stringify(create.json).includes(SECRET), false);
     } finally {
@@ -762,7 +750,7 @@ describe("claim relayer HTTP", () => {
         dryRun: false,
         action: "release",
         senderConstraint: "permissionless",
-        senderNote: "release and refund are permissionless. The relayer signer sends this transaction.",
+        senderNote: "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.",
         revert_data: revert,
       });
       assert.equal(decoded.raw.includes(rpcUrl), false);

@@ -3,22 +3,14 @@
  * Nothing here is a production key.
  */
 
-import { keccak256 } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
-import { claimIntentDomain, claimIntentTypes } from "../claimIntent.mjs";
+import { actionIndex, claimIntentDomain, claimIntentTypes } from "../claimIntent.mjs";
 import { encodeEscrowAction } from "../escrowCalldata.mjs";
 
 export const TEST_MNEMONIC = "test test test test test test test test test test test junk";
 export const NOW_MS = Date.parse("2026-09-25T19:00:00.000Z");
 export const BOOKED_ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
 export const ZERO = "0x0000000000000000000000000000000000000000";
-
-const ACTION_INDEX = {
-  createEscrow: 0,
-  release: 1,
-  refund: 2,
-  dispute: 3,
-};
 
 export function testAccounts() {
   return {
@@ -38,20 +30,18 @@ export function deadlineAt(offsetSeconds, nowMs = NOW_MS) {
  */
 export async function signedLiveBody(opts) {
   const action = opts.action || "release";
+  const index = actionIndex(action);
+  if (index === null) throw new Error(`test cannot sign ${action}`);
   const escrowId = opts.escrowId;
   const chainId = opts.chainId ?? 84532;
   const verifyingContract = opts.verifyingContract || BOOKED_ESCROW;
-  const encoded = opts.calldata
-    ? { calldata: opts.calldata }
-    : encodeEscrowAction({ action, claimId: escrowId, escrowId, ...(opts.fields || {}) });
-  const calldataHash = keccak256(encoded.calldata);
+  const encoded = encodeEscrowAction({ action, claimId: escrowId, escrowId, ...(opts.fields || {}) });
   const nonce = String(opts.nonce);
   const deadline = String(opts.deadline);
   const domain = claimIntentDomain(chainId, verifyingContract);
   const message = {
-    action: ACTION_INDEX[action],
+    action: index,
     escrowId,
-    calldataHash,
     sender: opts.account.address,
     nonce: BigInt(nonce),
     deadline: BigInt(deadline),
@@ -62,16 +52,16 @@ export async function signedLiveBody(opts) {
     primaryType: "ClaimIntent",
     message,
   });
+  const calldata = opts.calldata || encoded.calldata;
   return {
     live: opts.live !== false,
-    calldata: encoded.calldata,
+    calldata,
     signature,
     claimId: escrowId,
     ...(opts.fields?.amountWei ? { amountWei: String(opts.fields.amountWei) } : {}),
     intent: {
       action,
       escrowId,
-      calldataHash,
       sender: opts.account.address,
       nonce,
       deadline,

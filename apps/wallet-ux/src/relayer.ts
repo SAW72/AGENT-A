@@ -1,4 +1,4 @@
-import { decodeFunctionData, keccak256, type Address, type Hex } from "viem"
+import { decodeFunctionData, type Address, type Hex } from "viem"
 import {
   CLAIM_DEADLINE_SKEW_SECONDS,
   CLAIM_INTENT_DOMAIN_NAME,
@@ -16,7 +16,7 @@ import type { CallPreview } from "./preview"
 import { REVERT_FALLBACK_TEXT } from "./revert"
 import { evaluateEscrowSubmit } from "./submit"
 
-const RELAYER_ACTIONS = ["createEscrow", "release", "refund", "dispute"] as const
+const RELAYER_ACTIONS = ["release", "refund"] as const
 
 export type RelayerAction = (typeof RELAYER_ACTIONS)[number]
 
@@ -36,7 +36,6 @@ export type ClaimSignArgs = {
   message: {
     action: number
     escrowId: Hex
-    calldataHash: Hex
     sender: Address
     nonce: bigint
     deadline: bigint
@@ -45,12 +44,10 @@ export type ClaimSignArgs = {
 
 export type SignedLiveClaim = {
   live: true
-  calldata: Hex
   signature: Hex
   intent: {
     action: RelayerAction
     escrowId: Hex
-    calldataHash: Hex
     sender: Address
     nonce: string
     deadline: string
@@ -64,12 +61,6 @@ export type LiveClaimBody = {
   claimId: Hex
   chainId: typeof BASE_SEPOLIA_CHAIN_ID
   live: true
-  payee?: Address
-  payerBotId?: Hex
-  payeeBotId?: Hex
-  durationSeconds?: string
-  amountWei?: string
-  disputeId?: Hex
 }
 
 export type LiveClaimResult = {
@@ -155,12 +146,15 @@ const RELAYER_PLAIN: Record<string, string> = {
   deadline_expired: "This approval has expired. Sign it again. Nothing was sent.",
   deadline_too_far: "This approval lasts too long. Nothing was sent.",
   calldata_hash_mismatch: "The prepared transaction does not match the signed approval. Nothing was sent.",
+  calldata_mismatch: "The prepared transaction doesn't match this action. Nothing was sent.",
+  trailing_bytes: "The prepared transaction has extra data, so it was not submitted.",
+  high_s: "This approval signature is not in the required form. Nothing was sent.",
   selector_not_allowed: "This step has to be sent from your wallet, not the claim relayer.",
   domain_mismatch: "This approval is for a different escrow than the one this relayer uses. Nothing was sent.",
   gas_budget_exhausted: "The claim relayer has reached its daily limit. Try again later. Nothing was sent.",
   escrow_cap: "This claim has reached the relayer limit for now. Nothing was sent.",
   nonce_in_flight: "This approval is already being submitted. Wait for it to finish.",
-  claim_api_secret_required: "The claim relayer is not ready to submit claims yet. Nothing was sent.",
+  nonce_replay: "This approval was already used. Nothing was sent.",
   relayer_key_missing: "The claim relayer is not ready to submit claims yet. Nothing was sent.",
   kill_switch: "The claim relayer is paused. Nothing was sent.",
   cors_or_network: "The claim relayer could not be reached. Nothing was sent.",
@@ -181,7 +175,6 @@ const RELAYER_PLAIN: Record<string, string> = {
   payload_too_large: "This submission is too large for the claim relayer. Nothing was sent.",
   validation: RELAYER_VALIDATION_TEXT,
   unprocessable: RELAYER_VALIDATION_TEXT,
-  calldata_mismatch: "The prepared transaction doesn't match this action. Nothing was sent.",
   live_required: "The claim relayer only accepts a live submission. Nothing was sent.",
   missing_tx_hash: "The claim relayer did not confirm a transaction. Nothing was shown as sent.",
   not_found: "The claim relayer could not find that submission path. Nothing was sent.",
@@ -254,9 +247,8 @@ function isRelayerAction(name: string): name is RelayerAction {
 }
 
 export function previewSupportsRelayer(functionName: string): boolean {
-  // A new escrow is not on chain yet, so the relayer's existence check refuses it.
-  // Create stays on the connected wallet. Release, refund, and dispute can be signed.
-  return functionName !== "createEscrow" && isRelayerAction(functionName)
+  // Release and refund only. Create, dispute, withdraw, and withdrawTo stay on the connected wallet.
+  return isRelayerAction(functionName)
 }
 
 export function relayerButtonModel(input: {
@@ -293,25 +285,11 @@ function asHex32(value: unknown, field: string): Hex {
   return value as Hex
 }
 
-function asAddress(value: unknown, field: string): Address {
-  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw new RelayerRequestError(`Claim relayer needs an address ${field}.`, null, "invalid_address")
-  }
-  return value as Address
-}
-
 export function claimBodyFromPreview(preview: CallPreview): LiveClaimBody {
   assertRelayerChain(BASE_SEPOLIA_CHAIN_ID)
-  if (preview.functionName === "openDispute") {
-    throw new RelayerRequestError(
-      "The claim relayer submits escrow actions only. openDispute stays on the connected wallet.",
-      null,
-      "action_not_claim",
-    )
-  }
   if (!isRelayerAction(preview.functionName)) {
     throw new RelayerRequestError(
-      "The claim relayer submits createEscrow, release, refund, and dispute only.",
+      "This step has to be sent from your wallet, not the claim relayer.",
       null,
       "action_not_claim",
     )
@@ -321,35 +299,6 @@ export function claimBodyFromPreview(preview: CallPreview): LiveClaimBody {
     throw new RelayerRequestError("Calldata does not match the preview action.", null, "calldata_mismatch")
   }
   const args = decoded.args ?? []
-  if (preview.functionName === "createEscrow") {
-    const duration = args[4]
-    if (typeof duration !== "bigint") {
-      throw new RelayerRequestError("Claim relayer needs durationSeconds.", null, "invalid_duration")
-    }
-    if (preview.valueWei <= 0n) {
-      throw new RelayerRequestError("createEscrow needs a positive value for the relayer.", null, "invalid_amount")
-    }
-    return {
-      action: "createEscrow",
-      claimId: asHex32(args[0], "escrowId"),
-      payee: asAddress(args[1], "payee"),
-      payerBotId: asHex32(args[2], "payerBotId"),
-      payeeBotId: asHex32(args[3], "payeeBotId"),
-      durationSeconds: duration.toString(),
-      amountWei: preview.valueWei.toString(),
-      chainId: BASE_SEPOLIA_CHAIN_ID,
-      live: true,
-    }
-  }
-  if (preview.functionName === "dispute") {
-    return {
-      action: "dispute",
-      claimId: asHex32(args[0], "escrowId"),
-      disputeId: asHex32(args[1], "disputeId"),
-      chainId: BASE_SEPOLIA_CHAIN_ID,
-      live: true,
-    }
-  }
   return {
     action: preview.functionName,
     claimId: asHex32(args[0], "escrowId"),
@@ -762,7 +711,6 @@ export function claimSignArgs(input: {
     message: {
       action: claimActionIndex(previewBody.action),
       escrowId: previewBody.claimId,
-      calldataHash: keccak256(input.preview.calldata),
       sender: input.sender,
       nonce,
       deadline,
@@ -782,12 +730,10 @@ export function signedClaimFromPreview(input: {
   const previewBody = claimBodyFromPreview(input.preview)
   return {
     live: true,
-    calldata: input.preview.calldata,
     signature: input.signature,
     intent: {
       action: previewBody.action,
       escrowId: args.message.escrowId,
-      calldataHash: args.message.calldataHash,
       sender: args.message.sender,
       nonce: args.message.nonce.toString(),
       deadline: args.message.deadline.toString(),

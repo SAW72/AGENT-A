@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { BASE_SEPOLIA_CHAIN_ID, ZERO_ADDRESS, httpError, isAddress } from "./config.mjs";
 import { encodeEscrowAction } from "./escrowCalldata.mjs";
-import { withClaimRetry } from "./retry.mjs";
 import { revertDataFrom } from "./revertData.mjs";
 
 const CLAIM_ID_RE = /^(?:fixture-[0-9a-f]{8,32}|0x[0-9a-fA-F]{64}|[A-Za-z0-9:_-]{1,80})$/;
@@ -77,7 +76,7 @@ export function senderNoteFor(action) {
   if (action === "dispute") {
     return "dispute() succeeds only when the relayer signer is the payer or the payee.";
   }
-  return "release and refund are permissionless. The relayer signer sends this transaction.";
+  return "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.";
 }
 
 export function liveSubmitError(config) {
@@ -205,7 +204,7 @@ export async function submitLiveClaim({ body, config, broadcaster, prepared }) {
     if (!broadcaster || typeof broadcaster.send !== "function") {
       throw httpError(503, "relayer_key_missing", { txHash: null, dryRun: false });
     }
-    sent = await withClaimRetry(() => broadcaster.send(tx), { log: () => {} });
+    sent = await broadcaster.send(tx);
   } catch (err) {
     const revert_data = revertDataFrom(err);
     const wrapped = err?.status
