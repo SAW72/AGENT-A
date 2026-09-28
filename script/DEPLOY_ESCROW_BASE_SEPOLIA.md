@@ -129,7 +129,7 @@ If that account lives in a browser wallet, skip the `core-timelock` import. Afte
 
 ### Broadcast (human only, after Auditor PASS and Verifier APPROVE)
 
-The broadcast that landed for `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` used main at the squash-merge commit of PR #30 (`444c427`). That commit is before PR #40 and PR #44. It is history for that address. The next escrow deploy does not check out `444c427`. It checks out `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427` or later. See [New escrow deploy](#new-escrow-deploy).
+The broadcast that landed for `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` used main at the squash-merge commit of PR #30 (`444c427`). That commit is before PR #40 and PR #44. It is history for that address. The next escrow deploy does not check out `444c427`. It checks out `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427` or later. The recommended checkout is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787` (`a66ef64`). Its escrow source matches `da47d9a`. See [New escrow deploy](#new-escrow-deploy).
 
 The command that landed, from that historical commit, was:
 
@@ -150,6 +150,8 @@ forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow 
 Recorded `NEW_ESCROW` is `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Recorded `DEPLOY_TX` is `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` (block 47345163). The previous book address `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26). Broadcast from Foundry's default sender `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38` or from the simulate burn address reverts `DeployEscrow: pass --account and --sender`.
 
 ### acceptOwnership (CORE_TIMELOCK, not the deployer)
+
+History: already done; do not re-run. This block is the landed `acceptOwnership` for `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` only.
 
 `CORE_TIMELOCK` was the pending owner. On `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` this call has landed: tx `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442, status 1, from `CORE_TIMELOCK`.
 
@@ -363,11 +365,11 @@ Deploy stays on hold until Spencer broadcasts. Do not paste a simulation address
 
 ### New escrow deploy
 
-The new-escrow deploy checks out `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427` or any later `main` commit that still contains this code. That commit is the squash-merge of PR #44. It includes PR #40 pull-payment (`function withdraw() external` and `withdrawTo(address)`) and PR #44 `error EscrowNotFound(bytes32 id)`. `444c427` is before both. Do not deploy from `444c427`.
+The recommended checkout is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787` (`a66ef64`). Its `contracts/BotAttestationEscrow.sol` and `script/DeployBotAttestationEscrow.s.sol` match `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. `da47d9a` is the squash-merge of PR #44. It includes PR #40 pull-payment (`function withdraw() external` and `withdrawTo(address)`) and PR #44 `error EscrowNotFound(bytes32 id)`. `444c427` is before both. Do not deploy from `444c427`. A later `main` commit is fine only when those two files are still the same.
 
 ```bash
 git fetch origin main
-git checkout da47d9a12d64cd4bea4b6fce0b2166b4c55a0427
+git checkout a66ef6439dec6fd2e5ad49d53fa4ce98d373d787
 forge build
 ```
 
@@ -394,6 +396,22 @@ jq -e '.abi[] | select(.type=="error" and .name=="EscrowNotFound" and ((.inputs|
 
 `forge inspect BotAttestationEscrow methodIdentifiers` and `forge inspect BotAttestationEscrow errors` print those pairs in a table. The `--json` form above is the comparison against `cast sig`.
 
+On this exact checkout, re-run the Escrow SIMULATE block (no `--broadcast`) and confirm `SIMULATE; no transaction will be sent`, chainid `84532`, the constructor args, and `pendingOwner` = `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9` before broadcasting. The recommended checkout is `a66ef64`. Its escrow source matches `da47d9a`.
+
+That block is the `forge script` under [Escrow simulate (not live)](#escrow-simulate-not-live) with `--sender 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` and no `--broadcast`. Confirm these lines in the log:
+
+```text
+SIMULATE; no transaction will be sent
+chainid 84532
+constructor Denylist 0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+constructor Vault 0x1463D664fA467FBCDA4B05443434494f05e565bc
+constructor DisputePanel 0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+constructor governance 0x10CC9474b45625ADfd05C209f2518023484878D9
+pendingOwner 0x10CC9474b45625ADfd05C209f2518023484878D9
+```
+
+Stop if any line is missing or different. Nothing is sent. Do not add `--broadcast` to this re-run.
+
 Spencer signs the broadcast. Agents never broadcast. Same script and constructor args as the historical broadcast above (live Denylist, Vault, DisputePanel, and `CORE_TIMELOCK`). `<DEPLOYER_ADDRESS>` is the address printed by `cast wallet address --account agentbv-deployer`. It must not be `CORE_TIMELOCK`.
 
 ```bash
@@ -418,12 +436,20 @@ The deploy script does not call `acceptOwnership`. `deploy` in `script/DeployBot
 
 Spencer sends one plain transaction from `CORE_TIMELOCK`. Agents do not send it. No `--broadcast` from an agent session.
 
+Spencer only:
+
 ```bash
 export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
 
 cast send "$NEW_ESCROW" "acceptOwnership()" \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --account core-timelock
+```
+
+Read-only check. No key. No `cast send`.
+
+```bash
+export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
 
 cast call "$NEW_ESCROW" "owner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
