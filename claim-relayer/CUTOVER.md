@@ -1,69 +1,48 @@
 # Claim-relayer cutover
 
-Spencer runs every step below, in order. Nothing in this repo deploys, broadcasts, or stores a secret. Placeholders are names only. Do not paste a real secret into git, a shell history you keep, or this file.
+Spencer runs every step below, in order. Nothing in this repository deploys, broadcasts, or stores a secret. Placeholders are names only. Do not paste a real secret into git, a shell history you keep, or this file. Do not put a real secret in a test request.
 
-This procedure is for the EIP-712 relayer in PR #46, checked against commit `c95e0d0cf79699215d4e18c5fda7cc26d10e14e5`. The copy of the service on `main` before that revision still requires `CLAIM_API_SECRET` and the `x-claim-secret` header. Do not run the steps against that older process.
+Step 0 is for the relayer that is deployed now: `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. It is not for PR #46. The later steps are for the EIP-712 relayer at `cfac34a989474c590202623fb8cacfce06621c33` (PR #46). That commit is the rebase onto `main`, and its tree is the one those steps describe.
 
-Use the hostname shown on the Render service `bot-verifier-claim-relayer`. The example below is `https://bot-verifier-claim-relayer.onrender.com`. Wallet UX is the Cloudflare Pages project `agent-a-wallet-ux` (`https://agent-a-wallet-ux.pages.dev`).
+The Render service is `bot-verifier-claim-relayer`. Copy the hostname from the dashboard. The example below is `https://bot-verifier-claim-relayer.onrender.com`. Wallet UX is the Cloudflare Pages project `agent-a-wallet-ux` (`https://agent-a-wallet-ux.pages.dev`). That project is Direct Upload. It has no git connection, and Cloudflare does not build it.
 
-## a) Deploy the new relayer and the rebuilt Pages bundle together
+## 0. Interim stop, now
 
-Deploy both from the same signed-intent commit. Do not set `VITE_CLAIM_API_SECRET` on the Pages build.
+Do this before the cutover, against the process that is already running.
 
-They have to move together. The old Pages bundle (`index-CkV_YTRw.js`) posts `POST /v1/claims` with `live: true` and the header `x-claim-secret`. The new relayer does not read `CLAIM_API_SECRET` or that header. Once live submit is unlocked (`LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1`), that old body has no `intent` and the new relayer returns **400** `intent_required` with `txHash: null`. Nothing is broadcast.
+`main` reads two env vars that stop a live submit. Both are read only when the process starts. In the Render dashboard, set the var, then choose Save, rebuild, and deploy. `GET /health` and `GET /v1/health` stay up and report the result. A value of `1`, `true`, `yes`, or `on` is on. Anything else, including `0` or empty, is off.
 
-The other split fails closed too. The new bundle does not send `x-claim-secret`. The old relayer still requires that header and returns **401** `unauthorized`, or **503** `claim_api_secret_required` if `CLAIM_API_SECRET` is already unset.
+Preferred: set `KILL_SWITCH` to `1`.
 
-Pick a quiet moment and publish both back to back. Until they match, release and refund from the page fail closed and do not broadcast.
-
-1. Render dashboard → service `bot-verifier-claim-relayer` → Manual Deploy → the signed-intent commit. The service root is `claim-relayer`, build `npm install --omit=dev`, start `npm start`.
-2. Cloudflare dashboard → Workers & Pages → `agent-a-wallet-ux`. Production branch is `main`, root directory `apps/wallet-ux`, build command `npm ci && npm run build`, output `dist`. Publish that same commit to production. `VITE_CLAIM_API_SECRET` must be absent for Production and Preview before this build. Leave `VITE_CLAIM_RELAYER_URL` as it is if it already points at the Render service.
-
-Local check of the bundle you are about to publish, from a shell where `VITE_CLAIM_API_SECRET` is unset:
-
-```bash
-cd apps/wallet-ux
-unset VITE_CLAIM_API_SECRET
-npm ci
-npm run build
-grep -R -E 'x-claim-secret|VITE_CLAIM_API_SECRET' dist && echo 'STILL PRESENT' || echo 'absent'
-```
-
-`absent` is the result you want. `dist/` is gitignored. Do not commit it.
-
-After both deploys are live, confirm the served production page. Vite inlines `VITE_*` at build time, so this check is against the URL users actually load:
-
-```bash
-curl -fsS https://agent-a-wallet-ux.pages.dev/ | grep -oE '/assets/[^" ]+\.js'
-```
-
-Fetch each path that prints. The old file name must not appear, and neither string may appear in the JavaScript:
-
-```bash
-curl -fsS https://agent-a-wallet-ux.pages.dev/ | grep -F index-CkV_YTRw.js && echo 'OLD BUNDLE' || echo 'old bundle name absent'
-curl -fsS "https://agent-a-wallet-ux.pages.dev/assets/<file>.js" | grep -E 'x-claim-secret|VITE_CLAIM_API_SECRET' && echo 'STILL PRESENT' || echo 'absent'
-```
-
-With the kill switch off, this request distinguishes the new relayer and does not broadcast. Expect **400** `intent_required` only when live submit is already unlocked. When the gate is still closed the same body is **409** `live_submit_blocked` on both the old and the new process, so use the CORS check as well.
+`POST /v1/claims` and `POST /v1/claims/quote` then return **503** `{"ok":false,"error":"kill_switch"}` before the body is read. Health stays **200**.
 
 ```bash
 BASE=https://bot-verifier-claim-relayer.onrender.com
-curl -sS -D - -o /tmp/claim-cutover-body.txt -X POST "$BASE/v1/claims" \
-  -H 'content-type: application/json' \
-  --data '{"action":"release","claimId":"0x1111111111111111111111111111111111111111111111111111111111111111","live":true}'
-curl -sS -D - -o /dev/null -X OPTIONS "$BASE/v1/claims" \
-  -H 'origin: https://agent-a-wallet-ux.pages.dev' \
-  -H 'access-control-request-method: POST' \
-  -H 'access-control-request-headers: content-type,x-claim-secret'
+curl -fsS "$BASE/health"
 ```
 
-On the new relayer, `access-control-allow-headers` is `content-type,x-admin-secret,authorization`. It does not list `x-claim-secret`.
+Confirm `"killSwitch": true`. `KILL_SWITCH` does not change `liveSubmit`. If the live gate was already open, health still shows `"liveSubmit": true` and `"mode": "live"` while the switch is on. The field that proves this stop is `killSwitch`.
 
-## b) Delete the claim secret
+Alternate: set `LIVE_SUBMIT` to `0`.
 
-The new process never reads `CLAIM_API_SECRET`. Delete the old value anyway so it is not left on the service. Do not print the value.
+Health then shows `"liveSubmit": false`, `"mode": "fixture"`, and `liveSubmitBlockers` containing `live_submit_off`. A request with `live: true` returns **409** `live_submit_blocked` and `txHash` null. A claim with no live flag still returns **200** as a fixture. This stops broadcasts. It does not stop fixture traffic. `SPENCER_RUN_AUTH=0` also forces `liveSubmit` false (`spencer_run_auth_required`). The check for this alternate is `"liveSubmit": false`.
 
-Render dashboard → `bot-verifier-claim-relayer` → Environment → delete the key `CLAIM_API_SECRET` → Save, rebuild, and deploy.
+`POST /v1/admin/pause` is not this stop. On `main`, if `ADMIN_SECRET` is unset, that route returns **200** `{"ok":true,"noop":true}` and does not change the switch.
+
+If you cannot set `KILL_SWITCH` or `LIVE_SUBMIT`:
+
+- Delete `CLAIM_API_SECRET` on the Render service and redeploy. On `main`, that refusal runs only after the live gate is already open: a live claim then returns **503** `claim_api_secret_required` and nothing is broadcast. If `LIVE_SUBMIT` is already `0`, the process never reaches that check. The live claim is already **409** `live_submit_blocked`. Deleting the secret is not an extra stop in that case.
+- Suspend the service in the Render dashboard (`bot-verifier-claim-relayer` → Suspend). That is a platform control. This code has no suspend flag, and `/health` stops answering.
+
+Leave `KILL_SWITCH=1` in place for the merge in step 2. Do not turn it off between these steps.
+
+## 1. Delete the claim secret before any build
+
+Do this before step 2 builds the Pages bundle. Vite inlines `VITE_*` from the shell or from GitHub Actions. The Pages project env is not the build env. Deleting a Pages variable does not rewrite a bundle that is already uploaded.
+
+The new relayer (`cfac34a`) does not read `CLAIM_API_SECRET`. Delete the old value anyway so it is not left on the service. Do not print the value, and do not send it in a request.
+
+Render dashboard → `bot-verifier-claim-relayer` → Environment → delete `CLAIM_API_SECRET` → Save, rebuild, and deploy. Keep `KILL_SWITCH=1`.
 
 GitHub, repo `SAW72/AGENT-B.V.`, repo level and the `production` environment, secrets and variables. List first. Skip a delete when the name is not there.
 
@@ -78,76 +57,156 @@ gh variable delete VITE_CLAIM_API_SECRET --repo SAW72/AGENT-B.V.
 gh variable delete VITE_CLAIM_API_SECRET --repo SAW72/AGENT-B.V. --env production
 ```
 
-Cloudflare dashboard → Workers & Pages → `agent-a-wallet-ux` → Settings → Environment variables. Delete `VITE_CLAIM_API_SECRET` under **Production** and under **Preview**, whether the row is a plain variable or an encrypted secret. Deleting it does not rewrite a bundle that is already published. Step (c) removes those.
+Cloudflare dashboard → Workers & Pages → `agent-a-wallet-ux` → Settings → Environment variables. Delete `VITE_CLAIM_API_SECRET` under Production and under Preview, whether the row is plain or encrypted. Those rows are not read at build time. They still have to be gone.
 
-If you use Wrangler for the encrypted secret, from a machine that is already logged in:
+If you use Wrangler for an encrypted secret, from a machine that is already logged in:
 
 ```bash
 npx wrangler pages secret list --project-name agent-a-wallet-ux
 npx wrangler pages secret delete VITE_CLAIM_API_SECRET --project-name agent-a-wallet-ux
 ```
 
-Then look at both Production and Preview in the dashboard again. The CLI does not replace that check.
+Then look at both Production and Preview in the dashboard again.
 
-## c) Purge old Pages deployments that still serve index-CkV_YTRw.js
+## 2. Merge #46 first, then publish Pages from that same commit
 
-Dashboard → Workers & Pages → `agent-a-wallet-ux` → Deployments. Each row has a branch and a deployment URL of the form `https://<deployment-id>.agent-a-wallet-ux.pages.dev`. Production also answers at `https://agent-a-wallet-ux.pages.dev`.
+`agent-a-wallet-ux` is Direct Upload. Cloudflare does not build it from git. Do not look for a Pages git production branch or a Pages build command.
 
-Or:
+`claim-relayer/render.yaml` does not set `autoDeploy`. The file is a reference Blueprint under `claim-relayer/`, not `render.yaml` at the repo root, so merging does not change the running service's auto-deploy setting. Render's Blueprint default, if this file were applied, is auto-deploy on when the key is omitted. That default is not what controls the service that already exists. Check the dashboard: `bot-verifier-claim-relayer` → Settings → Build & Deploy → Auto-Deploy.
+
+1. Merge PR #46 to `main` first. The relayer commit is `cfac34a989474c590202623fb8cacfce06621c33` until GitHub adds a merge commit.
+2. If Auto-Deploy is on, leave `KILL_SWITCH=1` through that merge. The new process reads `KILL_SWITCH` at start, so the deploy comes up paused. If Auto-Deploy is off, the merge does not deploy. Use Manual Deploy on that same commit, still with `KILL_SWITCH=1`.
+3. After the deploy finishes, `GET /health` must show `"killSwitch": true`. The Render dashboard's deployed commit is the #46 merge. `/health` has no commit field and no build field. Do not look for either in the JSON.
+4. Rebase PR #41 (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow) onto #46, then merge #41. The Pages publish runs only after that, from the `main` commit that contains both.
+5. Publish that same commit. Either path uses the build env from CI or from the local shell, never from Pages env vars.
+   - GitHub: Actions → Deploy wallet-ux → Run workflow. `on` is `workflow_dispatch` only, and the job runs only for `refs/heads/main`. The build receives `VITE_CLAIM_RELAYER_URL` from the `production` environment variable. It must not receive `VITE_CLAIM_API_SECRET`. The workflow uploads with `wrangler pages deploy` twice: first `--branch=preview-<run_id>`, then `--branch=main` with `--commit-hash` set to that commit.
+   - Or, from a shell where `VITE_CLAIM_API_SECRET` is unset:
+
+```bash
+cd apps/wallet-ux
+unset VITE_CLAIM_API_SECRET
+npm ci
+npm test
+npm run build
+npx wrangler pages deploy dist --project-name=agent-a-wallet-ux --branch=main --commit-hash=<main-sha> --commit-dirty=false
+```
+
+A local `--branch=main` upload publishes production directly. The workflow's preview branch is the path that runs the served-bundle check before production.
+
+Keep `KILL_SWITCH=1` until this publish is done. While it is on, quote and claim return **503** `kill_switch` before any of the split-version behavior below.
+
+They still have to move together once the switch comes off. The old Pages bundle posts `POST /v1/claims` with `live: true` and the header `x-claim-secret`. The #46 relayer does not read `CLAIM_API_SECRET` or that header. With the live gate open, that body has no `intent` and returns **400** `intent_required` with `txHash` null. Nothing is broadcast. The other split fails closed too. The new bundle does not send `x-claim-secret`. The `main` relayer still requires it and returns **401** `unauthorized`, or **503** `claim_api_secret_required` if the secret is already unset and the live gate is open.
+
+### Leak check
+
+Run this on `dist/` before upload, and again on the JavaScript the production URL serves. Do not search for the real secret. The pattern below matches a shape, not a value.
+
+```bash
+cd apps/wallet-ux
+grep -R -E -i -n 'x-claim-secret|VITE_CLAIM_API_SECRET' dist && echo 'NAME STILL PRESENT' || echo 'names absent'
+grep -R -E -n -i 'x-claim-secret["'\'']?[[:space:]]*[:=][[:space:]]*["'\''][A-Za-z0-9+/=_-]{16,}' dist && echo 'SECRET SHAPE STILL PRESENT' || echo 'secret shape absent'
+```
+
+`names absent` and `secret shape absent` are the results you want. The second command is a long hex or base64-shaped literal next to the claim header. A dummy such as `x-claim-secret: 00112233445566778899aabbccddeeff` is enough to prove the pattern matches. Do not substitute the retired secret.
+
+Fetch the served page the same way. `index-CkV_YTRw.js` must not appear.
+
+```bash
+curl -fsS https://agent-a-wallet-ux.pages.dev/ | grep -F index-CkV_YTRw.js && echo 'OLD BUNDLE' || echo 'old bundle name absent'
+curl -fsS https://agent-a-wallet-ux.pages.dev/ | grep -oE '/assets/[^" ]+\.js'
+```
+
+Download each path into a file and run the same two `grep` commands on that file.
+
+PR #41's `scripts/guard-claim-secret.mjs` rejects the header name and `VITE_CLAIM_API_SECRET`, including base64, hex, and URL encodings of those names. It does not look for a secret value beside the header, and it does not read a secret from the environment. The shape grep above is the manual check for that gap. The workflow is not on `main` until #41 merges, so run the grep yourself on any build you upload before that.
+
+### Health check after both sides are up
+
+```bash
+curl -fsS "$BASE/health"
+```
+
+On the #46 process, while step 0 is still in force, expect `"ok": true` and `"killSwitch": true`. `"liveSubmit"` is `false` unless `LIVE_SUBMIT` and `SPENCER_RUN_AUTH` are both on for the booked escrow. `/health` does not include a build id or a commit. Confirm the commit in the Render deploy view, and confirm the Pages deployment is the `--commit-hash` you passed (or the workflow's `github.sha`).
+
+With the kill switch still on, do not send a live claim to distinguish the versions. The **400** `intent_required` check below is only for later, after you have decided the switch can come off, and it uses a dummy body with no secret header.
+
+```bash
+curl -sS -D - -o /tmp/claim-cutover-body.txt -X POST "$BASE/v1/claims" \
+  -H 'content-type: application/json' \
+  --data '{"action":"release","claimId":"0x1111111111111111111111111111111111111111111111111111111111111111","live":true}'
+```
+
+That body has no `intent` and no `x-claim-secret`. Expect **400** `intent_required` only when the kill switch is off and live submit is unlocked. When the gate is closed the same body is **409** `live_submit_blocked` on both the old and the new process. When the switch is on it is **503** `kill_switch`.
+
+The CORS check does not depend on the gate. On #46, `access-control-allow-headers` is `content-type,x-admin-secret,authorization`. It does not list `x-claim-secret`.
+
+```bash
+curl -sS -D - -o /dev/null -X OPTIONS "$BASE/v1/claims" \
+  -H 'origin: https://agent-a-wallet-ux.pages.dev' \
+  -H 'access-control-request-method: POST' \
+  -H 'access-control-request-headers: content-type'
+```
+
+Do not send `access-control-request-headers` that include a secret value. The header name in that CORS request is optional. The #46 allow-list is enough to tell the processes apart: the `main` relayer's allow-list includes `x-claim-secret`, and #46's does not. You can request `content-type,x-claim-secret` as names only. There is no value to replay.
+
+## 3. Purge deployments that still serve index-CkV_YTRw.js
+
+Dashboard → Workers & Pages → `agent-a-wallet-ux` → Deployments. Each row has a branch and a URL of the form `https://<deployment-id>.agent-a-wallet-ux.pages.dev`. Production also answers at `https://agent-a-wallet-ux.pages.dev`.
 
 ```bash
 npx wrangler pages deployment list --project-name agent-a-wallet-ux
 ```
 
-For each deployment host, including preview hosts:
+For each host:
 
 ```bash
 curl -fsS "https://<deployment-id>.agent-a-wallet-ux.pages.dev/" | grep -F index-CkV_YTRw.js
 ```
 
-A match means that deployment still serves the old bundle. The script is referenced from `index.html`, usually as `/assets/index-CkV_YTRw.js`.
+A match means that deployment still serves the old bundle, usually as `/assets/index-CkV_YTRw.js`.
 
-Delete a matched deployment from the dashboard row, or:
+Delete a matched deployment from the row, or:
 
 ```bash
 npx wrangler pages deployment delete <DEPLOYMENT_ID> --project-name agent-a-wallet-ux
 ```
 
-Cloudflare will not delete the latest deployment on a branch. Publish the new bundle on that branch first, so the old deployment is no longer the latest, and then delete it. Do that for production and for every preview branch whose latest build still contains `index-CkV_YTRw.js`. Do not delete the new production deployment.
+Cloudflare will not delete the latest deployment on a branch. Publish the new bundle on that branch first, then delete the older one. Do not delete the new production deployment.
 
-## d) Rotate ADMIN_SECRET if it ever shared a value with CLAIM_API_SECRET
+The Deploy wallet-ux workflow (PR #41) uploads `--branch=preview-<run_id>` and then tries to delete that deployment. `preview-<run_id>` has only that one deployment, so it is the latest on its branch and Cloudflare refuses the delete. The workflow marks that step `continue-on-error`. Pages does not expire those previews. Each dispatch can leave one behind, and they pile up.
 
-If you are not certain the two values were different, rotate `ADMIN_SECRET`.
+If a preview cannot be deleted, use one of these dashboard fallbacks. Neither is a relayer code path.
 
-Generate a new value locally and put it only in the Render dashboard. Do not commit it and do not echo it.
+- Disable preview deployments for `agent-a-wallet-ux` (Workers & Pages → the project → Settings), so later uploads do not add public previews.
+- Put Cloudflare Access on preview URLs (Zero Trust → Access, or the Pages project's Access policy) so a preview requires login. Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable.
+
+## 4. Rotate ADMIN_SECRET if it ever shared a value with CLAIM_API_SECRET
+
+If you are not certain the two values were different, rotate `ADMIN_SECRET`. Do not print it. Do not echo it. Do not put it in a test.
+
+On a Mac, the value goes to the clipboard and not to the terminal:
 
 ```bash
-openssl rand -base64 32
+openssl rand -hex 32 | pbcopy
 ```
 
-Render dashboard → `bot-verifier-claim-relayer` → Environment → set `ADMIN_SECRET` to that new value → Save, rebuild, and deploy.
+Paste from the clipboard into a password manager, then into the Render dashboard, then clear the clipboard. 1Password (`op`) and Bitwarden (`bw`) can take the same `openssl` stdout on stdin so the value is never printed. Use that instead of `pbcopy` if the CLI is already signed in. Do not run `echo`, `cat`, or `openssl rand` without a pipe.
 
-On this relayer, `ADMIN_SECRET` gates only `POST /v1/admin/pause` and `POST /v1/admin/unpause`. The header is `x-admin-secret`, or `Authorization: Bearer` with the same value. It does not authorize a live claim.
+Render dashboard → `bot-verifier-claim-relayer` → Environment → set `ADMIN_SECRET` to that new value → Save, rebuild, and deploy. Keep `KILL_SWITCH=1` if step 0 is still in force.
 
-While `ADMIN_SECRET` is unset, those two routes return **200** and do not change the switch:
+On both `main` and #46, `ADMIN_SECRET` gates only `POST /v1/admin/pause` and `POST /v1/admin/unpause`, via `x-admin-secret` or `Authorization: Bearer`. It does not authorize a live claim. While it is unset, those routes return **200** `{"ok":true,"noop":true}` and do not change the switch. They do not return 503.
 
-```json
-{ "ok": true, "noop": true, "killSwitch": false, "docs": "ADMIN_SECRET is unset. ..." }
-```
+## 5. Harmless X-Forwarded-For rate-limit test
 
-They do not return 503. A 503 from the pause route when the secret is unset is not what this code does.
+Run this against the public Render URL after the #46 process is the one deployed, with the kill switch off. If step 0 is still on, `/health` shows `"killSwitch": true` and this test returns **503** `kill_switch` before the rate limit. Turn the switch off only for this check, then turn it back on if you are not done.
 
-## e) Harmless X-Forwarded-For rate-limit test
+The per-IP bucket is on `POST /v1/claims` only, after the kill switch and before the body is parsed. `POST /v1/claims/quote` has no per-IP bucket. Do not use the quote route.
 
-Run this against the public Render URL, with the kill switch off. `GET /health` shows `"killSwitch": false`. A paused process returns **503** `kill_switch` before the rate limit, so it cannot show the 429.
+Render appends the connecting client to `X-Forwarded-For`. The relayer keeps the rightmost hop. `X-Real-IP` and Cloudflare headers are not read. A test to localhost does not append that hop, so a spoofed header would become the client. Use the public service.
 
-The per-IP bucket applies to `POST /v1/claims` only. It runs after the kill switch and before the body is parsed. `POST /v1/claims/quote` has no per-IP bucket. Do not use the quote route for this test.
+The default is `CLAIM_RATE_IP=30` per `CLAIM_RATE_WINDOW_SEC=60`. Do not send 30 requests. Set `CLAIM_RATE_IP` to `2`, save, rebuild, and deploy, then send four requests immediately.
 
-Render's proxy appends the connecting client to `X-Forwarded-For`. The relayer keeps only the rightmost hop. A missing header uses the socket address. `X-Real-IP` and Cloudflare headers are not read. A test from your own machine to localhost does not append that hop, so a spoofed header would become the client. Use the public service.
-
-The default is `CLAIM_RATE_IP=30` per `CLAIM_RATE_WINDOW_SEC=60`. Do not send 30 requests. For this check only, set `CLAIM_RATE_IP` to `2` on the Render service, save, rebuild, and deploy, then send four requests immediately. The bucket refills over the 60 second window, so do not wait between them.
-
-The body has no `live`, `liveSubmit`, or `mode`. It stays a dry run (`txHash` null). It does not broadcast.
+The body is a dummy. It has no `live` flag, no signature, and no secret header. It cannot broadcast.
 
 ```bash
 BASE=https://bot-verifier-claim-relayer.onrender.com
@@ -166,46 +225,52 @@ curl -sS -D - -o /tmp/claim-rate-body.txt -X POST "$BASE/v1/claims" \
   --data "$body"
 ```
 
-Requests 1 and 2 are **200**, `mode` `fixture`, `txHash` null. Request 3 is **429** `{"ok":false,"error":"rate_limited"}`. Request 4, with a spoofed address on the left of `X-Forwarded-For`, is **429** as well. That spoof does not get its own bucket. `203.0.113.50` is a documentation address.
+Requests 1 and 2 are **200**, `mode` `fixture`, `txHash` null. Request 3 is **429** `{"ok":false,"error":"rate_limited"}`. Request 4, with `203.0.113.50` on the left, is **429** as well. That address is documentation-only. It does not get its own bucket.
 
-Then delete the `CLAIM_RATE_IP` override so the process returns to the default of 30. Save, rebuild, and deploy. The bucket is in memory for one process, and that restart clears it.
+Delete the `CLAIM_RATE_IP` override afterward so the default of 30 returns. Save, rebuild, and deploy. The bucket is in memory, and that restart clears it.
 
-## f) Durable stop
+## 6. Durable stop
 
-Set this only when you want quote and claim traffic to stop. Leave it at `0` when the service should keep serving.
+Set this when quote and claim traffic should stay stopped. Leave `KILL_SWITCH` at `0` when the service should keep serving.
 
 Render dashboard → `bot-verifier-claim-relayer` → Environment → `KILL_SWITCH` = `1` → Save, rebuild, and deploy.
 
-`1`, `true`, `yes`, and `on` all start the process paused. Any other value, including `0` or an empty value, starts it open. The flag is read at process start. Editing `claim-relayer/render.yaml` in git does not change the running service. That file is a reference Blueprint and is not applied from the repo root.
+`1`, `true`, `yes`, and `on` start the process paused. Any other value starts it open. Editing `claim-relayer/render.yaml` in git does not change the running service.
 
-While the switch is on:
+While the switch is on, on the #46 process:
 
-- `GET /health` and `GET /v1/health` stay **200** and include `"killSwitch": true`.
+- `GET /health` and `GET /v1/health` stay **200** with `"killSwitch": true`. There is still no build or commit field.
 - `POST /v1/claims` and `POST /v1/claims/quote` return **503** `{"ok":false,"error":"kill_switch"}` before the body is read and before the per-IP bucket.
-- `POST /v1/admin/pause` and `POST /v1/admin/unpause` still run. They are not behind the switch.
+- Pause and unpause still run. They are not behind the switch.
 
 ```bash
-BASE=https://bot-verifier-claim-relayer.onrender.com
-curl -sS "$BASE/health"
+curl -fsS "$BASE/health"
 curl -sS -D - -o /tmp/claim-kill-body.txt -X POST "$BASE/v1/claims" \
   -H 'content-type: application/json' \
   --data '{}'
 ```
 
-The claim response is **503** `kill_switch`.
+The claim response is **503** `kill_switch`. The body is an empty JSON object. It is not a signed claim and it carries no secret.
 
-To undo it, set `KILL_SWITCH` to `0`, then save, rebuild, and deploy. Confirm `"killSwitch": false` on `GET /health`.
+To undo it, set `KILL_SWITCH` to `0`, then save, rebuild, and deploy. Confirm `"killSwitch": false`.
 
-`POST /v1/admin/unpause` with `x-admin-secret` releases the switch in the current process only. The next start reads the environment again. If `KILL_SWITCH` is still `1`, a restart or a free-plan spin-down turns the switch back on. The durable off position is `KILL_SWITCH=0` plus a new process.
+`POST /v1/admin/unpause` clears the switch in the current process only, and only when `ADMIN_SECRET` is set. Do not call it with the real secret from this runbook. If `KILL_SWITCH` is still `1`, the next start turns the switch back on. The durable off position is `KILL_SWITCH=0` plus a new process.
 
-## What this revision does not do
+## What the code does not do
 
-Checked against `c95e0d0cf79699215d4e18c5fda7cc26d10e14e5`. Do not expect these during the cutover:
+Step 0 was checked against `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. The later steps were checked against `cfac34a989474c590202623fb8cacfce06621c33`.
 
-- The pause and unpause routes do not return 503 when `ADMIN_SECRET` is unset. They return the 200 no-op in step (d).
-- `POST /v1/claims/quote` has no per-IP limit. The bucket in step (e) is only on `POST /v1/claims`.
-- The IP bucket map is not pruned. Tokens refill, and the map entry for an IP stays for the life of the process.
+- `main` does support `KILL_SWITCH` and `LIVE_SUBMIT`, and `/health` does report `killSwitch` and `liveSubmit`. The suspend action and a missing `CLAIM_API_SECRET` are fallbacks, not replacements for those fields.
+- `/health` does not report a git commit or a build id, on `main` or on #46.
+- `KILL_SWITCH=1` does not set `liveSubmit` to false.
+- `LIVE_SUBMIT=0` does not refuse fixture claims. They stay **200**.
+- Deleting `CLAIM_API_SECRET` on `main` returns **503** `claim_api_secret_required` only when live submit is already allowed. #46 does not read `CLAIM_API_SECRET` at all.
+- Pause and unpause return **200** `noop` when `ADMIN_SECRET` is unset. They do not return 503.
+- `POST /v1/claims/quote` has no per-IP limit.
+- The IP bucket map is not pruned.
 - Admin routes have no rate limit.
-- A replayed `(sender, nonce)` is **409** `nonce_replay`. The response does not return the original transaction hash.
-- There is no broadcast mutex and no viem `nonceManager`. A timeout resends the same signed raw transaction. `already known` and `nonce too low` are retried as transport errors. The relayer does not confirm them with `eth_getTransactionByHash` and does not return `signedHash` for that case.
-- There is no fee bump. There is no Render Key Value nonce store. Used nonces live in `/tmp/claim-relayer/intent-nonces.jsonl` on the current Blueprint, and a restart deletes that file.
+- A replayed `(sender, nonce)` on #46 is **409** `nonce_replay`. The response does not return the original transaction hash.
+- There is no broadcast mutex and no viem `nonceManager`. `already known` and `nonce too low` are retried as transport errors. The relayer does not confirm them with `eth_getTransactionByHash`.
+- There is no fee bump, and no Render Key Value nonce store.
+- `claim-relayer/render.yaml` does not set `autoDeploy`, and merging it does not toggle auto-deploy on the existing service.
+- Disabling preview deployments and Cloudflare Access are dashboard controls. The relayer does not implement them.

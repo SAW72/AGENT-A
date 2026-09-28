@@ -220,7 +220,7 @@ The public funding wallet is not assumed to be a Vault operator. A live `createE
 
 ## Cutover
 
-Spencer runs the signed-intent cutover himself. The steps, commands, and the behaviors that revision does not have yet are in [CUTOVER.md](CUTOVER.md). Do not start it until the relayer being deployed is the EIP-712 claim-intent service.
+Spencer runs the cutover himself. [CUTOVER.md](CUTOVER.md) starts with an interim stop against the relayer that is deployed now. The later steps publish the EIP-712 relayer and the Pages bundle, and they name the behavior that code does not have yet.
 
 ## Render
 
