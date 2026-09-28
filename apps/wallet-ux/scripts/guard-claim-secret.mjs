@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process"
-import { statSync } from "node:fs"
+import { readdirSync, statSync } from "node:fs"
+import { join } from "node:path"
 
 // Retired claim-secret markers. The value is not read from the environment.
 // x-claim-secret is matched in any case. Both markers are also matched in the
@@ -51,6 +52,23 @@ function grepQuiet(value, target, recursive, ignoreCase) {
   })
 }
 
+function nonEmptyJavaScriptCount(directory) {
+  let entries
+  try {
+    entries = readdirSync(directory, { withFileTypes: true })
+  } catch {
+    console.error(`Claim leak scan failed: could not read ${directory}.`)
+    process.exit(1)
+  }
+  let count = 0
+  for (const entry of entries) {
+    const child = join(directory, entry.name)
+    if (entry.isDirectory()) count += nonEmptyJavaScriptCount(child)
+    else if (entry.isFile() && entry.name.endsWith(".js") && statSync(child).size > 0) count += 1
+  }
+  return count
+}
+
 function formsFor(needle) {
   const seen = new Set()
   const forms = []
@@ -72,6 +90,10 @@ for (const target of targets) {
     process.exit(1)
   }
   const recursive = info.isDirectory()
+  if (recursive && nonEmptyJavaScriptCount(target) === 0) {
+    console.error(`Claim leak scan failed: no JavaScript scanned in ${target}.`)
+    process.exit(1)
+  }
   for (const needle of NEEDLES) {
     const raw = grepQuiet(needle.variants[0], target, recursive, needle.caseInsensitive)
     if (raw.status === 0) {

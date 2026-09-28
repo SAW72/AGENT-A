@@ -134,6 +134,31 @@ describe("guard-claim-secret", () => {
     const passed = runNode("scripts/guard-claim-secret.mjs", [join(clean, "clean.txt")])
     expect(passed.status).toBe(0)
     expect(passed.stdout).toContain("Claim leak scan passed")
+
+    const directory = tempDir()
+    mkdirSync(join(directory, "assets"))
+    writeFileSync(join(directory, "assets", "index-abc123.js"), "Submitting through the claim relayer")
+    const dirResult = runNode("scripts/guard-claim-secret.mjs", [directory])
+    expect(dirResult.status).toBe(0)
+    expect(dirResult.stdout).toContain("Claim leak scan passed")
+  })
+
+  it("fails when the directory is empty", () => {
+    const directory = tempDir()
+    const result = runNode("scripts/guard-claim-secret.mjs", [directory])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("no JavaScript scanned")
+  })
+
+  it("fails when the directory contains only empty files", () => {
+    const directory = tempDir()
+    mkdirSync(join(directory, "assets"))
+    writeFileSync(join(directory, "index.html"), "")
+    writeFileSync(join(directory, "assets", "index-empty.js"), "")
+    writeFileSync(join(directory, "assets", "chunk.js"), "")
+    const result = runNode("scripts/guard-claim-secret.mjs", [directory])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("no JavaScript scanned")
   })
 
   it("fails when the bundle contains x-claim-secret in any case or encoded form", () => {
@@ -180,28 +205,42 @@ describe("guard-claim-secret", () => {
 describe("verify-served-bundle", () => {
   const hash = "app-abc123"
 
-  function fixture({ servedHtml, javascript }) {
+  function fixture({ servedHtml, javascript, extra }) {
     const directory = tempDir()
     const built = `<script src="/assets/${hash}.js"></script><link href="/assets/${hash}.css">`
     writeFileSync(join(directory, "built.html"), built)
     const served = servedHtml ?? built
     const files = new Map([
-      ["/", served],
-      [`/assets/${hash}.js`, javascript ?? bundleSource(3)],
-      [`/assets/${hash}.css`, "body{}"],
+      ["/", { body: served, type: "text/html; charset=utf-8" }],
+      [`/assets/${hash}.js`, { body: javascript ?? bundleSource(3), type: "application/javascript; charset=utf-8" }],
+      [`/assets/${hash}.css`, { body: "body{}", type: "text/css; charset=utf-8" }],
     ])
+    if (extra) {
+      for (const [path, value] of extra) files.set(path, value)
+    }
     return { directory, files }
+  }
+
+  function assertCleanExit(result) {
+    expect(result.status).toBe(1)
+    const lines = result.stderr.trim().split("\n").filter((line) => line.length > 0)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/^Verify failed:/)
+    expect(result.stderr).not.toMatch(/\bat (?:node:|async )/)
+    expect(result.stderr).not.toContain("Unhandled")
   }
 
   async function verify(setup) {
     const server = await listen((request, response) => {
-      const body = setup.files.get(request.url ?? "")
-      if (body === undefined) {
+      const entry = setup.files.get(request.url ?? "")
+      if (entry === undefined) {
         response.writeHead(404)
         response.end("missing")
         return
       }
-      response.writeHead(200, { "content-type": "text/html" })
+      const body = typeof entry === "string" ? entry : entry.body
+      const type = typeof entry === "string" ? "text/html; charset=utf-8" : entry.type
+      response.writeHead(200, { "content-type": type })
       response.end(body)
     })
     const address = server.address()
@@ -262,4 +301,50 @@ describe("verify-served-bundle", () => {
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain(`the raw form of ${ENV_NAME} is present`)
   })
+
+  it("fails when index-*.js is JavaScript but a lazy chunk is served as index.html", async () => {
+    const indexName = "index-abc123"
+    const chunkName = "lazy-def456"
+    const directory = tempDir()
+    const built = `<script type="module" src="/assets/${indexName}.js"></script>`
+    writeFileSync(join(directory, "built.html"), built)
+    const files = new Map([
+      ["/", { body: built, type: "text/html; charset=utf-8" }],
+      [
+        `/assets/${indexName}.js`,
+        { body: `${bundleSource(3)}\nimport("./${chunkName}.js")\n`, type: "application/javascript" },
+      ],
+      [
+        `/assets/${chunkName}.js`,
+        { body: "<!doctype html><html><body>index</body></html>", type: "text/html" },
+      ],
+    ])
+    const result = await verify({ directory, files })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`/assets/${chunkName}.js`)
+    expect(result.stderr).toContain("content-type is not JavaScript")
+    expect(result.stderr).not.toMatch(/\bat (?:node:|async )/)
+  })
+
+  it("fails when a JavaScript response body starts with < after whitespace", async () => {
+    const result = await verify(
+      fixture({
+        javascript: "\n  <!doctype html><html></html>",
+      }),
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("starts with '<'")
+  })
+
+  it("prints one error line and exits 1 when the host is unreachable or DNS fails", async () => {
+    const refused = await runNodeAsync("scripts/verify-served-bundle.mjs", [], {
+      DEPLOYMENT_URL: "http://127.0.0.1:9",
+    })
+    assertCleanExit(refused)
+
+    const dns = await runNodeAsync("scripts/verify-served-bundle.mjs", [], {
+      DEPLOYMENT_URL: "http://wallet-ux-guard-does-not-exist.invalid",
+    })
+    assertCleanExit(dns)
+  }, 20000)
 })
