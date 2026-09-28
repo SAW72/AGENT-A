@@ -910,4 +910,58 @@ describe("signed claim intent", () => {
     expect(recovered).toBe(payerAccount.address)
     expect(result).toEqual({ ok: true, txHash })
   })
+
+  it("posts the signed deadline and nonce when the clock moves and nowSeconds is unset", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    const startMs = 1_780_000_000_000
+    vi.setSystemTime(startMs)
+    let signed: ClaimSignArgs["message"] | undefined
+    let posted = ""
+    try {
+      const result = await runRelayerSubmission({
+        url: relayerUrl,
+        preview: previewRelease(escrow, id),
+        ...signerInput(async (args) => {
+          signed = args.message
+          const signature = await payerAccount.signTypedData(args)
+          vi.setSystemTime(startMs + 5_000)
+          return signature
+        }),
+        client: readyClient({ status: "success" }),
+        fetchImpl: async (_url, init) => {
+          posted = String(init?.body)
+          return jsonResponse(200, { ok: true, mode: "live", txHash, escrowAddress: escrow })
+        },
+      })
+      expect(signed).toBeDefined()
+      if (!signed) return
+      const body = JSON.parse(posted) as SignedLiveClaim
+      expect(body.intent.deadline).toBe(signed.deadline.toString())
+      expect(body.intent.nonce).toBe(signed.nonce.toString())
+      expect(body.intent.escrowId).toBe(signed.escrowId)
+      expect(body.intent.sender).toBe(signed.sender)
+      const recovered = await recoverTypedDataAddress({
+        domain: {
+          name: CLAIM_INTENT_DOMAIN_NAME,
+          version: CLAIM_INTENT_DOMAIN_VERSION,
+          chainId: 84532,
+          verifyingContract: escrow,
+        },
+        types: CLAIM_INTENT_TYPES,
+        primaryType: CLAIM_INTENT_PRIMARY_TYPE,
+        message: {
+          action: signed.action,
+          escrowId: signed.escrowId,
+          sender: signed.sender,
+          nonce: BigInt(body.intent.nonce),
+          deadline: BigInt(body.intent.deadline),
+        },
+        signature: body.signature,
+      })
+      expect(recovered).toBe(payerAccount.address)
+      expect(result).toEqual({ ok: true, txHash })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -577,6 +577,38 @@ describe("signed claim intent auth", () => {
     }
   });
 
+  it("rejects a posted deadline or nonce that differs from the signed intent", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({}, { chain });
+    try {
+      const honest = await releaseBody(accounts.payer, { nonce: "901", deadline: deadlineAt(120) });
+      const ok = await request(ctx.port, "POST", "/v1/claims", honest);
+      assert.equal(ok.status, 200);
+      assert.equal(ok.json.txHash, TX);
+      const readsAfterOk = chain.calls.reads.length;
+      const simulationsAfterOk = chain.calls.simulations.length;
+
+      const shiftedDeadline = await releaseBody(accounts.payer, { nonce: "902", deadline: deadlineAt(120) });
+      const bumpedDeadline = String(BigInt(shiftedDeadline.intent.deadline) + 1n);
+      shiftedDeadline.intent.deadline = bumpedDeadline;
+      const deadlineRes = await request(ctx.port, "POST", "/v1/claims", shiftedDeadline);
+      assert.equal(deadlineRes.status, 401);
+      assert.equal(deadlineRes.json.error, "invalid_signature");
+
+      const shiftedNonce = await releaseBody(accounts.payer, { nonce: "903", deadline: deadlineAt(120) });
+      shiftedNonce.intent.nonce = String(BigInt(shiftedNonce.intent.nonce) + 1n);
+      const nonceRes = await request(ctx.port, "POST", "/v1/claims", shiftedNonce);
+      assert.equal(nonceRes.status, 401);
+      assert.equal(nonceRes.json.error, "invalid_signature");
+
+      assert.equal(chain.calls.reads.length, readsAfterOk);
+      assert.equal(chain.calls.simulations.length, simulationsAfterOk);
+      assert.equal(ctx.sent.length, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("uses the booked escrow as the verifying contract", () => {
     assert.equal(BOOKED_ESCROW.toLowerCase(), "0x1069aa6597f08f1e8b8ad39aa40ede1d0c77298d");
   });

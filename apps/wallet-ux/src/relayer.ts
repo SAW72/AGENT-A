@@ -1,6 +1,7 @@
 import { decodeFunctionData, type Address, type Hex } from "viem"
 import {
   CLAIM_DEADLINE_SKEW_SECONDS,
+  CLAIM_INTENT_ACTIONS,
   CLAIM_INTENT_DOMAIN_NAME,
   CLAIM_INTENT_DOMAIN_VERSION,
   CLAIM_INTENT_PRIMARY_TYPE,
@@ -718,27 +719,32 @@ export function claimSignArgs(input: {
   }
 }
 
-export function signedClaimFromPreview(input: {
-  preview: CallPreview
-  sender: Address
-  verifyingContract: Address
-  signature: Hex
-  nowSeconds?: number
-  nonce?: bigint
-}): SignedLiveClaim {
-  const args = claimSignArgs(input)
-  const previewBody = claimBodyFromPreview(input.preview)
+function actionFromSignedIndex(index: number): RelayerAction {
+  const action = CLAIM_INTENT_ACTIONS[index]
+  if (action !== "release" && action !== "refund") {
+    throw new RelayerRequestError(
+      "This step has to be sent from your wallet, not the claim relayer.",
+      null,
+      "action_not_claim",
+    )
+  }
+  return action
+}
+
+/** POST body is the typed-data message the wallet just signed. Deadline and nonce are not recomputed. */
+export function signedClaimFromPreview(input: { signature: Hex; signArgs: ClaimSignArgs }): SignedLiveClaim {
+  const message = input.signArgs.message
   return {
     live: true,
     signature: input.signature,
     intent: {
-      action: previewBody.action,
-      escrowId: args.message.escrowId,
-      sender: args.message.sender,
-      nonce: args.message.nonce.toString(),
-      deadline: args.message.deadline.toString(),
-      chainId: BASE_SEPOLIA_CHAIN_ID,
-      verifyingContract: input.verifyingContract,
+      action: actionFromSignedIndex(message.action),
+      escrowId: message.escrowId,
+      sender: message.sender,
+      nonce: message.nonce.toString(),
+      deadline: message.deadline.toString(),
+      chainId: input.signArgs.domain.chainId,
+      verifyingContract: input.signArgs.domain.verifyingContract,
     },
   }
 }
@@ -787,14 +793,7 @@ export async function runRelayerSubmission(input: {
         const signature = await input.signTypedData(signArgs)
         return postLiveClaim({
           url: input.url,
-          body: signedClaimFromPreview({
-            preview: input.preview,
-            sender: input.sender,
-            verifyingContract: input.verifyingContract,
-            signature,
-            nowSeconds: input.nowSeconds,
-            nonce: input.nonce ?? signArgs.message.nonce,
-          }),
+          body: signedClaimFromPreview({ signature, signArgs }),
           fetchImpl: input.fetchImpl,
           timeoutMs: input.fetchTimeoutMs,
         })
