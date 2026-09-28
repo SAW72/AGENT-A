@@ -70,13 +70,35 @@ export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 
 Dry-run sender is `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` (`SIMULATE_SENDER`), the public burn EOA. No private key. No `--broadcast`. Forge checks that sender's real balance while estimating gas, and this address already holds dust on Base Sepolia. It is not the deployer Spencer will use, and it is not `CORE_TIMELOCK`.
 
+Anvil default key #0 (`0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`) has EIP-7702 delegation code on Base Sepolia forks. Do not use it as the fork deployer. On a local anvil fork of Base Sepolia at block `47396186` (chainid `84532`), `cast code 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --rpc-url "$BASE_SEPOLIA_RPC_URL"` returned `0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b`. Anvil defaults 1 through 9 also returned 23-byte `0xef0100…` delegation code on that same fork, so none of those accounts is an empty deployer. The fork-only deployer with no code is `SIMULATE_SENDER`. The same `cast code` on `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` returned `0x`.
+
 ```bash
 forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
-  --rpc-url https://sepolia.base.org \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --sender 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
 ```
 
 The log line `SIMULATE; no transaction will be sent` is the dry run. The address printed for `BotAttestationEscrow` exists only inside that process. Do not paste it into the address book.
+
+Re-run on 2026-09-28 from main `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`, `forge script` with no `--broadcast`, `--sender` `SIMULATE_SENDER`, and `--rpc-url` set to that anvil fork (block `47396186`). `contracts/BotAttestationEscrow.sol` is the same file at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427` and at `a66ef64`. Nothing was broadcast. Log summary:
+
+```
+SIMULATE; no transaction will be sent
+chainid 84532
+deployer 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
+BotAttestationEscrow 0x4e3AC0f579eCA30B37C6F7C2ccD21bA69742A999
+constructor Denylist 0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+constructor Vault 0x1463D664fA467FBCDA4B05443434494f05e565bc
+constructor DisputePanel 0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+constructor governance 0x10CC9474b45625ADfd05C209f2518023484878D9
+owner 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
+pendingOwner 0x10CC9474b45625ADfd05C209f2518023484878D9
+Do not write this address into deployments/base-sepolia.json.
+Wiring is a separate PR after a human broadcast.
+Agents must not --broadcast.
+```
+
+Forge also printed `Estimated total gas used for script: 2823486`, `Estimated amount required: 0.000031058346 ETH`, and `SIMULATION COMPLETE`. The dry-run artifact has two transactions: `CREATE` of `BotAttestationEscrow` at `0x4e3AC0f579eCA30B37C6F7C2ccD21bA69742A999`, then `transferOwnership(address)` (`0xf2fde38b`) to `0x10CC9474b45625ADfd05C209f2518023484878D9`. It does not call `acceptOwnership`.
 
 Chain guard: chainid `1` reverts `DeployEscrow: mainnet forbidden`. Any chain other than `84532` reverts. There is no Ethereum Sepolia switch unless someone edits `ALLOWED_CHAIN_ID` on purpose. Do not.
 
@@ -119,7 +141,7 @@ export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 
 forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
-  --rpc-url https://sepolia.base.org \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --account agentbv-deployer \
   --sender <DEPLOYER_ADDRESS> \
   --broadcast
@@ -134,7 +156,7 @@ Recorded `NEW_ESCROW` is `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Recorded 
 ```bash
 export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
 
-cast send "$NEW_ESCROW" "acceptOwnership()" --rpc-url https://sepolia.base.org --account core-timelock
+cast send "$NEW_ESCROW" "acceptOwnership()" --rpc-url "$BASE_SEPOLIA_RPC_URL" --account core-timelock
 ```
 
 Before this call, `owner()` is the deployer and `pendingOwner()` is `CORE_TIMELOCK`. After it, `owner()` is `0x10CC9474b45625ADfd05C209f2518023484878D9` and `pendingOwner()` is the zero address.
@@ -382,13 +404,31 @@ export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 
 forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
-  --rpc-url https://sepolia.base.org \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --account agentbv-deployer \
   --sender <DEPLOYER_ADDRESS> \
   --broadcast
 ```
 
 Record `<NEW_ESCROW_ADDRESS>` and `<DEPLOY_BLOCK>` (the block of the deploy transaction).
+
+#### acceptOwnership (CORE_TIMELOCK, not the deployer)
+
+The deploy script does not call `acceptOwnership`. `deploy` in `script/DeployBotAttestationEscrow.s.sol` (lines 117–126) deploys `BotAttestationEscrow` and then calls `transferOwnership(timelock)` at line 125 only. The header comment at lines 10–12 says `CORE_TIMELOCK` is an EOA with EIP-7702 delegation, not a timelock contract, and that account must call `acceptOwnership`. OpenZeppelin `Ownable2Step.acceptOwnership` (`lib/openzeppelin-contracts/contracts/access/Ownable2Step.sol`, lines 60–66) succeeds only when `pendingOwner() == msg.sender`. There is no `schedule` or `execute` on `0x10CC9474b45625ADfd05C209f2518023484878D9`. Do not send this call through the appendix `TimelockController` blobs.
+
+Spencer sends one plain transaction from `CORE_TIMELOCK`. Agents do not send it. No `--broadcast` from an agent session.
+
+```bash
+export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
+
+cast send "$NEW_ESCROW" "acceptOwnership()" \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --account core-timelock
+
+cast call "$NEW_ESCROW" "owner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
+
+Expected `owner()` is `0x10CC9474b45625ADfd05C209f2518023484878D9`.
 
 #### Post-deploy checks
 
@@ -467,7 +507,7 @@ After each call, `owner()` is the zero address. After the renounce, `release`, `
 
 Update the address book and the consumers that pin it. Do that in a follow-up commit after the deploy transaction exists. This section does not change those files. Agents never broadcast.
 
-1. Record `<NEW_ESCROW_ADDRESS>` in the address book (`deployments/base-sepolia.json`), including `deployBlock` and `startBlock` set to `<DEPLOY_BLOCK>`. Then copy the book into wallet-ux: from `apps/wallet-ux`, `npm run sync-book` (`scripts/sync-book.mjs`) writes `apps/wallet-ux/src/base-sepolia.json`. `addresses.ts` reads `ADDRESSES.botAttestationEscrow` from that file. Wallet-ux has no escrow-address env. `apps/wallet-ux/.env.example` lists only `VITE_BASE_SEPOLIA_RPC_URL`, `VITE_CLAIM_RELAYER_URL`, and `VITE_CLAIM_API_SECRET`. `FALLBACK_PIN.botAttestationEscrow` in `apps/wallet-ux/src/book.ts` is a code pin; updating it is a follow-up code change.
+1. Record `<NEW_ESCROW_ADDRESS>` in the address book (`deployments/base-sepolia.json`), including `deployBlock` and `startBlock` set to `<DEPLOY_BLOCK>`. Then copy the book into wallet-ux: from `apps/wallet-ux`, `npm run sync-book` (`scripts/sync-book.mjs`) writes `apps/wallet-ux/src/base-sepolia.json`. `addresses.ts` reads `ADDRESSES.botAttestationEscrow` from that file. Wallet-ux has no escrow-address env. On main `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`, `apps/wallet-ux/.env.example` lists `VITE_BASE_SEPOLIA_RPC_URL` (line 7) and `VITE_CLAIM_RELAYER_URL` (line 14). Line 12 says this app does not send a shared secret. `VITE_CLAIM_API_SECRET` is not in that file. #46 removed it. `FALLBACK_PIN.botAttestationEscrow` in `apps/wallet-ux/src/book.ts` is a code pin; updating it is a follow-up code change.
 2. Set relayer config on the Render service `bot-verifier-claim-relayer`. Set `ESCROW_ADDRESS` to `<NEW_ESCROW_ADDRESS>`. That key is in `claim-relayer/render.yaml` with `sync: false` (dashboard value; do not commit it). Set the start block to `<DEPLOY_BLOCK>`, the deploy block, as `ESCROW_START_BLOCK`. `claim-relayer/config.mjs` reads `ESCROW_START_BLOCK` when the address is not the hardcoded `BOOKED_SEPOLIA_ESCROW`. `ESCROW_START_BLOCK` is not a key in `render.yaml`. A non-integer or negative value refuses boot (`invalid_escrow_start_block`). `RELAYER_PRIVATE_KEY` stays dashboard-only. Setting `ESCROW_ADDRESS` does not retarget a broadcast: `claim-relayer/broadcast.mjs` uses `BOOKED_SEPOLIA_ESCROW` as `to` and refuses any other address (`escrow_not_booked_sepolia`). A follow-up code change has to set `BOOKED_SEPOLIA_ESCROW` and `BOOKED_SEPOLIA_ESCROW_START_BLOCK` to `<NEW_ESCROW_ADDRESS>` and `<DEPLOY_BLOCK>`. This document does not change that code.
 3. ABI sync is the procedure from PR #48. On a tree that contains `scripts/gen-escrow-abi.sh` (that PR's branch `cursor/escrow-abi-from-forge-94de`, or `main` after #48 merges), after `forge build` on `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427` or later: `forge build && ./scripts/gen-escrow-abi.sh`. From `apps/wallet-ux`, the same script is `npm run gen-escrow-abi`. It reads `out/BotAttestationEscrow.sol/BotAttestationEscrow.json` (the `.abi` array) and writes `apps/wallet-ux/src/abi/BotAttestationEscrow.json`. The generated file includes `withdraw`, `withdrawTo`, and `EscrowNotFound(bytes32)`. `npm run sync-abis` still refreshes the other ABIs; on PR #48 it regenerates the escrow ABI through this script. This document does not add the script.
 
