@@ -210,7 +210,97 @@ cast call "$NEW_ESCROW" \
   --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-Expected revert data is `Error(string)` with `"not a party"`.
+Expected revert data is `Error(string)` with `"not a party"`. That string is the behavior of `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. It is not the check for a deploy from `da47d9a` or later. Use [Finding B redeploy](#finding-b-redeploy-escrownotfound) for that.
+
+## Finding B redeploy (EscrowNotFound)
+
+`0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` keeps Finding B until this redeploy. On that contract, `refund` of an id that was never created succeeds: unset storage reads as `Open` with expiry 0, so the call credits 0 to `address(0)`. The contract is not upgradeable. Nothing in this section patches it. After the new escrow is the booked address, `0x1069…` is retired. Retirement does not change its bytecode. Finding B stays on that address. It is no longer the live escrow.
+
+This runbook does not broadcast. Spencer broadcasts it himself. Agents do not pass `--broadcast` or `--resume`, and they do not handle a signing key.
+
+### Deploy from main
+
+Checkout `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427` or any later `main` commit that still contains that fix. Chain id is Base Sepolia `84532`. Constructor arguments stay the live Denylist, Vault, DisputePanel, and `CORE_TIMELOCK`. The script is `script/DeployBotAttestationEscrow.s.sol`. It deploys one escrow and calls `transferOwnership(CORE_TIMELOCK)`. `acceptOwnership` is a second transaction from `CORE_TIMELOCK`, same as the [acceptOwnership](#acceptownership-core_timelock-not-the-deployer) step above. `<DEPLOYER_ADDRESS>` is the address from `cast wallet address --account agentbv-deployer`. It must not be `CORE_TIMELOCK`.
+
+```bash
+git checkout da47d9a12d64cd4bea4b6fce0b2166b4c55a0427
+
+export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
+export DENYLIST=0xeE76876bECcFc1B58fC06fF4E654a517d784B224
+export VAULT=0x1463D664fA467FBCDA4B05443434494f05e565bc
+export DISPUTE_PANEL=0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
+
+forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --account agentbv-deployer \
+  --sender <DEPLOYER_ADDRESS> \
+  --broadcast
+```
+
+The `--broadcast` flag is for Spencer's machine only. A simulate run omits it. Record the created address as `<NEW_ESCROW_ADDRESS>` and the deploy block as `<DEPLOY_BLOCK>`. Do not write a simulation address into the book.
+
+### Post-deploy checks
+
+Read-only. No key. `cast call` does not broadcast.
+
+`governance()` is `CORE_TIMELOCK` from the constructor. `owner()` is `<DEPLOYER_ADDRESS>` until `acceptOwnership`. After that call, `owner()` is `CORE_TIMELOCK` and `pendingOwner()` is the zero address.
+
+```bash
+export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
+export NEW_ESCROW="<NEW_ESCROW_ADDRESS>"
+
+cast call "$NEW_ESCROW" "owner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "governance()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_ESCROW" "pendingOwner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
+
+Expected `governance()` is `0x10CC9474b45625ADfd05C209f2518023484878D9`. Expected `owner()` is that same address only after `acceptOwnership`.
+
+An id that was never created must revert `EscrowNotFound(bytes32)`. The selector is `0x338d8d16`. The placeholder id below is not an escrow. Run these against `<NEW_ESCROW_ADDRESS>`, not against `0x1069…`. On `0x1069…` the `refund` call succeeds. That success is Finding B, not a pass.
+
+```bash
+cast call "$NEW_ESCROW" \
+  "refund(bytes32)" \
+  0x0000000000000000000000000000000000000000000000000000000000000001 \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL"
+
+cast call "$NEW_ESCROW" \
+  "release(bytes32)" \
+  0x0000000000000000000000000000000000000000000000000000000000000001 \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
+
+Both revert. The data starts with `0x338d8d16` and then that same 32-byte id.
+
+### Record the new address
+
+Do this after the deploy transaction exists. This file does not edit the book.
+
+In [`deployments/base-sepolia.json`](../deployments/base-sepolia.json), set `BotAttestationEscrow.address` to `<NEW_ESCROW_ADDRESS>` and fill the same keys the live object already has: `deployTx`, `deployBlock`, `startBlock` (the deploy block, `<DEPLOY_BLOCK>`), `commit` (`da47d9a` or the later `main` commit that was deployed), `deployer`, `transferOwnershipTx`, `constructorArgs`, `owner`, `pendingOwner`, `acceptOwnership`, `acceptOwnershipTx`, `acceptOwnershipBlock`, `sourcify`, `blockscout`, `basescan`, `basescanUrl`, `notes`. `constructorArgs` stay denylist `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, vault `0x1463D664fA467FBCDA4B05443434494f05e565bc`, panel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, governance `0x10CC9474b45625ADfd05C209f2518023484878D9`. Top-level `notes` names the live escrow. `coreTimelock` stays `0x10CC9474b45625ADfd05C209f2518023484878D9`.
+
+`0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` is retired once that new object is the live slot. `retired.BotAttestationEscrow` already holds `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. How a second retired escrow is stored is the cutover note in [After the new escrow is live](#after-the-new-escrow-is-live). Copy the book into the wallet with `npm run sync-book` from `apps/wallet-ux`. That copies `deployments/base-sepolia.json` to `apps/wallet-ux/src/base-sepolia.json`.
+
+### Point the relayer and wallet at it, then redeploy both
+
+Claim relayer, Render service `bot-verifier-claim-relayer` (`claim-relayer/render.yaml`):
+
+- `ESCROW_ADDRESS` is the dashboard env var (`sync: false`). Unset, the process loads `BotAttestationEscrow.address` from `deployments/base-sepolia.json` (`ADDRESS_BOOK_PATH` overrides that file; the default is `claim-relayer/addressBook.mjs` `DEFAULT_ADDRESS_BOOK`). Set `ESCROW_ADDRESS` to `<NEW_ESCROW_ADDRESS>`, or leave it unset after the book and the constants below match the new contract. Do not set it to `0x1069…`.
+- `ESCROW_START_BLOCK` is read by `claim-relayer/config.mjs` when the configured address is not `BOOKED_SEPOLIA_ESCROW`. It is not a key in `render.yaml`. When `ESCROW_ADDRESS` is the new contract and the constant is still `0x1069…`, set `ESCROW_START_BLOCK` to `<DEPLOY_BLOCK>`. A non-integer value refuses to boot (`invalid_escrow_start_block`).
+- `claim-relayer/config.mjs` constants `BOOKED_SEPOLIA_ESCROW` and `BOOKED_SEPOLIA_ESCROW_START_BLOCK` (today `0x1069…` and `47345163`) are what `claim-relayer/broadcast.mjs` uses as `to`, and what live submit compares against (`escrow_not_booked_sepolia` if they differ). Change both to `<NEW_ESCROW_ADDRESS>` and `<DEPLOY_BLOCK>`. `ESCROW_ADDRESS` alone does not retarget a broadcast.
+- Redeploy the Render service `bot-verifier-claim-relayer` after those values are set so the process restarts. No key goes in git. `RELAYER_PRIVATE_KEY` stays dashboard-only.
+
+Wallet UX does not take the escrow address from an env var. `apps/wallet-ux/.env.example` lists `VITE_BASE_SEPOLIA_RPC_URL`, `VITE_CLAIM_RELAYER_URL`, and `VITE_CLAIM_API_SECRET` only. The address is `ADDRESSES.botAttestationEscrow` from `apps/wallet-ux/src/base-sepolia.json` (`apps/wallet-ux/src/addresses.ts`). `apps/wallet-ux/src/book.ts` `FALLBACK_PIN.botAttestationEscrow` is the pin used when that file is missing or not chain id `84532`. Update that pin to `<NEW_ESCROW_ADDRESS>` in the same change as the book.
+
+The ABI is `apps/wallet-ux/src/abi/BotAttestationEscrow.json`. It has no address. Regenerate it from this checkout so `EscrowNotFound` is in the file the wallet decodes:
+
+```bash
+forge build
+cd apps/wallet-ux
+npm run sync-abis
+```
+
+`npm run sync-abis` runs `scripts/sync-abis.mjs`. Commit the regenerated `BotAttestationEscrow.json` with the book copy. Cloudflare Pages project `agent-a-wallet-ux` builds `main` with root `apps/wallet-ux` and command `npm ci && npm run build` ([`CLOUDFLARE_PAGES.md`](../apps/wallet-ux/CLOUDFLARE_PAGES.md)). That rebuild is the wallet redeploy. Do not run `wrangler pages deploy`.
 
 ## Retired escrow broadcast (history)
 
