@@ -57,6 +57,22 @@ jobs:
         working-directory: claim-relayer
         run: npm test
 
+  # Public Base Sepolia fork of LiveDenylistVaultTest. continue-on-error so an RPC
+  # failure cannot fail the required CI checks. No keys, no broadcast.
+  fork-test-base-sepolia:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install forge-std
+        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts --no-commit
+      - name: Live Denylist and Vault fork test (public Base Sepolia)
+        run: forge test --fork-url https://sepolia.base.org --match-contract LiveDenylistVaultTest -vv
+
   wallet-ux:
     runs-on: ubuntu-latest
     defaults:
