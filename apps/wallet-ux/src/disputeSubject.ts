@@ -1,15 +1,22 @@
 import { decodeFunctionResult, encodeFunctionData, type Abi, type Address, type Hex } from "viem"
 import { escrowAbi } from "./abi"
+import { ADDRESSES } from "./addresses"
 import { FORM_ERRORS } from "./submit"
 
 /**
  * Subject for openDispute.
  * A current escrow returns panelSubject(escrowId, createdAt) and that bytes32 is used as-is.
- * The booked 444c427 escrow has no such view: eth_call reverts with empty data while getCode
- * is non-empty, and that contract requires the subject to be the claim identifier.
- * Any other failure blocks the open. A wrong subject would burn the random case identifier.
+ * The booked escrow in the address book is source 444c427. It has no such view: eth_call
+ * reverts with empty data while getCode is non-empty, and that contract requires the subject
+ * to be the claim identifier. That fallback is only for ADDRESSES.botAttestationEscrow.
+ * viem wraps every eth_call failure in CallExecutionError. A real empty revert is that
+ * wrapper around ExecutionRevertedError, whose cause is RpcRequestError code 3 with data
+ * "0x" or no data. HTTP failures, timeouts, websocket failures, and any other RPC code
+ * (including -32005 and -32000) block with the network message. No code blocks with the
+ * no-code message. An empty revert on any other address is rejected and blocks.
+ * A wrong subject would burn the random case identifier.
  * At the next redeploy, the wallet book, the relayer book, the deploy-guard pin, and the
- * superseded entry for 0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d change together.
+ * superseded entry for the booked escrow change together.
  */
 export type DisputeSubjectClient = {
   getCode: (args: { address: Address }) => Promise<Hex | undefined | null>
@@ -58,40 +65,66 @@ function hexField(value: unknown): string | null | undefined {
   return undefined
 }
 
+const TRANSPORT_NAMES = new Set(["HttpRequestError", "TimeoutError", "WebSocketRequestError"])
+const EMPTY_REVERT_NAMES = new Set([
+  "ExecutionRevertedError",
+  "RawContractError",
+  "ContractFunctionRevertedError",
+])
+
+/** True when a revert class carries revert bytes other than empty or absent data. */
+function revertBytesPresent(record: Record<string, unknown>): boolean {
+  for (const key of ["data", "raw"] as const) {
+    if (!(key in record)) continue
+    const found = hexField(record[key])
+    if (typeof found === "string") return true
+  }
+  return false
+}
+
+/**
+ * Walk `.cause` the same way viem's BaseError.walk does.
+ * CallExecutionError alone is not a revert: viem wraps every eth_call failure in it.
+ * RpcRequestError code 3 is the revert-data carrier under ExecutionRevertedError.
+ * Any other RPC code, plus HTTP, timeout, and websocket errors, is a network failure.
+ * An unrecognized shape does not count as a revert, so the default is to block.
+ */
 function callFailure(error: unknown): CallFailure {
   const seen = new Set<unknown>()
-  const stack: unknown[] = [error]
-  let sawRevert = false
-  let sawHex = false
-  let hex: string | null = null
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current || typeof current !== "object" || seen.has(current)) continue
+  let sawTransport = false
+  let sawEmptyRevert = false
+  let sawRevertBytes = false
+  let current: unknown = error
+  while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current)
     const record = current as Record<string, unknown>
     const name = typeof record.name === "string" ? record.name : ""
-    const message = [record.shortMessage, record.message, record.details]
-      .filter((part): part is string => typeof part === "string")
-      .join(" ")
-    if (name === "ContractFunctionZeroDataError" || /returned no data/i.test(message)) return "reverted"
-    if (
-      name === "RawContractError" ||
-      name === "ExecutionRevertedError" ||
-      name === "CallExecutionError" ||
-      /execution reverted/i.test(message)
-    ) {
-      sawRevert = true
+    if (TRANSPORT_NAMES.has(name)) sawTransport = true
+    if (name === "RpcRequestError") {
+      if (record.code === 3) {
+        if (revertBytesPresent(record)) sawRevertBytes = true
+      } else {
+        sawTransport = true
+      }
+    } else if (EMPTY_REVERT_NAMES.has(name)) {
+      if (revertBytesPresent(record)) sawRevertBytes = true
+      else sawEmptyRevert = true
+    } else if (name === "ContractFunctionZeroDataError") {
+      sawRevertBytes = true
     }
-    const found = hexField(record.data) ?? hexField(record.raw)
-    if (found !== undefined) {
-      sawHex = true
-      hex = found
-    }
-    if (record.cause && typeof record.cause === "object") stack.push(record.cause)
+    const cause = record.cause
+    current = cause && typeof cause === "object" ? cause : undefined
   }
-  if (!sawRevert) return "transport"
-  if (!sawHex || hex === null) return "empty-revert"
-  return "reverted"
+  if (sawTransport) return "transport"
+  if (sawRevertBytes) return "reverted"
+  if (sawEmptyRevert) return "empty-revert"
+  return "transport"
+}
+
+function isBookedEscrow(escrow: Address): boolean {
+  const booked = ADDRESSES.botAttestationEscrow
+  if (!booked) return false
+  return escrow.toLowerCase() === booked.toLowerCase()
 }
 
 function tupleField(value: unknown, index: number, name: string): unknown {
@@ -132,7 +165,6 @@ export async function readDisputeSubject(
   } catch {
     return blocked(FORM_ERRORS.subjectNetwork)
   }
-  if (code == null) return blocked(FORM_ERRORS.subjectNetwork)
   if (!bytecodePresent(code)) return blocked(FORM_ERRORS.subjectNoCode)
 
   let createdAt: bigint | null
@@ -157,22 +189,25 @@ export async function readDisputeSubject(
   })
   try {
     const result = await client.call({ to: escrow, data })
-    const decoded = bytes32Result(result?.data)
-    if (!decoded) {
-      try {
-        const value = decodeFunctionResult({ abi: escrowAbi, functionName: "panelSubject", data: result?.data ?? "0x" })
-        const fromAbi = bytes32Result(value)
-        if (!fromAbi) return blocked(FORM_ERRORS.subjectRejected)
-        return { ok: true, escrowId, subject: fromAbi, createdAt, source: "view" }
-      } catch {
-        return blocked(FORM_ERRORS.subjectRejected)
-      }
+    const returned = result?.data
+    if (typeof returned !== "string" || !/^0x[0-9a-fA-F]{64}$/i.test(returned)) {
+      return blocked(FORM_ERRORS.subjectRejected)
     }
-    return { ok: true, escrowId, subject: decoded, createdAt, source: "view" }
+    try {
+      const value = decodeFunctionResult({ abi: escrowAbi, functionName: "panelSubject", data: returned as Hex })
+      const fromAbi = bytes32Result(value)
+      if (!fromAbi) return blocked(FORM_ERRORS.subjectRejected)
+      return { ok: true, escrowId, subject: fromAbi, createdAt, source: "view" }
+    } catch {
+      return blocked(FORM_ERRORS.subjectRejected)
+    }
   } catch (error) {
     const failure = callFailure(error)
     if (failure === "empty-revert") {
-      return { ok: true, escrowId, subject: escrowId, createdAt, source: "escrow-id" }
+      if (isBookedEscrow(escrow)) {
+        return { ok: true, escrowId, subject: escrowId, createdAt, source: "escrow-id" }
+      }
+      return blocked(FORM_ERRORS.subjectNotBooked)
     }
     if (failure === "transport") return blocked(FORM_ERRORS.subjectNetwork)
     return blocked(FORM_ERRORS.subjectRejected)

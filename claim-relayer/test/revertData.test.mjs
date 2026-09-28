@@ -37,6 +37,22 @@ describe("revert data", () => {
     });
   });
 
+  it("maps ReleaseNotAuthorized selector 0xfe28f476 to the payer or payee sentence", () => {
+    const meaning = "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee.";
+    assert.equal(REVERT_COPY.ReleaseNotAuthorized.selector, "0xfe28f476");
+    assert.equal(REVERT_COPY.ReleaseNotAuthorized.meaning, meaning);
+    assert.deepEqual(contractRevertCopy("0xfe28f476"), {
+      name: "ReleaseNotAuthorized",
+      selector: "0xfe28f476",
+      meaning,
+    });
+    assert.deepEqual(contractRevertCopy("0xFE28F476"), {
+      name: "ReleaseNotAuthorized",
+      selector: "0xfe28f476",
+      meaning,
+    });
+  });
+
   it("keeps a custom-error payload as lowercase hex", () => {
     const upper = "0x" + CUSTOM.slice(2).toUpperCase();
     assert.equal(sanitizeRevertData(upper), CUSTOM);

@@ -571,13 +571,21 @@ describe("signed claim intent auth", () => {
 
   it("refuses release aliases, including numeric 0, before signature recovery", async () => {
     const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
-    const ctx = await boot({}, { chain });
+    const intentNonces = createMemoryIntentNonceStore({ now: () => NOW_MS });
+    const ctx = await boot({}, { chain, intentNonces });
     try {
+      let nonce = 80n;
       for (const action of [0, "0", "00", " 0", "Release", " RELEASE "]) {
-        const res = await request(ctx.port, "POST", "/v1/claims", { live: true, intent: { action } });
+        const bodyNonce = nonce;
+        nonce += 1n;
+        const res = await request(ctx.port, "POST", "/v1/claims", {
+          live: true,
+          intent: { action, sender: accounts.payer.address, nonce: bodyNonce.toString() },
+        });
         assert.equal(res.status, 400, JSON.stringify(action));
         assert.equal(res.json.error, "release_not_relayable", JSON.stringify(action));
         assert.equal(res.json.txHash, null);
+        assert.deepEqual(await intentNonces.peek(nonceKey(accounts.payer.address, bodyNonce)), { kind: "absent" });
       }
       for (const action of [[], {}, ["release"], { name: "release" }]) {
         const res = await request(ctx.port, "POST", "/v1/claims", { live: true, intent: { action } });

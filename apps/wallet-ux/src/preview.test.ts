@@ -92,11 +92,13 @@ describe("calldata preview", () => {
       readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../claim-relayer/revertCopy.json"), "utf8"),
     ) as {
       DisputeVotesCast: { selector: string; meaning: string }
-      ReleaseNotAuthorized: { meaning: string }
+      ReleaseNotAuthorized: { selector: string; meaning: string }
       DisputePending: { selector: string; meaning: string }
     }
     expect(revertCopy.DisputeVotesCast.selector).toBe("0x8aab0a8f")
     expect(revertCopy.DisputeVotesCast.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
+    expect(revertCopy.ReleaseNotAuthorized.selector).toBe("0xfe28f476")
+    expect(toFunctionSelector("ReleaseNotAuthorized()")).toBe("0xfe28f476")
     expect(revertCopy.ReleaseNotAuthorized.meaning).toBe(RELEASE_NOT_AUTHORIZED_TEXT)
     expect(revertCopy.DisputePending.selector).toBe("0xfd29e9e5")
     expect(revertCopy.DisputePending.meaning).toBe(DISPUTE_PENDING_TEXT)
