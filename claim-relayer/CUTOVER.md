@@ -10,7 +10,7 @@ The Render service is `bot-verifier-claim-relayer`. Copy the hostname from the d
 
 Do this before the cutover, against the process that is already running.
 
-`main` reads two env vars that stop a live submit. Both are read only when the process starts. In the Render dashboard, set the var, then choose Save, rebuild, and deploy. `GET /health` and `GET /v1/health` stay up and report the result. A value of `1`, `true`, `yes`, or `on` is on. Anything else, including `0` or empty, is off.
+`main` reads two env vars that stop a live submit. Both are read only when the process starts. In the Render dashboard, set the var, then choose Save and deploy. `GET /health` and `GET /v1/health` stay up and report the result. A value of `1`, `true`, `yes`, or `on` is on. Anything else, including `0` or empty, is off.
 
 Preferred: set `KILL_SWITCH` to `1`.
 
@@ -42,7 +42,7 @@ Do this before step 2 builds the Pages bundle. Vite inlines `VITE_*` from the sh
 
 The new relayer (`05fe6fa`) does not read `CLAIM_API_SECRET`. Delete the old value anyway so it is not left on the service. Do not print the value, and do not send it in a request.
 
-Render dashboard → `bot-verifier-claim-relayer` → Environment → delete `CLAIM_API_SECRET` → Save, rebuild, and deploy. Keep `KILL_SWITCH=1`.
+Render dashboard → `bot-verifier-claim-relayer` → Environment → delete `CLAIM_API_SECRET` → Save and deploy. Keep `KILL_SWITCH=1`.
 
 GitHub, repo `SAW72/AGENT-B.V.`, repo level and the `production` environment, secrets and variables. List first. Skip a delete when the name is not there.
 
@@ -103,11 +103,19 @@ Run this on `dist/` before upload, and again on the JavaScript the production UR
 
 ```bash
 cd apps/wallet-ux
-grep -R -E -i -n 'x-claim-secret|VITE_CLAIM_API_SECRET' dist && echo 'NAME STILL PRESENT' || echo 'names absent'
-grep -R -E -n -i 'x-claim-secret["'\'']?[[:space:]]*[:=][[:space:]]*["'\''][A-Za-z0-9+/=_-]{16,}' dist && echo 'SECRET SHAPE STILL PRESENT' || echo 'secret shape absent'
+grep -REic -e 'x-claim-secret|VITE_CLAIM_API_SECRET' dist
+grep -REoc -e 'VITE_[A-Z_]*(SECRET|KEY|TOKEN)["'\'']?\s*:\s*["'\''`][^"'\''`]{16,}' dist
 ```
 
-`names absent` and `secret shape absent` are the results you want. The second command is a long hex or base64-shaped literal next to the claim header. A dummy such as `x-claim-secret: 00112233445566778899aabbccddeeff` is enough to prove the pattern matches. Do not substitute the retired secret.
+Both commands print a count per file and nothing else. Do not drop `-c`. Do not add `-o` or `-n`. A count above 0 is a hit. `0` is clean.
+
+The second pattern is exactly:
+
+```
+VITE_[A-Z_]*(SECRET|KEY|TOKEN)["']?\s*:\s*["'`][^"'`]{16,}
+```
+
+It covers a backtick literal as well as single quotes, double quotes, and a quoted key. It was validated with `grep -Eoc` by match counts only: a bad fixture of four lines counted 4, and a clean sample counted 0. The check must never print the match.
 
 Fetch the served page the same way. `index-CkV_YTRw.js` must not appear.
 
@@ -171,14 +179,19 @@ Delete a matched deployment from the row, or:
 npx wrangler pages deployment delete <DEPLOYMENT_ID> --project-name agent-a-wallet-ux
 ```
 
-Cloudflare will not delete the latest deployment on a branch. Publish the new bundle on that branch first, then delete the older one. Do not delete the new production deployment.
+A normal delete refuses the latest deployment on a branch. Publish the new bundle on that branch first, then delete the older one. Do not delete the new production deployment.
 
-The Deploy wallet-ux workflow (PR #41) uploads `--branch=preview-<run_id>` and then tries to delete that deployment. `preview-<run_id>` has only that one deployment, so it is the latest on its branch and Cloudflare refuses the delete. The workflow marks that step `continue-on-error`. Pages does not expire those previews. Each dispatch can leave one behind, and they pile up.
+Where supported, force-delete a preview that is still the latest on its branch. The API is `DELETE /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}?force=true`. Current Wrangler documents the same switch as `--force` (alias `-f`): delete even if the deployment has an active alias (`https://developers.cloudflare.com/workers/wrangler/commands/pages/`).
 
-If a preview cannot be deleted, use one of these dashboard fallbacks. Neither is a relayer code path.
+```bash
+npx wrangler pages deployment delete <DEPLOYMENT_ID> --project-name agent-a-wallet-ux --force
+```
 
-- Disable preview deployments for `agent-a-wallet-ux` (Workers & Pages → the project → Settings), so later uploads do not add public previews.
-- Put Cloudflare Access on preview URLs (Zero Trust → Access, or the Pages project's Access policy) so a preview requires login. Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable.
+The Pages preview docs still say the latest deployment on a branch cannot be deleted. If the force delete is refused, do not keep retrying it.
+
+The Deploy wallet-ux workflow (PR #41) uploads `--branch=preview-<run_id>` and then tries to delete that deployment with `--force`. `preview-<run_id>` has only that one deployment, so it is the latest on its branch. The workflow marks that step `continue-on-error`. Pages does not expire those previews. Each dispatch can leave one behind, and they pile up.
+
+If a preview still cannot be deleted, Cloudflare Access on preview URLs remains the fallback (Zero Trust → Access, or the Pages project's Access policy). Preview responses already send `X-Robots-Tag: noindex`. Access is what stops them being world-readable. Disabling preview deployments (Workers & Pages → `agent-a-wallet-ux` → Settings) stops later uploads from adding public previews. Neither Access nor that setting is a relayer code path.
 
 ## 4. Rotate ADMIN_SECRET if it ever shared a value with CLAIM_API_SECRET
 
@@ -254,7 +267,19 @@ The claim response is **503** `kill_switch`. The body is an empty JSON object. I
 
 To undo it, set `KILL_SWITCH` to `0`, then save, rebuild, and deploy. Confirm `"killSwitch": false`.
 
-`POST /v1/admin/unpause` clears the switch in the current process only, and only when `ADMIN_SECRET` is set. Do not call it with the real secret from this runbook. If `KILL_SWITCH` is still `1`, the next start turns the switch back on. The durable off position is `KILL_SWITCH=0` plus a new process.
+`POST /v1/admin/unpause` clears the switch in the current process only, and only when `ADMIN_SECRET` is set. Do not call it with the real secret from this runbook. If `KILL_SWITCH` is still `1`, the next start turns the switch back on. The durable off position is step 7.
+
+## 7. Resume
+
+Do this only after the Pages publish and every post-cutover check above has passed: the served bundle counts are 0, old deployments that still serve `index-CkV_YTRw.js` are gone or covered by Access, and the #46 `/health` commit in the Render deploy view is the one you published.
+
+Render dashboard → `bot-verifier-claim-relayer` → Environment → set `KILL_SWITCH` to `0` → Save and deploy.
+
+```bash
+curl -fsS "$BASE/health"
+```
+
+Confirm `"killSwitch": false`. Leave the switch at `1` until then.
 
 ## What the code does not do
 
