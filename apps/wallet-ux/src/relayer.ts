@@ -1,10 +1,11 @@
 import { decodeFunctionData, type Address, type Hex } from "viem"
 import {
   CLAIM_DEADLINE_SKEW_SECONDS,
-  CLAIM_INTENT_ACTIONS,
+  CLAIM_INTENT_ACTION_VALUES,
   CLAIM_INTENT_DOMAIN_NAME,
   CLAIM_INTENT_DOMAIN_VERSION,
   CLAIM_INTENT_PRIMARY_TYPE,
+  CLAIM_INTENT_REFUSED_ACTIONS,
   CLAIM_INTENT_TYPES,
   claimActionIndex,
 } from "./claimIntent"
@@ -163,6 +164,8 @@ const RELAYER_PLAIN: Record<string, string> = {
   wrong_chain: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   action_not_claim: "This step has to be sent from your wallet, not the claim relayer.",
   release_not_relayable: "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
+  ruling_pending:
+    "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled. Nothing was sent.",
   invalid_relayer_url: "The claim relayer address is not valid. Nothing was sent.",
   invalid_bytes32: "A required identifier is missing or not the right length. Nothing was sent.",
   invalid_claim_id: "The claim identifier was not accepted. Nothing was sent.",
@@ -728,22 +731,19 @@ export function claimSignArgs(input: {
 }
 
 function actionFromSignedIndex(index: number): RelayerAction {
-  const action = CLAIM_INTENT_ACTIONS[index]
-  if (action === "release") {
+  if (index === CLAIM_INTENT_REFUSED_ACTIONS.release) {
     throw new RelayerRequestError(
       "Only the payer can release an open escrow. Send it from that wallet. Nothing was sent.",
       null,
       "release_not_relayable",
     )
   }
-  if (action !== "refund") {
-    throw new RelayerRequestError(
-      "This step has to be sent from your wallet, not the claim relayer.",
-      null,
-      "action_not_claim",
-    )
-  }
-  return action
+  if (index === CLAIM_INTENT_ACTION_VALUES.refund) return "refund"
+  throw new RelayerRequestError(
+    "This step has to be sent from your wallet, not the claim relayer.",
+    null,
+    "action_not_claim",
+  )
 }
 
 /** POST body is the typed-data message the wallet just signed. Deadline and nonce are not recomputed. */

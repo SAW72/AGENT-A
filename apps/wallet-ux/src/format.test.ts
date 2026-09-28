@@ -33,9 +33,12 @@ describe("payee open expiry notice", () => {
     const shown = notice()
     expect(shown).toEqual({
       beforeExpiry: true,
+      urgent: true,
       endsLabel: "2023-11-14 22:13:20 UTC",
       graceEndsLabel: "2023-11-21 22:13:20 UTC",
       text: PAYEE_OPEN_BEFORE_EXPIRY_TEXT,
+      cta: "Dispute before 2023-11-14 22:13:20 UTC.",
+      urgentText: "Less than a day remains. Dispute before 2023-11-14 22:13:20 UTC.",
     })
     expect(RULING_GRACE_SECONDS).toBe(7n * 24n * 60n * 60n)
     expect(shown?.text).toContain("Open a dispute before this claim ends")
@@ -44,7 +47,22 @@ describe("payee open expiry notice", () => {
   })
 
   it("still treats the exact end second as before expiry", () => {
-    expect(notice({ nowSeconds: ENDS })?.beforeExpiry).toBe(true)
+    const shown = notice({ nowSeconds: ENDS })
+    expect(shown?.beforeExpiry).toBe(true)
+    expect(shown?.urgent).toBe(true)
+    expect(shown?.cta).toBe("Dispute before 2023-11-14 22:13:20 UTC.")
+  })
+
+  it("warns only when less than a day remains", () => {
+    const day = 24n * 60n * 60n
+    const calm = notice({ nowSeconds: ENDS - day })
+    expect(calm?.beforeExpiry).toBe(true)
+    expect(calm?.urgent).toBe(false)
+    expect(calm?.urgentText).toBeNull()
+    expect(calm?.cta).toBe("Dispute before 2023-11-14 22:13:20 UTC.")
+    const soon = notice({ nowSeconds: ENDS - day + 1n })
+    expect(soon?.urgent).toBe(true)
+    expect(soon?.urgentText).toBe("Less than a day remains. Dispute before 2023-11-14 22:13:20 UTC.")
   })
 
   it("stops the dispute prompt once the open claim has ended", () => {
@@ -87,6 +105,9 @@ describe("payee open expiry notice", () => {
   it("renders the prompt from the escrow lookup", () => {
     const panel = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "EscrowPanel.tsx"), "utf8")
     expect(panel).toContain('data-testid="payee-expiry-prompt"')
+    expect(panel).toContain('data-testid="payee-dispute-cta"')
+    expect(panel).toContain('data-testid="payee-expiry-urgent"')
+    expect(panel).toContain('href="#open-dispute"')
     expect(panel).toContain("payeeOpenExpiryNotice")
     expect(panel).toContain("useAccount")
   })

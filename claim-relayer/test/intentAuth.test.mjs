@@ -177,6 +177,62 @@ describe("signed claim intent auth", () => {
     }
   });
 
+  it("returns 409 ruling_pending when refund simulation reverts RulingPending and does not broadcast", async () => {
+    let sends = 0;
+    const chain = trackingChain({
+      payer: accounts.payer.address,
+      payee: accounts.payee.address,
+      simulate: async () => ({ ok: false, gasUsed: 0n, revertData: "0x3a0621bd" }),
+    });
+    const ctx = await boot({}, {
+      chain,
+      broadcaster: {
+        async send() {
+          sends += 1;
+          return { txHash: TX };
+        },
+      },
+    });
+    try {
+      const body = await releaseBody(accounts.payer, { nonce: "78" });
+      const res = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(res.status, 409);
+      assert.equal(res.json.error, "ruling_pending");
+      assert.equal(res.json.txHash, null);
+      assert.equal(res.json.revert_data, "0x3a0621bd");
+      assert.equal(sends, 0);
+      assert.equal(chain.calls.simulations.length, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("returns 409 ruling_pending when a broadcast reverts RulingPending", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({}, {
+      chain,
+      broadcaster: {
+        async send() {
+          const err = new Error("execution reverted");
+          err.data = "0x3a0621BD";
+          throw err;
+        },
+      },
+    });
+    try {
+      const body = await releaseBody(accounts.payer, { nonce: "79" });
+      const res = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(res.status, 409);
+      assert.equal(res.json.error, "ruling_pending");
+      assert.notEqual(res.status, 502);
+      assert.equal(res.json.txHash, null);
+      assert.equal(res.json.revert_data, "0x3a0621bd");
+      assert.equal(chain.calls.simulations.length, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("rejects a non-party signature with 403 and does not broadcast", async () => {
     const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
     const ctx = await boot({}, { chain });

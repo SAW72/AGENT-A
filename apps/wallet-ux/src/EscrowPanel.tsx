@@ -149,11 +149,23 @@ function EscrowLookup({
             <>
               {expiryNotice ? (
                 <div className="callout" data-testid="payee-expiry-prompt" role="status">
+                  {expiryNotice.urgent && expiryNotice.urgentText ? (
+                    <div className="banner" data-testid="payee-expiry-urgent" role="alert">
+                      <p>{expiryNotice.urgentText}</p>
+                    </div>
+                  ) : null}
                   <strong>{expiryNotice.beforeExpiry ? "Dispute before this claim ends" : "This claim has ended"}</strong>
                   <p data-testid="payee-expiry-time">
                     {expiryNotice.beforeExpiry ? "This claim ends" : "This claim ended"} {expiryNotice.endsLabel}.
                   </p>
                   <p>{expiryNotice.text}</p>
+                  {expiryNotice.cta ? (
+                    <p>
+                      <a href="#open-dispute" data-testid="payee-dispute-cta">
+                        {expiryNotice.cta}
+                      </a>
+                    </p>
+                  ) : null}
                   <p data-testid="payee-grace-time">
                     While a dispute is unresolved, a refund stays blocked until {expiryNotice.graceEndsLabel}.
                   </p>

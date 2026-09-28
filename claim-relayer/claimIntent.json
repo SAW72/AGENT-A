@@ -3,7 +3,9 @@
   "domainVersion": "1",
   "primaryType": "ClaimIntent",
   "deadlineWindowSeconds": 300,
-  "actions": ["release", "refund"],
+  "actions": ["refund"],
+  "actionValues": { "refund": 1 },
+  "refusedActions": { "release": 0 },
   "typeString": "ClaimIntent(uint8 action,bytes32 escrowId,address sender,uint256 nonce,uint256 deadline)",
   "types": {
     "ClaimIntent": [

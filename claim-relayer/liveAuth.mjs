@@ -15,9 +15,11 @@
  * Abuse limits run after the signature checks and before simulation.
  */
 
+import { senderNoteFor } from "./claims.mjs";
 import { DEADLINE_WINDOW_SECONDS, assertIntentDeadline, assertIntentDomain, assertIntentSigner, nonceKey, parseClaimIntent } from "./claimIntent.mjs";
 import { httpError } from "./config.mjs";
 import { encodeEscrowAction } from "./escrowCalldata.mjs";
+import { isRulingPending } from "./revertData.mjs";
 
 /**
  * Live allowlist is refund only.
@@ -161,10 +163,21 @@ export async function prepareLiveClaim(args) {
     throw err;
   }
   if (!simulation?.ok) {
+    const revert_data = simulation?.revertData ?? null;
+    if (isRulingPending(revert_data)) {
+      throw Object.assign(httpError(409, "ruling_pending", {
+        txHash: null,
+        dryRun: false,
+        revert_data,
+        action: intent.action,
+        senderConstraint: described.senderConstraint,
+        senderNote: senderNoteFor(intent.action),
+      }), { nonceClaimed: true, nonceKey: key });
+    }
     throw Object.assign(httpError(502, "broadcast_failed", {
       txHash: null,
       dryRun: false,
-      revert_data: simulation?.revertData ?? null,
+      revert_data,
       action: intent.action,
       senderConstraint: described.senderConstraint,
     }), { nonceClaimed: true, nonceKey: key });

@@ -13,7 +13,13 @@ export const CLAIM_DEADLINE_SKEW_SECONDS = 240
 export const CLAIM_INTENT_TYPE_STRING =
   "ClaimIntent(uint8 action,bytes32 escrowId,address sender,uint256 nonce,uint256 deadline)"
 
-export const CLAIM_INTENT_ACTIONS = ["release", "refund"] as const
+/** Allowlisted signed actions. Refund stays uint8 1. Release is not in this list. */
+export const CLAIM_INTENT_ACTIONS = ["refund"] as const
+
+export const CLAIM_INTENT_ACTION_VALUES = { refund: 1 } as const
+
+/** Old uint8 0. Recognized so it is refused and never treated as refund. */
+export const CLAIM_INTENT_REFUSED_ACTIONS = { release: 0 } as const
 
 export const CLAIM_INTENT_TYPES = {
   ClaimIntent: [
@@ -26,7 +32,9 @@ export const CLAIM_INTENT_TYPES = {
 } as const
 
 export function claimActionIndex(action: string): number {
-  const index = CLAIM_INTENT_ACTIONS.indexOf(action as (typeof CLAIM_INTENT_ACTIONS)[number])
-  if (index < 0) throw new Error(`Unknown claim action ${action}`)
-  return index
+  if (Object.prototype.hasOwnProperty.call(CLAIM_INTENT_REFUSED_ACTIONS, action)) {
+    throw new Error(`Refused claim action ${action}`)
+  }
+  if (action === "refund") return CLAIM_INTENT_ACTION_VALUES.refund
+  throw new Error(`Unknown claim action ${action}`)
 }

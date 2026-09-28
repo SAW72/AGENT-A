@@ -5,7 +5,14 @@
  * is null. Oversized data is not truncated.
  */
 
+/** BotAttestationEscrow.RulingPending() */
+export const RULING_PENDING_SELECTOR = "0x3a0621bd";
+
 const HEX_RE = /^0x[0-9a-fA-F]*$/;
+
+export function isRulingPending(revertData) {
+  return typeof revertData === "string" && revertData.toLowerCase().startsWith(RULING_PENDING_SELECTOR);
+}
 
 /** 4 KiB of revert bytes. Custom errors are a selector plus a few words. */
 export const MAX_REVERT_DATA_BYTES = 4096;

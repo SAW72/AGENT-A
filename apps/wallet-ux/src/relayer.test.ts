@@ -15,6 +15,8 @@ import { mnemonicToAccount } from "viem/accounts"
 import { describe, expect, it, vi } from "vitest"
 import {
   CLAIM_INTENT_ACTIONS,
+  CLAIM_INTENT_ACTION_VALUES,
+  CLAIM_INTENT_REFUSED_ACTIONS,
   CLAIM_INTENT_DOMAIN_NAME,
   CLAIM_INTENT_DOMAIN_VERSION,
   CLAIM_INTENT_PRIMARY_TYPE,
@@ -881,6 +883,8 @@ describe("signed claim intent", () => {
       primaryType: string
       typeString: string
       actions: string[]
+      actionValues: { refund: number }
+      refusedActions: { release: number }
       types: { ClaimIntent: { name: string; type: string }[] }
     }
     expect(schema.domainName).toBe(CLAIM_INTENT_DOMAIN_NAME)
@@ -888,6 +892,10 @@ describe("signed claim intent", () => {
     expect(schema.primaryType).toBe(CLAIM_INTENT_PRIMARY_TYPE)
     expect(schema.typeString).toBe(CLAIM_INTENT_TYPE_STRING)
     expect(schema.actions).toEqual([...CLAIM_INTENT_ACTIONS])
+    expect(schema.actions).not.toContain("release")
+    expect(schema.actionValues).toEqual(CLAIM_INTENT_ACTION_VALUES)
+    expect(schema.refusedActions).toEqual(CLAIM_INTENT_REFUSED_ACTIONS)
+    expect(CLAIM_INTENT_ACTION_VALUES.refund).toBe(1)
     expect(schema.types.ClaimIntent).toEqual(
       CLAIM_INTENT_TYPES.ClaimIntent.map((field) => ({ name: field.name, type: field.type })),
     )

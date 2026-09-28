@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import { disputePanelAbi, escrowAbi } from "./abi"
+import { randomBytes32 } from "./bytes32"
 import {
   ERROR_GLOSSARY,
   MAX_DURATION_SECONDS,
@@ -82,9 +83,15 @@ describe("calldata preview", () => {
       "RulingPending",
       null,
     ])
+    expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.state)).toEqual([
+      "Open",
+      "Disputed and upheld",
+      "Disputed, unresolved, within 7 days after the claim ends",
+      "Otherwise",
+    ])
     expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.outcome)).toEqual([
       "The payer is refunded.",
-      "The payee should release.",
+      "The payee releases.",
       RULING_PENDING_TEXT,
       "The payer is refunded.",
     ])
@@ -106,6 +113,33 @@ describe("calldata preview", () => {
     expect(source).toContain('id="open-subject"')
     expect(source).toContain("readOnly")
     expect(source).not.toContain("Use the claim identifier. The panel stores this as the subject.")
+    const openForm = source.slice(source.indexOf("function OpenDisputeForm"), source.indexOf("function DisputeForm"))
+    expect(openForm).toContain("randomBytes32()")
+    expect(openForm).toContain("previewOpenDispute")
+    expect(openForm).toContain("previewDispute(escrow, claim, id)")
+    expect(openForm).toContain('id="open-dispute"')
+    expect(openForm).not.toContain("keccak256")
+    expect(openForm).not.toContain("Date.now")
+    expect(source).toContain('data-testid="open-and-link"')
+  })
+
+  it("draws a case identifier from 32 random bytes", () => {
+    const seen: Uint8Array[] = []
+    const first = randomBytes32((bytes) => {
+      seen.push(bytes)
+      bytes.fill(0xab)
+    })
+    expect(seen[0]).toHaveLength(32)
+    expect(first).toBe(`0x${"ab".repeat(32)}`)
+    const second = randomBytes32((bytes) => {
+      bytes.fill(0xcd)
+    })
+    expect(second).not.toBe(first)
+    expect(randomBytes32((bytes) => bytes.fill(0))).toBe(`0x${"00".repeat(31)}01`)
+    const helper = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "bytes32.ts"), "utf8")
+    expect(helper).toContain("crypto.getRandomValues")
+    expect(helper).not.toContain("createdAt")
+    expect(helper).not.toContain("escrowId")
   })
 })
 

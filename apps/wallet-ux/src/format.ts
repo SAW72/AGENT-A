@@ -30,11 +30,26 @@ export const PAYEE_OPEN_BEFORE_EXPIRY_TEXT =
 export const PAYEE_OPEN_AFTER_EXPIRY_TEXT =
   "This claim has ended, so a dispute can no longer be opened. The payer can refund unless a dispute is already open. While a dispute is unresolved, a refund stays blocked until 7 days after the claim ends."
 
+export const PAYEE_EXPIRY_URGENT_LEAD = "Less than a day remains."
+
+const ONE_DAY_SECONDS = 24n * 60n * 60n
+
+export function payeeDisputeBeforeCta(endsLabel: string): string {
+  return `Dispute before ${endsLabel}.`
+}
+
+export function payeeExpiryUrgentText(endsLabel: string): string {
+  return `${PAYEE_EXPIRY_URGENT_LEAD} Dispute before ${endsLabel}.`
+}
+
 export type PayeeExpiryNotice = {
   beforeExpiry: boolean
+  urgent: boolean
   endsLabel: string
   graceEndsLabel: string
   text: string
+  cta: string | null
+  urgentText: string | null
 }
 
 const OPEN_ESCROW_STATE = 0
@@ -61,11 +76,17 @@ export function payeeOpenExpiryNotice(input: {
   if (!input.used && isZeroAddress(input.payer) && input.createdAt === 0n) return null
   if (!sameAddress(input.viewer, input.payee)) return null
   const beforeExpiry = input.nowSeconds <= input.expiresAt
+  const endsLabel = formatUnixUtc(input.expiresAt)
+  const remaining = input.expiresAt - input.nowSeconds
+  const urgent = beforeExpiry && remaining < ONE_DAY_SECONDS
   return {
     beforeExpiry,
-    endsLabel: formatUnixUtc(input.expiresAt),
+    urgent,
+    endsLabel,
     graceEndsLabel: formatUnixUtc(input.expiresAt + RULING_GRACE_SECONDS),
     text: beforeExpiry ? PAYEE_OPEN_BEFORE_EXPIRY_TEXT : PAYEE_OPEN_AFTER_EXPIRY_TEXT,
+    cta: beforeExpiry ? payeeDisputeBeforeCta(endsLabel) : null,
+    urgentText: urgent ? payeeExpiryUrgentText(endsLabel) : null,
   }
 }
 

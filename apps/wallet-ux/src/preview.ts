@@ -25,7 +25,7 @@ export const POST_EXPIRY_REFUND_INTRO = "After the claim ends, a refund is decid
 /** Post-expiry refund checks, in contract order. */
 export const POST_EXPIRY_REFUND_ORDER = [
   { state: "Open", error: null, outcome: "The payer is refunded." },
-  { state: "Disputed, resolved and upheld", error: "DisputePending", outcome: "The payee should release." },
+  { state: "Disputed and upheld", error: "DisputePending", outcome: "The payee releases." },
   {
     state: "Disputed, unresolved, within 7 days after the claim ends",
     error: "RulingPending",
@@ -33,6 +33,15 @@ export const POST_EXPIRY_REFUND_ORDER = [
   },
   { state: "Otherwise", error: null, outcome: "The payer is refunded." },
 ] as const
+
+export const OPEN_AND_LINK_TEXT =
+  "Open the case, then link it to this claim right away, using this same identifier. The identifier is random, so it cannot be guessed from the claim."
+
+export const OPEN_AND_LINK_BUTTON = "Prepare opening and linking"
+export const NEW_CASE_ID_BUTTON = "Generate a new identifier"
+export const OPEN_CASE_HEADING = "Open the case"
+export const LINK_CASE_HEADING = "Link the case"
+export const CASE_ID_HINT = "A new random identifier for this case. It is not taken from the claim or the clock."
 
 /** Plain-English meanings for contract reverts. These builders do not submit. */
 export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [

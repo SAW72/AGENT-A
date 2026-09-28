@@ -113,7 +113,7 @@ export const FORM_ERRORS = {
   valueZero: "Enter an amount greater than zero. Nothing was sent.",
   releaseId: "Enter the claim identifier before releasing this claim.",
   refundId: "Enter the claim identifier before refunding this claim.",
-  openIds: "Enter the dispute identifier, the claim identifier, and the time the claim was created before opening a dispute.",
+  openIds: "Enter the claim identifier and the time the claim was created before opening a dispute.",
   openReason: "Enter a reason before opening a dispute.",
   disputeClaim: "Enter the claim identifier before opening a dispute.",
   disputeId: "Enter the dispute identifier before opening a dispute.",
