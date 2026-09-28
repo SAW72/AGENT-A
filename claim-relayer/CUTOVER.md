@@ -2,7 +2,7 @@
 
 Spencer runs every step below, in order. Nothing in this repository deploys, broadcasts, or stores a secret. Placeholders are names only. Do not paste a real secret into git, a shell history you keep, or this file. Do not put a real secret in a test request.
 
-Step 0 is for the relayer that is deployed now: `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. It is not for PR #46. The later steps are for the EIP-712 relayer at `05fe6fa77f2b1380d148d289b4ba45ced68625e3` (PR #46). That commit is the rebase onto `main`, and its tree is the one those steps describe.
+Step 0 is for the relayer that is deployed now: `main` at `da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`. It is not for PR #46. The later steps are for the EIP-712 relayer at `05fe6fa77f2b1380d148d289b4ba45ced68625e3` (PR #46): the rebase onto `main` (`cfac34a`) plus the B-1 wallet-ux fix.
 
 The Render service is `bot-verifier-claim-relayer`. Copy the hostname from the dashboard. The example below is `https://bot-verifier-claim-relayer.onrender.com`. Wallet UX is the Cloudflare Pages project `agent-a-wallet-ux` (`https://agent-a-wallet-ux.pages.dev`). That project is Direct Upload. It has no git connection, and Cloudflare does not build it.
 
@@ -104,7 +104,7 @@ Run this on `dist/` before upload, and again on the JavaScript the production UR
 ```bash
 cd apps/wallet-ux
 grep -REic -e 'x-claim-secret|VITE_CLAIM_API_SECRET' dist
-grep -REoc -e 'VITE_[A-Z_]*(SECRET|KEY|TOKEN)["'\'']?\s*:\s*["'\''`][^"'\''`]{16,}' dist
+grep -REoc -e 'VITE_[A-Z_]*(SECRET|KEY|TOKEN)["'\'']?[[:space:]]*:[[:space:]]*["'\''`][^"'\''`]{16,}' dist
 ```
 
 Both commands print a count per file and nothing else. Do not drop `-c`. Do not add `-o` or `-n`. A count above 0 is a hit. `0` is clean.
@@ -115,7 +115,7 @@ The second pattern is exactly:
 VITE_[A-Z_]*(SECRET|KEY|TOKEN)["']?\s*:\s*["'`][^"'`]{16,}
 ```
 
-It covers a backtick literal as well as single quotes, double quotes, and a quoted key. It was validated with `grep -Eoc` by match counts only: a bad fixture of four lines counted 4, and a clean sample counted 0. The check must never print the match.
+The runnable command uses `[[:space:]]` in place of `\s` because macOS `/usr/bin/grep` is BSD grep and `\s` in `-E` is not guaranteed there; `[[:space:]]` is the same match. It covers a backtick literal as well as single quotes, double quotes, and a quoted key. The portable command was validated with `grep -Eoc` by match counts only: a bad fixture of four lines counted 4, and a clean sample counted 0. The check must never print the match.
 
 Fetch the served page the same way. `index-CkV_YTRw.js` must not appear.
 
@@ -205,7 +205,7 @@ openssl rand -hex 32 | pbcopy
 
 Paste from the clipboard into a password manager, then into the Render dashboard, then clear the clipboard. 1Password (`op`) and Bitwarden (`bw`) can take the same `openssl` stdout on stdin so the value is never printed. Use that instead of `pbcopy` if the CLI is already signed in. Do not run `echo`, `cat`, or `openssl rand` without a pipe.
 
-Render dashboard → `bot-verifier-claim-relayer` → Environment → set `ADMIN_SECRET` to that new value → Save, rebuild, and deploy. Keep `KILL_SWITCH=1` if step 0 is still in force.
+Render dashboard → `bot-verifier-claim-relayer` → Environment → set `ADMIN_SECRET` to that new value → Save and deploy. Keep `KILL_SWITCH=1` if step 0 is still in force.
 
 On both `main` and #46, `ADMIN_SECRET` gates only `POST /v1/admin/pause` and `POST /v1/admin/unpause`, via `x-admin-secret` or `Authorization: Bearer`. It does not authorize a live claim. While it is unset, those routes return **200** `{"ok":true,"noop":true}` and do not change the switch. They do not return 503.
 
@@ -217,7 +217,7 @@ The per-IP bucket is on `POST /v1/claims` only, after the kill switch and before
 
 Render appends the connecting client to `X-Forwarded-For`. The relayer keeps the rightmost hop. `X-Real-IP` and Cloudflare headers are not read. A test to localhost does not append that hop, so a spoofed header would become the client. Use the public service.
 
-The default is `CLAIM_RATE_IP=30` per `CLAIM_RATE_WINDOW_SEC=60`. Do not send 30 requests. Set `CLAIM_RATE_IP` to `2`, save, rebuild, and deploy, then send four requests immediately.
+The default is `CLAIM_RATE_IP=30` per `CLAIM_RATE_WINDOW_SEC=60`. Do not send 30 requests. Set `CLAIM_RATE_IP` to `2`, choose Save and deploy, then send four requests immediately.
 
 The body is a dummy. It has no `live` flag, no signature, and no secret header. It cannot broadcast.
 
@@ -240,13 +240,13 @@ curl -sS -D - -o /tmp/claim-rate-body.txt -X POST "$BASE/v1/claims" \
 
 Requests 1 and 2 are **200**, `mode` `fixture`, `txHash` null. Request 3 is **429** `{"ok":false,"error":"rate_limited"}`. Request 4, with `203.0.113.50` on the left, is **429** as well. That address is documentation-only. It does not get its own bucket.
 
-Delete the `CLAIM_RATE_IP` override afterward so the default of 30 returns. Save, rebuild, and deploy. The bucket is in memory, and that restart clears it.
+Delete the `CLAIM_RATE_IP` override afterward so the default of 30 returns. Save and deploy. The bucket is in memory, and that restart clears it.
 
 ## 6. Durable stop
 
 Set this when quote and claim traffic should stay stopped. Leave `KILL_SWITCH` at `0` when the service should keep serving.
 
-Render dashboard → `bot-verifier-claim-relayer` → Environment → `KILL_SWITCH` = `1` → Save, rebuild, and deploy.
+Render dashboard → `bot-verifier-claim-relayer` → Environment → `KILL_SWITCH` = `1` → Save and deploy.
 
 `1`, `true`, `yes`, and `on` start the process paused. Any other value starts it open. Editing `claim-relayer/render.yaml` in git does not change the running service.
 
@@ -265,13 +265,13 @@ curl -sS -D - -o /tmp/claim-kill-body.txt -X POST "$BASE/v1/claims" \
 
 The claim response is **503** `kill_switch`. The body is an empty JSON object. It is not a signed claim and it carries no secret.
 
-To undo it, set `KILL_SWITCH` to `0`, then save, rebuild, and deploy. Confirm `"killSwitch": false`.
+To undo it, set `KILL_SWITCH` to `0`, then Save and deploy. Confirm `"killSwitch": false`.
 
 `POST /v1/admin/unpause` clears the switch in the current process only, and only when `ADMIN_SECRET` is set. Do not call it with the real secret from this runbook. If `KILL_SWITCH` is still `1`, the next start turns the switch back on. The durable off position is step 7.
 
 ## 7. Resume
 
-Do this only after the Pages publish and every post-cutover check above has passed: the served bundle counts are 0, old deployments that still serve `index-CkV_YTRw.js` are gone or covered by Access, and the #46 `/health` commit in the Render deploy view is the one you published.
+Do this only after the Pages publish and every post-cutover check above has passed: the served bundle counts are 0, old deployments that still serve `index-CkV_YTRw.js` are gone or covered by Access, and the #46 merge commit shown in the Render deploy view is the one you published.
 
 Render dashboard → `bot-verifier-claim-relayer` → Environment → set `KILL_SWITCH` to `0` → Save and deploy.
 
