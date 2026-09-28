@@ -64,8 +64,12 @@ contract LiveDenylistVaultTest is Test {
         assertGt(DENYLIST.code.length, 0);
         assertGt(VAULT.code.length, 0);
         assertEq(keccak256(DENYLIST.code), LIVE_DENYLIST_PRE_PR23_RUNTIME_HASH);
-        // Live Vault opcodes match this source. The appended CBOR metadata hash does not,
-        // so the full runtime blob is not compared to `type(Vault).runtimeCode`.
+        // The CBOR metadata embeds an IPFS hash of the source/metadata JSON, which
+        // changes with comments, paths, or settings even when opcodes are identical.
+        bytes memory liveVault = _stripSolidityCborMetadata(address(VAULT).code);
+        bytes memory compiledVault = _stripSolidityCborMetadata(type(Vault).runtimeCode);
+        assertEq(liveVault.length, compiledVault.length);
+        assertEq(keccak256(liveVault), keccak256(compiledVault));
     }
 
     function test_ownerAndPendingOwnerAreCoreTimelock() public view {
@@ -340,6 +344,22 @@ contract LiveDenylistVaultTest is Test {
         assertEq(denylist.listing(uint8(Denylist.Bucket.Exact), WEIGHT).timesListed, 1);
         assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), WEIGHT));
         assertEq(uint256(denylist.check(WEIGHT, bytes32(0), bytes32(0))), uint256(Denylist.MatchLevel.None));
+    }
+
+    /// @dev Drop Solidity's CBOR metadata suffix. The last two bytes are a big-endian uint16 L,
+    ///      the length of the CBOR blob. The suffix is L + 2 bytes.
+    function _stripSolidityCborMetadata(
+        bytes memory code
+    ) internal pure returns (bytes memory stripped) {
+        uint256 len = code.length;
+        require(len >= 2, "runtime too short to read CBOR length");
+        uint256 metaLen = (uint256(uint8(code[len - 2])) << 8) | uint256(uint8(code[len - 1]));
+        require(metaLen + 2 <= len, "CBOR metadata longer than runtime");
+        uint256 strippedLen = len - (metaLen + 2);
+        stripped = new bytes(strippedLen);
+        for (uint256 i; i < strippedLen; ++i) {
+            stripped[i] = code[i];
+        }
     }
 
     function _eip7702Delegate(
