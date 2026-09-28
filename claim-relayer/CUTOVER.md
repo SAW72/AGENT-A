@@ -2,7 +2,7 @@
 
 Spencer runs every step below, in the order printed. That order is 0 through 5, then 7, then 8. Step 6 is printed after step 8, and it is a later pause, not the resume. Nothing in this repository deploys, broadcasts, or stores a secret. Placeholders are names only. Do not paste a real secret into git, a shell history you keep, or this file. Do not put a real secret in a test request.
 
-`main` is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`, the squash merge of PR #46. #46 was merged from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. `cfac34a` is the calldata-binding commit under that PR head (`fix(relayer): bind claim calldata and drop unsafe relay actions`). It is not a rebase marker, and it is not the commit on `main`. Step 0 stops the process that is running now. That process can still be the pre-merge build (`da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`) until Render deploys `a66ef64`.
+PR #46 squash-merged as `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`, from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. That SHA is the relayer commit for this runbook. The tip of `main` moves, so read it with `git rev-parse origin/main`. `cfac34a` is the calldata-binding commit under that PR head (`fix(relayer): bind claim calldata and drop unsafe relay actions`). It is not a rebase marker, and it is not the tip of `main`. Step 0 stops the process that is running now. That process can still be the pre-merge build (`da47d9a12d64cd4bea4b6fce0b2166b4c55a0427`) until Render deploys `a66ef64`.
 
 The Render service is `bot-verifier-claim-relayer`. Copy the hostname from the dashboard. The example below is `https://bot-verifier-claim-relayer.onrender.com`. Wallet UX is the Cloudflare Pages project `agent-a-wallet-ux` (`https://agent-a-wallet-ux.pages.dev`). That project is Direct Upload. It has no git connection, and Cloudflare does not build it.
 
@@ -103,18 +103,18 @@ Then look at both Production and Preview in the dashboard again.
 
 `claim-relayer/render.yaml` does not set `autoDeploy`. The file is a reference Blueprint under `claim-relayer/`, not `render.yaml` at the repo root, so merging does not change the running service's auto-deploy setting. Render's Blueprint default, if this file were applied, is auto-deploy on when the key is omitted. That default is not what controls the service that already exists. Check the dashboard: `bot-verifier-claim-relayer` → Settings → Build & Deploy → Auto-Deploy.
 
-1. PR #46 is already squash-merged. `main` is `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`. It was merged from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. Do not merge it again.
+1. PR #46 is already squash-merged as `a66ef6439dec6fd2e5ad49d53fa4ce98d373d787`, from `05fe6fa77f2b1380d148d289b4ba45ced68625e3`. Do not merge it again. That SHA is not the current tip of `main`. Read the tip with `git rev-parse origin/main`.
 2. If Auto-Deploy is on, leave the step 0 stop in place and leave `ADMIN_SECRET` unset through that deploy. When that stop is `KILL_SWITCH=1`, the new process reads `KILL_SWITCH` at start, so the deploy comes up paused. When the alternate was used, leave `LIVE_SUBMIT=0` instead of setting `KILL_SWITCH`. When the fallback was used, do not add `KILL_SWITCH` or `LIVE_SUBMIT` for this deploy: `a66ef64` comes up open, which is harmless because `a66ef64` ignores the old secret and old-bundle requests get **400** `intent_required`. If Auto-Deploy is off, the merge does not deploy. Use Manual Deploy of `a66ef64` with that same env.
 3. After the deploy finishes, `GET /health` must show `"killSwitch": true` when step 0 set `KILL_SWITCH=1`. If the alternate (`LIVE_SUBMIT=0`) was used, expect `"liveSubmit": false` and `"mode": "fixture"` instead of `"killSwitch": true`. `liveSubmitBlockers` contains `live_submit_off`. If the fallback (`CLAIM_API_SECRET` deleted) was used, this deploy of `a66ef64` comes up open, so `"killSwitch"` is false unless `KILL_SWITCH` was already set. That open process is harmless: `a66ef64` ignores the old secret, and old-bundle requests get **400** `intent_required`. The Render deploy view shows the relayer commit `a66ef64`. That is not the Pages commit. `/health` has no commit field and no build field. Do not look for either in the JSON.
 4. Publish Pages from `main` at or after the PR #53 merge. #53 is not merged yet. Do not publish from `10d021323bd9faa75481a9692625c9ba43ba9aad`. That SHA is the #41 merge (`cursor/wallet-ux-pages-deploy-e3f5`, the Deploy wallet-ux workflow). It is already on `main`, and it is not the Pages commit for this step. The Pages commit is not `a66ef64`.
 
-   `PR53_MERGE_SHA` must be the exact full 40-character lowercase merge commit SHA of PR #53 on `main`. The gate checks `^[0-9a-f]{40}$` and rejects anything else. Uppercase hex is rejected. `HEAD`, a branch name, any other ref, and a short SHA are rejected. Set the variable in your shell before the gate. Interactive zsh does not treat a `#` line as a comment unless `interactive_comments` is set, so this runbook keeps those notes here instead of inside the fence. After #53 merges, read the oid without changing the repo. `git log` on `main` and the PR page show the same commit. This command prints only the merge oid:
+   `PR53_MERGE_SHA` must be the exact full 40-character lowercase merge commit of PR #53, the oid `gh` reports after that PR is merged. Uppercase hex is rejected. `HEAD`, a branch name, any other ref, and a short SHA are rejected. `gh` must be installed and authenticated for read-only `gh pr view`. The gate runs that read itself. It does not push, merge, or deploy. Interactive zsh does not treat a `#` line as a comment unless `interactive_comments` is set, so this runbook keeps those notes here instead of inside the fence. This command prints only the merge oid:
 
 ```bash
 gh pr view 53 --repo SAW72/AGENT-B.V. --json mergeCommit -q .mergeCommit.oid
 ```
 
-   Until #53 merges, that oid is empty. Leave `PR53_MERGE_SHA` unset until the command prints 40 lowercase hex characters, then set `PR53_MERGE_SHA` to that exact string. Check out the `main` commit you will publish, so `HEAD` is that commit or a later one. Then paste the gate. `${PR53_MERGE_SHA:-}` is safe when the variable is unset, including under `set -u`. The check is one `( ... )` subshell, so `exit` stays inside it. Each rejection prints its own `SKIP` line and that subshell exits 1. Only the `OK` path exits 0. The trailing `&& :` publishes nothing. It leaves `$?` at 1 after a `SKIP`, and a shell with `set -eu` stays open, because the failing subshell is not the last command of that `&&` list. Publish as `gate && publish`: paste this subshell as `gate` and put the wrangler command in place of `:`. A `SKIP` blocks the publish. Do not dispatch the workflow when the gate prints `SKIP`.
+   Until #53 merges, that oid is empty. Leave `PR53_MERGE_SHA` unset until the command prints 40 lowercase hex characters, then set `PR53_MERGE_SHA` to that exact string. The gate reads the oid again and requires your value to be string-equal to it. `10d021323bd9faa75481a9692625c9ba43ba9aad` is the #41 merge. It is on `main` today, and it is not the #53 merge commit, so the gate skips it. Check out the current `origin/main` before the gate. `git rev-parse HEAD` must equal `git rev-parse origin/main` after `git fetch origin main`. The merge commit must also be an ancestor of that `HEAD`. `${PR53_MERGE_SHA:-}` is safe when the variable is unset, including under `set -u`. The check is one `( ... )` subshell, so `exit` stays inside it. Each rejection prints its own `SKIP` line and that subshell exits 1. Only the `OK` path exits 0. The trailing `&& :` publishes nothing. It leaves `$?` at 1 after a `SKIP`, and a shell with `set -eu` stays open, because the failing subshell is not the last command of that `&&` list. Publish as `gate && publish`: paste this subshell as `gate` and put the wrangler command in place of `:`. A `SKIP` blocks the publish. Do not dispatch the workflow when the gate prints `SKIP`.
 
 ```bash
 (
@@ -126,15 +126,39 @@ gh pr view 53 --repo SAW72/AGENT-B.V. --json mergeCommit -q .mergeCommit.oid
     echo 'SKIP: PR53_MERGE_SHA must be exactly 40 lowercase hex characters.'
     exit 1
   fi
+  EXPECTED="$(gh pr view 53 --repo SAW72/AGENT-B.V. --json mergeCommit -q .mergeCommit.oid 2>/dev/null)" || EXPECTED=""
+  if [ -z "$EXPECTED" ] || ! printf '%s\n' "$EXPECTED" | grep -Eq '^[0-9a-f]{40}$'; then
+    echo 'SKIP: could not read the PR #53 merge commit. gh must be installed and authenticated read-only, and PR #53 must be merged.'
+    exit 1
+  fi
+  STATE="$(gh pr view 53 --repo SAW72/AGENT-B.V. --json state -q .state 2>/dev/null)" || STATE=""
+  if [ "$STATE" != "MERGED" ] && [ "$STATE" != "$EXPECTED" ]; then
+    echo 'SKIP: PR #53 is not MERGED.'
+    exit 1
+  fi
+  if [ "$PR53_MERGE_SHA" != "$EXPECTED" ]; then
+    echo 'SKIP: PR53_MERGE_SHA is not the #53 merge commit.'
+    exit 1
+  fi
   if ! git cat-file -e "$PR53_MERGE_SHA^{commit}" 2>/dev/null; then
     echo 'SKIP: PR53_MERGE_SHA does not resolve to a commit object.'
+    exit 1
+  fi
+  if ! git fetch origin main >/dev/null 2>&1; then
+    echo 'SKIP: git fetch origin main failed.'
+    exit 1
+  fi
+  head_now="$(git rev-parse HEAD 2>/dev/null)" || head_now=""
+  main_now="$(git rev-parse origin/main 2>/dev/null)" || main_now=""
+  if [ -z "$head_now" ] || [ -z "$main_now" ] || [ "$head_now" != "$main_now" ]; then
+    echo 'SKIP: HEAD is not origin/main.'
     exit 1
   fi
   if ! git merge-base --is-ancestor "$PR53_MERGE_SHA" HEAD; then
     echo 'SKIP: PR53_MERGE_SHA is not an ancestor of HEAD.'
     exit 1
   fi
-  echo 'OK: HEAD contains PR53_MERGE_SHA. Publish Pages from this main commit.'
+  echo 'OK: HEAD is origin/main and contains the PR #53 merge commit.'
 ) && :
 ```
 
