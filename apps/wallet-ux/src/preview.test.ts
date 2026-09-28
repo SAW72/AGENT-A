@@ -8,6 +8,7 @@ import { randomBytes32 } from "./bytes32"
 import {
   ERROR_GLOSSARY,
   MAX_DURATION_SECONDS,
+  DISPUTE_VOTES_CAST_TEXT,
   POST_EXPIRY_REFUND_ORDER,
   RULING_PENDING_TEXT,
   previewCreateEscrow,
@@ -75,6 +76,14 @@ describe("calldata preview", () => {
       "This wallet is not a party to this escrow.",
     )
     expect(ERROR_GLOSSARY.find((entry) => entry.name === "RulingPending")?.meaning).toBe(RULING_PENDING_TEXT)
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "DisputeVotesCast")?.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
+    expect(DISPUTE_VOTES_CAST_TEXT).not.toMatch(/already has votes/)
+    expect(toFunctionSelector("DisputeVotesCast()")).toBe("0x8aab0a8f")
+    const revertCopy = JSON.parse(
+      readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../claim-relayer/revertCopy.json"), "utf8"),
+    ) as { DisputeVotesCast: { selector: string; meaning: string } }
+    expect(revertCopy.DisputeVotesCast.selector).toBe("0x8aab0a8f")
+    expect(revertCopy.DisputeVotesCast.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
     expect(toFunctionSelector("RulingPending()")).toBe("0x3a0621bd")
     expect(toFunctionSelector("RULING_GRACE()")).toBe("0x3cfbadae")
     expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.error)).toEqual([

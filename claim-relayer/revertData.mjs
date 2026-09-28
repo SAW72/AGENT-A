@@ -5,6 +5,29 @@
  * is null. Oversized data is not truncated.
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Wallet-facing meanings for contract reverts the relayer may surface in
+ * `revert_data`. `dispute` itself is not relayed. `DisputeVotesCast` means two
+ * votes already agree on a 3-member panel, so that case cannot be linked or
+ * linked again. One vote, or one on each side, still links. The party opens a
+ * new case.
+ */
+export const REVERT_COPY = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./revertCopy.json", import.meta.url)), "utf8"),
+);
+
+export function contractRevertCopy(revertData) {
+  if (typeof revertData !== "string") return null;
+  const selector = revertData.toLowerCase().slice(0, 10);
+  for (const [name, entry] of Object.entries(REVERT_COPY)) {
+    if (entry?.selector === selector) return { name, selector: entry.selector, meaning: entry.meaning };
+  }
+  return null;
+}
+
 /** BotAttestationEscrow.RulingPending() */
 export const RULING_PENDING_SELECTOR = "0x3a0621bd";
 

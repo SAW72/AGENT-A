@@ -287,7 +287,9 @@ describe("relayer broadcast failures", () => {
         }),
     }).catch((cause: unknown) => cause)
     const revertDataHit = presentRelayerError(fromRevertData)
-    expect(revertDataHit.main).toBe("This dispute already has votes, so it can't be linked to this claim.")
+    expect(revertDataHit.main).toBe(
+      "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one.",
+    )
     expect(revertDataHit.detail).toContain("0x8aab0a8f")
     expect(revertDataHit.main).not.toMatch(/0x[0-9a-fA-F]+/)
     expect(revertDataHit.main).not.toMatch(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/)

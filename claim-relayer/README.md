@@ -203,6 +203,8 @@ Production uses the file-backed store (`createFileIntentNonceStore`) at `INTENT_
 | 503 | `relayer_key_missing` | The signed intent was accepted and `RELAYER_PRIVATE_KEY` is unset. Nothing is signed. |
 | 502 | `broadcast_failed` | The Sepolia RPC rejected the send, or gas estimation reverted, and the revert is not `RulingPending`. `txHash` is null. `senderConstraint` says who the contract requires. `revert_data` is the raw revert bytes as a `0x` lowercase hex string, or `null` when the RPC error has no revert bytes. |
 | 409 | `ruling_pending` | A relayed refund's simulation or broadcast reverted with `RulingPending` (`0x3a0621bd`). Nothing is broadcast when simulation reverts. `txHash` is null. |
+
+`dispute` is not relayed. When a wallet-sent link reverts `DisputeVotesCast` (`0x8aab0a8f`), two votes on one side already decide that 3-member case, so it can't be linked or linked again. One vote, or one vote on each side, still links. The party opens a new case and links that one. `revertCopy.json` is that mapping. The sentence is: "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one."
 | 409 | `live_submit_blocked` | Client asked for a live transaction and the gate is closed, or asked a quote to broadcast. `reason` is `escrow_not_booked`, `escrow_not_booked_sepolia`, `escrow_booked_spencer_run_auth_required`, `live_submit_off`, or `quote_does_not_broadcast`. |
 | 400 | `release_not_relayable` | Live `action` is `release` or uint8 `0`. Refused before signature recovery, simulation, signing, broadcast, and before an intent nonce is claimed. The payer sends release from their own wallet. |
 | 400 | `invalid_bytes32` | `escrowId` / bot id / `disputeId` is not a non-zero bytes32. |

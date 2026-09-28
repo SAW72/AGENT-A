@@ -20,6 +20,13 @@ export type ErrorGlossaryEntry = {
 export const RULING_PENDING_TEXT =
   "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled."
 
+/**
+ * Two votes on one side already decide a 3-member panel, so that case cannot be linked.
+ * One vote, or one vote on each side, still links. The next step is a new case.
+ */
+export const DISPUTE_VOTES_CAST_TEXT =
+  "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one."
+
 export const POST_EXPIRY_REFUND_INTRO = "After the claim ends, a refund is decided in this order."
 
 /** Post-expiry refund checks, in contract order. */
@@ -53,7 +60,7 @@ export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "Replay", meaning: "This claim identifier was already used. Choose a new one." },
   { name: "InvalidDispute", meaning: "This dispute can't be linked. The dispute identifier is missing, the panel hasn't recorded an outcome, or the outcome is for a different claim." },
   { name: "DisputeAlreadyResolved", meaning: "This dispute is already resolved, so it can't be linked to this claim." },
-  { name: "DisputeVotesCast", meaning: "This dispute already has votes, so it can't be linked to this claim." },
+  { name: "DisputeVotesCast", meaning: DISPUTE_VOTES_CAST_TEXT },
   { name: "DisputePredatesEscrow", meaning: "This dispute was opened before this claim, so it can't be linked." },
   { name: "DisputeChallengerNotParty", meaning: "The person who opened this dispute is neither the payer nor the payee, so it can't be linked to this claim." },
   { name: "ReleaseNotAuthorized", meaning: "Only the payer can release an open escrow." },

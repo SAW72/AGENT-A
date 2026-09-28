@@ -16,7 +16,13 @@ import { describe, expect, it, vi } from "vitest"
 import { escrowAbi } from "./abi"
 import { ADDRESSES } from "./addresses"
 import { errorText, presentError } from "./format"
-import { ERROR_GLOSSARY, POST_EXPIRY_REFUND_INTRO, POST_EXPIRY_REFUND_ORDER, RULING_PENDING_TEXT } from "./preview"
+import {
+  DISPUTE_VOTES_CAST_TEXT,
+  ERROR_GLOSSARY,
+  POST_EXPIRY_REFUND_INTRO,
+  POST_EXPIRY_REFUND_ORDER,
+  RULING_PENDING_TEXT,
+} from "./preview"
 import { CLAIM_RELAYER_WALLET, submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
 import { RELAYER_RECEIPT_REVERTED_TEXT, RELAYER_USER_TEXT } from "./relayer"
 import { REVERT_FALLBACK_TEXT, visibleDetail, WALLET_CANCEL_TEXT } from "./revert"
@@ -34,7 +40,7 @@ const ESC_M1 = [
   {
     name: "DisputeVotesCast",
     selector: "0x8aab0a8f",
-    meaning: "This dispute already has votes, so it can't be linked to this claim.",
+    meaning: DISPUTE_VOTES_CAST_TEXT,
   },
   {
     name: "DisputePredatesEscrow",
