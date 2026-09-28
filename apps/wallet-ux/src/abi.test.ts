@@ -55,6 +55,7 @@ describe("forge ABIs", () => {
       "DisputePredatesEscrow",
       "DisputeChallengerNotParty",
       "DisputeAfterExpiry",
+      "EscrowNotFound",
       "WithdrawFailed",
     ]) {
       expect(names(escrowAbi, "error").has(name)).toBe(true)
