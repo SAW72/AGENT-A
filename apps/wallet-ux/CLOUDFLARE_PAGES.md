@@ -47,9 +47,11 @@ The workflow does nothing until the `production` environment has `CLOUDFLARE_API
 
 The claim API secret is retired. Do not set a claim secret on Pages. Relayer authentication is EIP-712 signed intents (PR #46). The connected wallet signs the claim. Live submit is authorized by the wallet signature, not a shared secret. Wallet submit still works. This workflow does not pass a claim secret into the build.
 
+EIP-712 auth is live only after the relayer and Pages are both cut over. The order is `claim-relayer/CUTOVER.md` in [PR #51](https://github.com/SAW72/AGENT-B.V./pull/51). That pull request is not merged, so the file is not on this branch.
+
 ## Warning
 
-> **Warning:** Any `VITE_` variable is embedded in the public JavaScript bundle. `VITE_CLAIM_API_SECRET` is retired and must not be set. A value of that name in the bundle is not confidential and is not relayer authentication. Relayer authentication is EIP-712 signed intents (PR #46).
+> **Warning:** Any `VITE_` variable is embedded in the public JavaScript bundle. `VITE_CLAIM_API_SECRET` is retired and must not be set. A value of that name in the bundle is not confidential and is not relayer authentication. Relayer authentication is EIP-712 signed intents (PR #46). That auth is live only after the relayer and Pages are both cut over.
 
 Do not put `PRIVATE_KEY`, `RELAYER_PRIVATE_KEY`, `SPENCER_RUN_AUTH`, `LIVE_SUBMIT`, or `ADMIN_SECRET` on this workflow or on the Pages project. Those belong to Foundry or the Render claim relayer, not this static app. Dashboard environment variables would not be applied at build time anyway.
 
@@ -86,6 +88,8 @@ The workflow fails the deploy unless `dist/assets` contains the live BotAttestat
 - `Submit through the claim relayer, or from your wallet.` (`src/FlowPreview.tsx`)
 
 The job also fails if `dist` or a served bundle contains the header `x-claim-secret` or the literal string `VITE_CLAIM_API_SECRET`. The header match is case-insensitive. Both markers are also rejected in these encodings: standard base64 with and without padding, URL-safe base64 with and without padding, URL-encoding, hex (lowercase and uppercase), and JSON escaping. The scan does not read a secret from the environment. There is no input that skips it.
+
+That scan fails on any bundle built from `main` before #46. Wallet UX on those commits still puts `x-claim-secret` and `VITE_CLAIM_API_SECRET` in the client bundle. Deploy only from a `main` commit that contains both #46 and this workflow (#41).
 
 [`scripts/guard-escrow-addresses.mjs`](scripts/guard-escrow-addresses.mjs) imports `ADDRESSES`, `FALLBACK_PIN`, and `SUPERSEDED`. `SUPERSEDED` in [`src/book.ts`](src/book.ts) is the blocked-address list. The script requires `ADDRESSES.botAttestationEscrow` and `FALLBACK_PIN.botAttestationEscrow` to be the live escrow, and `SUPERSEDED.botAttestationEscrow` to be the retired escrow. It fails if any live `ADDRESSES` slot is the retired escrow.
 
