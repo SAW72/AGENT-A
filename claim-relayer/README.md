@@ -218,6 +218,10 @@ The public funding wallet is not assumed to be a Vault operator. A live `createE
 
 `npm run readonly` performs `eth_chainId`, `eth_getCode`, and `eth_call` only (`owner`, `governance`, `disputePanel`, `arbitratorCount`). It is not part of `npm test`. It refuses every chain other than 84532.
 
+## Cutover
+
+Spencer runs the signed-intent cutover himself. The steps, commands, and the behaviors that revision does not have yet are in [CUTOVER.md](CUTOVER.md). Do not start it until the relayer being deployed is the EIP-712 claim-intent service.
+
 ## Render
 
 See `render.yaml` in this directory. It is a reference Blueprint, not registered at the repo root, so merging it does not create a Render service. Do not apply it until Spencer says GO.
