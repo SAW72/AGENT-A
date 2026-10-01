@@ -4,8 +4,8 @@
   "rule_version": "design-v2.2",
   "effective_from_block": 0,
   "product": {
-    "name": "B.V.",
-    "title": "B.V. (Agent Bot Verifier)"
+    "name": "Agent-BV",
+    "title": "Agent-BV (Agent Bot Verifier)"
   },
   "chain": {
     "name": "Base Sepolia",

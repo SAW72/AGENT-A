@@ -1,5 +1,5 @@
 /** Product name. Change this line to swap the working name. */
-export const PRODUCT_NAME = "B.V."
+export const PRODUCT_NAME = "Agent-BV"
 
 /** Full display form. Title, header, manifest name, and the footer use this. */
 export const DISPLAY_NAME = `${PRODUCT_NAME} (Agent Bot Verifier)`
