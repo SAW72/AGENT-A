@@ -1,10 +1,11 @@
 import { decodeFunctionData, type Address, type Hex } from "viem"
 import {
   CLAIM_DEADLINE_SKEW_SECONDS,
-  CLAIM_INTENT_ACTIONS,
+  CLAIM_INTENT_ACTION_VALUES,
   CLAIM_INTENT_DOMAIN_NAME,
   CLAIM_INTENT_DOMAIN_VERSION,
   CLAIM_INTENT_PRIMARY_TYPE,
+  CLAIM_INTENT_REFUSED_ACTIONS,
   CLAIM_INTENT_TYPES,
   claimActionIndex,
 } from "./claimIntent"
@@ -13,11 +14,11 @@ import { BASE_SEPOLIA_CHAIN_ID, SUPERSEDED } from "./addresses"
 import { presentError, presentRevertHex, type ErrorPresentation } from "./format"
 import { BASE_MAINNET_CHAIN_ID, ETHEREUM_MAINNET_CHAIN_ID, type WalletChainId } from "./guard"
 import { CLAIM_RELAYER_WALLET, submitRelayerAfterPreflight, type PreflightClient } from "./preflight"
-import type { CallPreview } from "./preview"
+import { RELEASE_NOT_RELAYABLE_TEXT, type CallPreview } from "./preview"
 import { REVERT_FALLBACK_TEXT } from "./revert"
 import { evaluateEscrowSubmit } from "./submit"
 
-const RELAYER_ACTIONS = ["release", "refund"] as const
+const RELAYER_ACTIONS = ["refund"] as const
 
 export type RelayerAction = (typeof RELAYER_ACTIONS)[number]
 
@@ -162,6 +163,9 @@ const RELAYER_PLAIN: Record<string, string> = {
   mainnet_refused: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   wrong_chain: "The claim relayer only submits on the Base Sepolia network. Nothing was sent.",
   action_not_claim: "This step has to be sent from your wallet, not the claim relayer.",
+  release_not_relayable: RELEASE_NOT_RELAYABLE_TEXT,
+  ruling_pending:
+    "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled. Nothing was sent.",
   invalid_relayer_url: "The claim relayer address is not valid. Nothing was sent.",
   invalid_bytes32: "A required identifier is missing or not the right length. Nothing was sent.",
   invalid_claim_id: "The claim identifier was not accepted. Nothing was sent.",
@@ -248,7 +252,7 @@ function isRelayerAction(name: string): name is RelayerAction {
 }
 
 export function previewSupportsRelayer(functionName: string): boolean {
-  // Release and refund only. Create, dispute, withdraw, and withdrawTo stay on the connected wallet.
+  // Refund only. Release stays on the payer's wallet. Create, dispute, withdraw, and withdrawTo stay there too.
   return isRelayerAction(functionName)
 }
 
@@ -288,6 +292,9 @@ function asHex32(value: unknown, field: string): Hex {
 
 export function claimBodyFromPreview(preview: CallPreview): LiveClaimBody {
   assertRelayerChain(BASE_SEPOLIA_CHAIN_ID)
+  if (preview.functionName === "release") {
+    throw new RelayerRequestError(RELEASE_NOT_RELAYABLE_TEXT, null, "release_not_relayable")
+  }
   if (!isRelayerAction(preview.functionName)) {
     throw new RelayerRequestError(
       "This step has to be sent from your wallet, not the claim relayer.",
@@ -720,15 +727,15 @@ export function claimSignArgs(input: {
 }
 
 function actionFromSignedIndex(index: number): RelayerAction {
-  const action = CLAIM_INTENT_ACTIONS[index]
-  if (action !== "release" && action !== "refund") {
-    throw new RelayerRequestError(
-      "This step has to be sent from your wallet, not the claim relayer.",
-      null,
-      "action_not_claim",
-    )
+  if (index === CLAIM_INTENT_REFUSED_ACTIONS.release) {
+    throw new RelayerRequestError(RELEASE_NOT_RELAYABLE_TEXT, null, "release_not_relayable")
   }
-  return action
+  if (index === CLAIM_INTENT_ACTION_VALUES.refund) return "refund"
+  throw new RelayerRequestError(
+    "This step has to be sent from your wallet, not the claim relayer.",
+    null,
+    "action_not_claim",
+  )
 }
 
 /** POST body is the typed-data message the wallet just signed. Deadline and nonce are not recomputed. */

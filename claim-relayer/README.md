@@ -10,6 +10,8 @@ The booked start block is used only when the configured escrow is that booked co
 
 Config load refuses any adopted address (escrow env or book, denylist, vault, dispute panel) that matches `retired.*`, `superseded.*`, or the wallet-ux superseded pins. Comparison ignores case and checksum. The previous escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26). Setting it as `ESCROW_ADDRESS` fails at boot: `retired_or_superseded_address`, and the message names that address and the current booked address `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`.
 
+The booked escrow is source `444c427`. A dispute on that bytecode links only when the panel subject is the claim identifier. A redeploy that replaces `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` changes the wallet book, this relayer book, the wallet deploy-guard pin (`apps/wallet-ux/scripts/guard-escrow-addresses.mjs`), and the superseded entry for `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` together. Do not move one of those pins alone.
+
 ## HARD STOP
 
 - **Base Sepolia only** (chain id **84532**). Ethereum mainnet (`1`), Base mainnet (`8453`), and every other chain are refused at boot and on every request. There is no mainnet send path.
@@ -142,11 +144,11 @@ Browser callers of live `POST /v1/claims` send `{ intent, signature, live: true 
 
 `ClaimIntent(uint8 action,bytes32 escrowId,address sender,uint256 nonce,uint256 deadline)`
 
-Action order is `0 release`, `1 refund`. `deadline` is a unix second. The schema lives in `claimIntent.json`. Wallet UX keeps a copy of the same fields and a test fails if the two copies differ. Calldata is not part of the signed struct. The server builds `release(bytes32)` or `refund(bytes32)` from `action` and `escrowId` and broadcasts those bytes. A client `calldata` field, if present, must match that encoding exactly. A different encoding is **400** `calldata_mismatch`. Extra bytes after the encoding are **400** `trailing_bytes`. The client bytes are never sent.
+The request schema lists `refund` only. Its signed uint8 stays `1`. `release` is not an allowlisted action: uint8 `0`, and case, whitespace, or numeric-string aliases such as `"0"`, `"00"`, `" 0"`, and `"Release"`, are **400** `release_not_relayable` before signature recovery, so they are not remapped onto refund. An array or object `action` is **400** `action_not_claim` before signature recovery. `deadline` is a unix second. The schema lives in `claimIntent.json`. Wallet UX keeps a copy of the same fields and a test fails if the two copies differ. Calldata is not part of the signed struct. The server builds `refund(bytes32)` from `action` and `escrowId` and broadcasts those bytes. A client `calldata` field, if present, must match that encoding exactly. A different encoding is **400** `calldata_mismatch`. Extra bytes after the encoding are **400** `trailing_bytes`. The client bytes are never sent.
 
 There is no shared browser secret. `CLAIM_API_SECRET` and the `x-claim-secret` header are removed. Wallet UX is the only production caller of live claims. Tests and docs are not a second caller, so no server-to-server HMAC was added. A header that used to carry a secret is ignored.
 
-The live allowlist is `release` and `refund` only. `createEscrow`, `dispute`, `withdraw`, and `withdrawTo` are **400** `action_not_claim` before signature recovery. `createEscrow` stays on the connected wallet. `dispute` requires `msg.sender` to be a party, so a relayed dispute always reverts. `withdraw` and `withdrawTo` spend `pendingWithdrawals[msg.sender]`. The relayer key is that sender, so those calls would move the relayer's own credit, not the user's. They stay disabled.
+The live allowlist is `refund` only. `release` is **400** `release_not_relayable` as soon as the action is read, before signature recovery, domain checks, nonce claim, simulation, signing, or broadcast. A refused release does not consume an intent nonce. `ReleaseNotAuthorized` means: "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee." The relayer key is not that caller, so a relayed release would revert `ReleaseNotAuthorized` and burn gas. The payer sends an open release from their own wallet. `createEscrow`, `dispute`, `withdraw`, and `withdrawTo` are **400** `action_not_claim` before signature recovery. `createEscrow` stays on the connected wallet. `dispute` requires `msg.sender` to be a party, so a relayed dispute always reverts. `withdraw` and `withdrawTo` spend `pendingWithdrawals[msg.sender]`. The relayer key is that sender, so those calls would move the relayer's own credit, not the user's. They stay disabled.
 
 A per-IP token bucket runs after the kill switch and before the body is parsed. It returns **429** `rate_limited`. Render's proxy appends the connecting client to `X-Forwarded-For`, so only the rightmost hop is trusted. A missing header uses the socket address. `X-Real-IP` and Cloudflare headers are not read. This service is not behind Cloudflare.
 
@@ -159,9 +161,9 @@ Verification order, and only then simulate and broadcast the server-built callda
 3. `ecrecover` of the low-`s` signature equals `intent.sender`. ERC-1271 `isValidSignature` runs only when `ERC1271_ENABLED=1`, and only for a signature that is not a 65-byte ECDSA signature. The default is off.
 4. The server builds calldata from the signed `action` and `escrowId`. A supplied value is refused. Client calldata is checked and then discarded.
 5. `sender` is the payer or the payee of that same `escrowId`, read on chain at `latest`. A missing id is **404** `escrow_not_found`.
-6. `(sender, nonce)` is claimed once. A replay is **409** `nonce_replay` and is not broadcast. A second request while the first is still in flight is **409** `nonce_in_flight`.
+6. `(sender, nonce)` is claimed once. A replay is **409** `nonce_replay` and is not broadcast. A second request while the first is still in flight is **409** `nonce_in_flight`. A **409** `ruling_pending` consumes that signed intent's nonce, so the same body retried returns `nonce_replay`. The user signs again after the 7-day grace ends.
 
-The on-chain `msg.sender` is still the relayer key. The signature says who may ask the relayer to spend gas. `release` and `refund` only credit `pendingWithdrawals`. The credited account withdraws its own balance.
+The on-chain `msg.sender` is still the relayer key. The signature says who may ask the relayer to spend gas. A relayed `refund` only credits `pendingWithdrawals`. The credited account withdraws its own balance. `release` is not relayed.
 
 ### Threat table
 
@@ -173,7 +175,7 @@ The on-chain `msg.sender` is still the relayer key. The signature says who may a
 | ERC-1271, off unless `ERC1271_ENABLED=1` | Contract wallets that cannot `ecrecover`. Left off until that path is reviewed. |
 | Sender is payer or payee of the signed escrow id | A stranger asking the relayer to spend gas on someone else's claim. |
 | Server-built calldata for that same escrow id | Relaying client bytes, a mismatched escrow id, or trailing bytes. |
-| Live allowlist of `release` and `refund` only | Relaying `createEscrow`, `dispute`, `withdraw`, or `withdrawTo`. |
+| Live allowlist of `refund` only, and `release_not_relayable` before a nonce is claimed | Relaying `release` (the relayer is not the payer), `createEscrow`, `dispute`, `withdraw`, or `withdrawTo`. |
 | Single-use `(sender, nonce)` | A second broadcast of the same approval. A replay is rejected. |
 | Per-IP token bucket before the body is read | A burst that would otherwise reach signature recovery. The rightmost `X-Forwarded-For` hop is the client. |
 | Low `s` and `v` in `{0, 1, 27, 28}` | A malleable signature. |
@@ -201,12 +203,14 @@ Production uses the file-backed store (`createFileIntentNonceStore`) at `INTENT_
 | --- | --- | --- |
 | 503 | `kill_switch` | Kill switch is on. Quote and claim are refused before the body is read. Health stays 200. |
 | 503 | `relayer_key_missing` | The signed intent was accepted and `RELAYER_PRIVATE_KEY` is unset. Nothing is signed. |
-| 502 | `broadcast_failed` | The Sepolia RPC rejected the send, or gas estimation reverted. `txHash` is null. `senderConstraint` says who the contract requires. `revert_data` is the raw revert bytes as a `0x` lowercase hex string, or `null` when the RPC error has no revert bytes. |
+| 502 | `broadcast_failed` | The Sepolia RPC rejected the send, or gas estimation reverted, and the revert is not `RulingPending`. `txHash` is null. `senderConstraint` says who the contract requires. `revert_data` is the raw revert bytes as a `0x` lowercase hex string, or `null` when the RPC error has no revert bytes. |
+| 409 | `ruling_pending` | A relayed refund's simulation or broadcast reverted with `RulingPending` (`0x3a0621bd`). Nothing is broadcast when simulation reverts. `txHash` is null. |
 | 409 | `live_submit_blocked` | Client asked for a live transaction and the gate is closed, or asked a quote to broadcast. `reason` is `escrow_not_booked`, `escrow_not_booked_sepolia`, `escrow_booked_spencer_run_auth_required`, `live_submit_off`, or `quote_does_not_broadcast`. |
-| 400 | `action_not_claim` | Live `action` is not `release` or `refund`. `createEscrow`, `dispute`, `withdraw`, `withdrawTo`, and governance setters are refused. |
+| 400 | `release_not_relayable` | Live `action` is `release`, uint8 `0`, or a case, whitespace, or numeric-string alias of release (`"0"`, `"00"`, `" 0"`, `"Release"`). Refused before signature recovery, simulation, signing, broadcast, and before an intent nonce is claimed. Only the payer can release an open escrow; after an upheld dispute, the payer or the payee. The payer sends an open release from their own wallet. |
 | 400 | `invalid_bytes32` | `escrowId` / bot id / `disputeId` is not a non-zero bytes32. |
 | 400 | `invalid_duration` | `durationSeconds` is outside `1..2592000` (`30 days` on the contract). |
-| 400 | `value_not_allowed` | A live release or refund included `amountWei`, `valueWei`, or `value`. The broadcast value is `0`. |
+| 400 | `action_not_claim` | Live `action` is not `refund`. An array or object is refused before signature recovery. `createEscrow`, `dispute`, `withdraw`, `withdrawTo`, and governance setters are refused. `release` uses `release_not_relayable` instead. |
+| 400 | `value_not_allowed` | A live refund included `amountWei`, `valueWei`, or `value`. The broadcast value is `0`. |
 | 400 | `mainnet_refused` | Domain or body `chainId` is `1` or `8453`. |
 | 400 | `wrong_chain` | Any chain other than `84532`. |
 | 400 | `retired_or_superseded_address` | The signed verifying contract is the retired escrow. |
@@ -233,6 +237,10 @@ Production uses the file-backed store (`createFileIntentNonceStore`) at `INTENT_
 | 401 | `unauthorized` | Admin route called with the wrong `ADMIN_SECRET`. |
 | 404 | `not_found` | Unknown path. |
 
+A **409** `ruling_pending` consumes that signed intent's nonce. The same body retried returns `nonce_replay`. The user signs again after the 7-day grace ends.
+
+`dispute` is not relayed. When a wallet-sent link reverts `DisputeVotesCast` (`0x8aab0a8f`), two votes on one side already decide that 3-member case, so it can't be linked or linked again. One vote, or one vote on each side, still links. The party opens a new case and links that one. `revertCopy.json` is that mapping. The sentence is: "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one."
+
 A live claim that fails while sending returns this body. `revert_data` is always present: a `0x` lowercase hex string of the raw revert bytes, or `null`. Empty `0x`, odd length, non-hex, and payloads larger than 4096 bytes are `null` (they are not truncated). The body does not include the RPC URL, the provider error text, the request body, or the signer key.
 
 ```json
@@ -241,9 +249,9 @@ A live claim that fails while sending returns this body. `revert_data` is always
   "error": "broadcast_failed",
   "txHash": null,
   "dryRun": false,
-  "action": "release",
+  "action": "refund",
   "senderConstraint": "permissionless",
-  "senderNote": "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.",
+  "senderNote": "refund is permissionless. The relayer signs the credit. The credited account withdraws its own balance.",
   "revert_data": null
 }
 ```
@@ -273,13 +281,13 @@ Calldata is encoded in `escrowCalldata.mjs` from the signatures in `contracts/Bo
 | Action | Signature | Value | Who may send it later |
 | --- | --- | --- | --- |
 | `createEscrow` | `createEscrow(bytes32,address,bytes32,bytes32,uint256)` | `amountWei` as `msg.value` | Payer bot's Vault operator (`vault_operator_must_send`) |
-| `release` | `release(bytes32)` | 0 | Anyone (`permissionless`) |
+| `release` | `release(bytes32)` | 0 | Payer while Open (`payer_while_open`). Payer or payee after an upheld dispute. Not relayed (`release_not_relayable`). |
 | `refund` | `refund(bytes32)` | 0 | Anyone (`permissionless`) |
 | `dispute` | `dispute(bytes32,bytes32)` | 0 | Payer or payee (`party_must_send`) |
 
 Selectors are `keccak256` of those strings. `setDenylist`, `setVault`, and `setDisputePanel` are not claim actions.
 
-The public funding wallet is not assumed to be a Vault operator. Live submit does not broadcast `createEscrow`, `dispute`, `withdraw`, or `withdrawTo`. `release` and `refund` are permissionless on chain and only credit a balance. The EIP-712 signer must still be the payer or the payee before the relayer will send them. The credited account calls `withdraw` or `withdrawTo` from its own wallet.
+The public funding wallet is not assumed to be a Vault operator. Live submit does not broadcast `createEscrow`, `release`, `dispute`, `withdraw`, or `withdrawTo`. `refund` is permissionless on chain and only credits a balance. The EIP-712 signer must still be the payer or the payee before the relayer will send a refund. `release` is sent by the payer's own wallet while the escrow is open, and by the payer or the payee after an upheld dispute. The credited account calls `withdraw` or `withdrawTo` from its own wallet.
 
 `npm run readonly` performs `eth_chainId`, `eth_getCode`, and `eth_call` only (`owner`, `governance`, `disputePanel`, `arbitratorCount`). It is not part of `npm test`. It refuses every chain other than 84532.
 

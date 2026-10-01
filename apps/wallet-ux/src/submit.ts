@@ -1,6 +1,7 @@
 import type { Address } from "viem"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import { BASE_MAINNET_CHAIN_ID, ETHEREUM_MAINNET_CHAIN_ID, type WalletChainId } from "./guard"
+import { RELEASE_SENDER_NOTE } from "./preview"
 
 export type SubmitCode = "ok" | "disconnected" | "conflict" | "unknown" | "mainnet" | "base-mainnet" | "wrong-chain"
 
@@ -77,7 +78,13 @@ export function submitSenderNote(functionName: string): string {
   if (functionName === "openDispute") {
     return "The connected wallet sends this dispute to the panel on Base Sepolia."
   }
-  return "Anyone can send a payout or a refund. The connected wallet sends this on Base Sepolia."
+  if (functionName === "release") {
+    return RELEASE_SENDER_NOTE
+  }
+  if (functionName === "refund") {
+    return "Anyone can send a refund. The connected wallet sends this on Base Sepolia."
+  }
+  return "The connected wallet sends this on Base Sepolia."
 }
 
 export function previewCardCopy(functionName: string, relayerConfigured: boolean): string {
@@ -94,8 +101,8 @@ export function previewCardCopy(functionName: string, relayerConfigured: boolean
               ? "This prepares opening a dispute."
               : "This prepares a transaction."
   const relayer =
-    relayerConfigured && (functionName === "release" || functionName === "refund")
-      ? " Escrow steps can also be sent through the claim relayer on Base Sepolia."
+    relayerConfigured && functionName === "refund"
+      ? " A refund can also be sent through the claim relayer on Base Sepolia."
       : ""
   return `${lead} Submit sends it from the connected wallet on Base Sepolia only.${relayer}`
 }
@@ -107,8 +114,17 @@ export const FORM_ERRORS = {
   valueZero: "Enter an amount greater than zero. Nothing was sent.",
   releaseId: "Enter the claim identifier before releasing this claim.",
   refundId: "Enter the claim identifier before refunding this claim.",
-  openIds: "Enter the dispute identifier and the claim identifier before opening a dispute.",
+  openIds: "Enter the claim identifier before opening a dispute.",
   openReason: "Enter a reason before opening a dispute.",
+  subjectNetwork: "The network did not answer, so this dispute was not prepared.",
+  subjectNoCode: "No escrow contract at this address on this network.",
+  subjectRejected: "The escrow rejected the subject read, so this dispute was not prepared.",
+  subjectNotBooked: "This contract did not return a dispute subject. It is not a supported escrow.",
+  subjectNotOpen:
+    "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
+  subjectExpired: "The claim window has closed, so this dispute can't be linked.",
+  subjectMissing: "This claim is not on the escrow yet, so this dispute was not prepared.",
+  subjectPending: "The subject is still being read, so this dispute was not prepared.",
   disputeClaim: "Enter the claim identifier before opening a dispute.",
   disputeId: "Enter the dispute identifier before opening a dispute.",
   denylistHash: "Enter the identifier before looking it up.",

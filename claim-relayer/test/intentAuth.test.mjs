@@ -5,9 +5,10 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { privateKeyToAccount } from "viem/accounts";
 import { createAbuseGuard } from "../abuseLimits.mjs";
 import { createClaimRelayer } from "../app.mjs";
-import { RETIRED_ESCROW } from "../claimIntent.mjs";
+import { RETIRED_ESCROW, nonceKey } from "../claimIntent.mjs";
 import { createClaimLog } from "../claimLog.mjs";
 import { loadConfig } from "../config.mjs";
 import { encodeEscrowAction } from "../escrowCalldata.mjs";
@@ -95,7 +96,7 @@ async function boot(env = {}, extra = {}) {
 async function releaseBody(account, opts = {}) {
   return signedLiveBody({
     account,
-    action: opts.action || "release",
+    action: opts.action || "refund",
     escrowId: opts.escrowId || "0x" + "11".repeat(32),
     nonce: opts.nonce || "7",
     deadline: opts.deadline || deadlineAt(120),
@@ -109,6 +110,145 @@ async function releaseBody(account, opts = {}) {
 describe("signed claim intent auth", () => {
   const accounts = testAccounts();
   const escrowId = "0x" + "11".repeat(32);
+
+  it("refuses a relayed release before a nonce, a signature, or a broadcast", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const intentNonces = createMemoryIntentNonceStore({ now: () => NOW_MS });
+    let claims = 0;
+    const claim = intentNonces.claim.bind(intentNonces);
+    intentNonces.claim = async (input) => {
+      claims += 1;
+      return claim(input);
+    };
+    const rpcMethods = [];
+    let signerCalls = 0;
+    const sent = [];
+    const signer = privateKeyToAccount("0x" + "11".repeat(32));
+    const broadcaster = {
+      async send(tx) {
+        sent.push(tx);
+        signerCalls += 1;
+        await signer.signTransaction({
+          chainId: 84532,
+          nonce: 0,
+          gas: 21_000n,
+          maxFeePerGas: 1n,
+          maxPriorityFeePerGas: 1n,
+          to: BOOKED_ESCROW,
+          value: 0n,
+          data: "0x",
+          type: "eip1559",
+        });
+        rpcMethods.push("eth_sendTransaction");
+        rpcMethods.push("eth_sendRawTransaction");
+        return { txHash: TX };
+      },
+    };
+    const ctx = await boot({}, { chain, intentNonces, broadcaster });
+    try {
+      const body = await signedLiveBody({
+        account: accounts.payer,
+        action: "release",
+        escrowId,
+        nonce: "77",
+        deadline: deadlineAt(120),
+      });
+      const res = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(res.status, 400);
+      assert.equal(res.json.error, "release_not_relayable");
+      assert.equal(res.json.txHash, null);
+      assert.equal(claims, 0);
+      assert.equal(signerCalls, 0);
+      assert.equal(rpcMethods.includes("eth_sendTransaction"), false);
+      assert.equal(rpcMethods.includes("eth_sendRawTransaction"), false);
+      assert.equal(chain.calls.simulations.length, 0);
+      assert.equal(chain.calls.reads.length, 0);
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(sent.length, 0);
+      assert.deepEqual(await intentNonces.peek(nonceKey(accounts.payer.address, 77n)), { kind: "absent" });
+
+      const again = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(again.status, 400);
+      assert.equal(again.json.error, "release_not_relayable");
+      assert.equal(claims, 0);
+      assert.equal(signerCalls, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("returns 409 ruling_pending when refund simulation reverts RulingPending and does not broadcast", async () => {
+    let sends = 0;
+    let sims = 0;
+    const chain = trackingChain({
+      payer: accounts.payer.address,
+      payee: accounts.payee.address,
+      simulate: async () => {
+        sims += 1;
+        if (sims === 1) return { ok: false, gasUsed: 0n, revertData: "0x3a0621bd" };
+        return { ok: true, gasUsed: 80_000n };
+      },
+    });
+    const ctx = await boot({}, {
+      chain,
+      broadcaster: {
+        async send() {
+          sends += 1;
+          return { txHash: TX };
+        },
+      },
+    });
+    try {
+      const body = await releaseBody(accounts.payer, { nonce: "78" });
+      const res = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(res.status, 409);
+      assert.equal(res.json.error, "ruling_pending");
+      assert.equal(res.json.txHash, null);
+      assert.equal(res.json.revert_data, "0x3a0621bd");
+      assert.equal(sends, 0);
+      assert.equal(chain.calls.simulations.length, 1);
+
+      const again = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(again.status, 409);
+      assert.equal(again.json.error, "nonce_replay");
+      assert.equal(again.json.txHash, null);
+      assert.equal(sends, 0);
+
+      const fresh = await releaseBody(accounts.payer, { nonce: "178" });
+      const ok = await request(ctx.port, "POST", "/v1/claims", fresh);
+      assert.equal(ok.status, 200);
+      assert.equal(ok.json.txHash, TX);
+      assert.equal(sends, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("returns 409 ruling_pending when a broadcast reverts RulingPending", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const ctx = await boot({}, {
+      chain,
+      broadcaster: {
+        async send() {
+          const err = new Error("execution reverted");
+          err.data = "0x3a0621BD";
+          throw err;
+        },
+      },
+    });
+    try {
+      const body = await releaseBody(accounts.payer, { nonce: "79" });
+      const res = await request(ctx.port, "POST", "/v1/claims", body);
+      assert.equal(res.status, 409);
+      assert.equal(res.json.error, "ruling_pending");
+      assert.notEqual(res.status, 502);
+      assert.equal(res.json.txHash, null);
+      assert.equal(res.json.revert_data, "0x3a0621bd");
+      assert.equal(chain.calls.simulations.length, 1);
+    } finally {
+      await ctx.close();
+    }
+  });
 
   it("rejects a non-party signature with 403 and does not broadcast", async () => {
     const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
@@ -239,7 +379,7 @@ describe("signed claim intent auth", () => {
       delete bound.calldata;
       const accepted = await request(ctx.port, "POST", "/v1/claims", bound);
       assert.equal(accepted.status, 200);
-      const expected = encodeEscrowAction({ action: "release", escrowId });
+      const expected = encodeEscrowAction({ action: "refund", escrowId });
       assert.equal(ctx.sent[0].data.toLowerCase(), expected.calldata.toLowerCase());
       assert.equal(ctx.sent[0].valueWei, "0");
       assert.equal(accepted.json.valueWei, "0");
@@ -306,7 +446,7 @@ describe("signed claim intent auth", () => {
     });
     const on = await boot({ ERC1271_ENABLED: "1" }, { chain: onChain });
     try {
-      const encoded = encodeEscrowAction({ action: "release", claimId: escrowId });
+      const encoded = encodeEscrowAction({ action: "refund", claimId: escrowId });
       const body = await releaseBody(accounts.payer, { nonce: "116", calldata: encoded.calldata });
       body.signature = "0x" + "33".repeat(80);
       const accepted = await request(on.port, "POST", "/v1/claims", body);
@@ -426,6 +566,40 @@ describe("signed claim intent auth", () => {
       assert.equal(sent.length, 0);
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("refuses release aliases, including numeric 0, before signature recovery", async () => {
+    const chain = trackingChain({ payer: accounts.payer.address, payee: accounts.payee.address });
+    const intentNonces = createMemoryIntentNonceStore({ now: () => NOW_MS });
+    const ctx = await boot({}, { chain, intentNonces });
+    try {
+      let nonce = 80n;
+      for (const action of [0, "0", "00", " 0", "Release", " RELEASE "]) {
+        const bodyNonce = nonce;
+        nonce += 1n;
+        const res = await request(ctx.port, "POST", "/v1/claims", {
+          live: true,
+          intent: { action, sender: accounts.payer.address, nonce: bodyNonce.toString() },
+        });
+        assert.equal(res.status, 400, JSON.stringify(action));
+        assert.equal(res.json.error, "release_not_relayable", JSON.stringify(action));
+        assert.equal(res.json.txHash, null);
+        assert.deepEqual(await intentNonces.peek(nonceKey(accounts.payer.address, bodyNonce)), { kind: "absent" });
+      }
+      for (const action of [[], {}, ["release"], { name: "release" }]) {
+        const res = await request(ctx.port, "POST", "/v1/claims", { live: true, intent: { action } });
+        assert.equal(res.status, 400);
+        assert.equal(res.json.error, "action_not_claim");
+        assert.equal(res.json.field, "action");
+        assert.equal(res.json.txHash, null);
+      }
+      assert.equal(chain.calls.reads.length, 0);
+      assert.equal(chain.calls.erc1271.length, 0);
+      assert.equal(chain.calls.simulations.length, 0);
+      assert.equal(ctx.sent.length, 0);
+    } finally {
+      await ctx.close();
     }
   });
 

@@ -1,14 +1,24 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { formatEther, isAddress, parseEther, type Address, type Hex } from "viem"
 import { useAccount, usePublicClient, useSendTransaction, useWalletClient } from "wagmi"
 import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
-import { parseBytes32 } from "./bytes32"
+import { parseBytes32, randomBytes32 } from "./bytes32"
+import { disputeWindowMessage, readDisputeSubject, type DisputeSubjectResult } from "./disputeSubject"
+import { currentNowSeconds } from "./nowClock"
 import { ErrorNotice } from "./ErrorNotice"
 import { presentError, type ErrorPresentation } from "./format"
 import { resolveWalletChainId } from "./guard"
 import {
+  CASE_ID_HINT,
   ERROR_GLOSSARY,
+  LINK_CASE_HEADING,
   MAX_DURATION_SECONDS,
+  NEW_CASE_ID_BUTTON,
+  OPEN_AND_LINK_BUTTON,
+  OPEN_AND_LINK_TEXT,
+  OPEN_CASE_HEADING,
+  POST_EXPIRY_REFUND_INTRO,
+  POST_EXPIRY_REFUND_ORDER,
   previewCreateEscrow,
   previewDispute,
   previewOpenDispute,
@@ -285,17 +295,26 @@ function Field({
   value,
   onChange,
   hint,
+  readOnly = false,
 }: {
   id: string
   label: string
   value: string
   onChange: (value: string) => void
   hint?: string
+  readOnly?: boolean
 }) {
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} value={value} spellCheck={false} autoComplete="off" onChange={(event) => onChange(event.target.value)} />
+      <input
+        id={id}
+        value={value}
+        spellCheck={false}
+        autoComplete="off"
+        readOnly={readOnly}
+        onChange={(event) => onChange(event.target.value)}
+      />
       {hint ? <p className="hint">{hint}</p> : null}
     </div>
   )
@@ -303,14 +322,19 @@ function Field({
 
 export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address }) {
   const [error, setError] = useState<string | null>(null)
-  const [preview, setPreview] = useState<CallPreview | null>(null)
+  const [previews, setPreviews] = useState<CallPreview[]>([])
   const relayerConfigured = relayerConfigFromEnv({
     VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL,
   }).url != null
 
-  function show(next: CallPreview) {
+  function show(next: CallPreview | CallPreview[]) {
     setError(null)
-    setPreview(next)
+    setPreviews(Array.isArray(next) ? next : [next])
+  }
+
+  function fail(message: string) {
+    setPreviews([])
+    setError(message)
   }
 
   return (
@@ -323,10 +347,7 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
       <CreateForm
         escrow={escrow}
         onPreview={show}
-        onError={(message) => {
-          setPreview(null)
-          setError(message)
-        }}
+        onError={fail}
       />
       <IdForm
         idPrefix="release"
@@ -334,44 +355,44 @@ export function FlowPreview({ escrow, panel }: { escrow: Address; panel: Address
         buttonLabel="Prepare this payout"
         missingId={FORM_ERRORS.releaseId}
         onSubmit={(escrowId) => show(previewRelease(escrow, escrowId))}
-        onError={(message) => {
-          setPreview(null)
-          setError(message)
-        }}
+        onError={fail}
       />
       <IdForm
         idPrefix="refund"
         title="Refund a claim"
         buttonLabel="Prepare this refund"
         missingId={FORM_ERRORS.refundId}
+        intro={<PostExpiryRefundOrder />}
         onSubmit={(escrowId) => show(previewRefund(escrow, escrowId))}
-        onError={(message) => {
-          setPreview(null)
-          setError(message)
-        }}
+        onError={fail}
       />
       <OpenDisputeForm
+        escrow={escrow}
         panel={panel}
         onPreview={show}
-        onError={(message) => {
-          setPreview(null)
-          setError(message)
-        }}
+        onError={fail}
       />
       <DisputeForm
         escrow={escrow}
         onPreview={show}
-        onError={(message) => {
-          setPreview(null)
-          setError(message)
-        }}
+        onError={fail}
       />
       {error ? (
         <p className="bad" role="alert">
           {error}
         </p>
       ) : null}
-      <PreviewBlock preview={preview} escrow={escrow} panel={panel} relayerConfigured={relayerConfigured} />
+      {previews.length > 1 ? (
+        <div data-testid="open-and-link">
+          <p>{OPEN_AND_LINK_TEXT}</p>
+          <h3>{OPEN_CASE_HEADING}</h3>
+          <PreviewBlock preview={previews[0] ?? null} escrow={escrow} panel={panel} relayerConfigured={relayerConfigured} />
+          <h3>{LINK_CASE_HEADING}</h3>
+          <PreviewBlock preview={previews[1] ?? null} escrow={escrow} panel={panel} relayerConfigured={relayerConfigured} />
+        </div>
+      ) : (
+        <PreviewBlock preview={previews[0] ?? null} escrow={escrow} panel={panel} relayerConfigured={relayerConfigured} />
+      )}
       <h3>Revert glossary</h3>
       <dl className="glossary">
         {ERROR_GLOSSARY.map((entry) => (
@@ -469,11 +490,28 @@ function CreateForm({
   )
 }
 
+function PostExpiryRefundOrder() {
+  return (
+    <div data-testid="post-expiry-refund-order">
+      <p className="muted">{POST_EXPIRY_REFUND_INTRO}</p>
+      <ol className="plain">
+        {POST_EXPIRY_REFUND_ORDER.map((step) => (
+          <li key={step.state}>
+            <strong>{step.state}.</strong> {step.error ? <span className="mono">{step.error}. </span> : null}
+            {step.outcome}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 function IdForm({
   idPrefix,
   title,
   buttonLabel,
   missingId,
+  intro,
   onSubmit,
   onError,
 }: {
@@ -481,6 +519,7 @@ function IdForm({
   title: string
   buttonLabel: string
   missingId: string
+  intro?: ReactNode
   onSubmit: (escrowId: `0x${string}`) => void
   onError: (message: string) => void
 }) {
@@ -498,6 +537,7 @@ function IdForm({
       }}
     >
       <h3>{title}</h3>
+      {intro}
       <Field id={`${idPrefix}-id`} label="Claim identifier" value={escrowId} onChange={setEscrowId} />
       <button type="submit">{buttonLabel}</button>
     </form>
@@ -505,25 +545,75 @@ function IdForm({
 }
 
 function OpenDisputeForm({
+  escrow,
   panel,
   onPreview,
   onError,
 }: {
+  escrow: Address
   panel: Address
-  onPreview: (preview: CallPreview) => void
+  onPreview: (preview: CallPreview[]) => void
   onError: (message: string) => void
 }) {
-  const [disputeId, setDisputeId] = useState("")
-  const [subjectHash, setSubjectHash] = useState("")
+  const client = usePublicClient({ chainId: BASE_SEPOLIA_CHAIN_ID })
+  const [disputeId, setDisputeId] = useState(() => randomBytes32())
+  const [claimId, setClaimId] = useState("")
   const [reason, setReason] = useState("")
+  const [resolution, setResolution] = useState<DisputeSubjectResult | null>(null)
+  const [readingSubject, setReadingSubject] = useState(false)
+  const parsedClaim = parseBytes32(claimId)
+
+  useEffect(() => {
+    if (!parsedClaim) {
+      setResolution(null)
+      setReadingSubject(false)
+      return
+    }
+    if (!client) {
+      setReadingSubject(false)
+      setResolution({ ok: false, message: FORM_ERRORS.subjectNetwork })
+      return
+    }
+    let cancelled = false
+    setReadingSubject(true)
+    setResolution(null)
+    readDisputeSubject(client, escrow, parsedClaim, currentNowSeconds()).then(
+      (next) => {
+        if (cancelled) return
+        setReadingSubject(false)
+        setResolution(next)
+      },
+      () => {
+        if (cancelled) return
+        setReadingSubject(false)
+        setResolution({ ok: false, message: FORM_ERRORS.subjectNetwork })
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [client, escrow, parsedClaim])
+
+  const createdAt = resolution?.ok ? resolution.createdAt.toString() : ""
+  const subject = resolution?.ok ? resolution.subject : ""
+  const subjectHint = readingSubject
+    ? "Reading the subject from the escrow."
+    : resolution?.ok
+      ? resolution.source === "view"
+        ? "Read from the escrow. The panel stores this subject."
+        : "This escrow has no subject view, so the claim identifier is the subject."
+      : resolution
+        ? resolution.message
+        : "Filled from the escrow after the claim identifier is entered."
 
   return (
     <form
+      id="open-dispute"
       onSubmit={(event) => {
         event.preventDefault()
         const id = parseBytes32(disputeId)
-        const subject = parseBytes32(subjectHash)
-        if (!id || !subject) {
+        const claim = parseBytes32(claimId)
+        if (!id || !claim) {
           onError(FORM_ERRORS.openIds)
           return
         }
@@ -531,20 +621,57 @@ function OpenDisputeForm({
           onError(FORM_ERRORS.openReason)
           return
         }
-        onPreview(previewOpenDispute(panel, id, subject, reason.trim()))
+        if (readingSubject || !resolution || (resolution.ok && resolution.escrowId !== claim)) {
+          onError(FORM_ERRORS.subjectPending)
+          return
+        }
+        if (!resolution.ok) {
+          onError(resolution.message)
+          return
+        }
+        const windowMessage = disputeWindowMessage(resolution.state, resolution.expiresAt, currentNowSeconds())
+        if (windowMessage) {
+          onError(windowMessage)
+          return
+        }
+        onPreview([
+          previewOpenDispute(panel, id, resolution.subject, reason.trim()),
+          previewDispute(escrow, claim, id),
+        ])
       }}
     >
       <h3>Open a dispute</h3>
-      <Field id="open-dispute-id" label="Dispute identifier" value={disputeId} onChange={setDisputeId} />
+      <p className="muted">{OPEN_AND_LINK_TEXT}</p>
+      <Field
+        id="open-dispute-id"
+        label="Case identifier"
+        value={disputeId}
+        onChange={() => undefined}
+        readOnly
+        hint={CASE_ID_HINT}
+      />
+      <button type="button" onClick={() => setDisputeId(randomBytes32())}>
+        {NEW_CASE_ID_BUTTON}
+      </button>
+      <Field id="open-claim-id" label="Claim identifier" value={claimId} onChange={setClaimId} />
+      <Field
+        id="open-created-at"
+        label="Time the claim was created"
+        value={createdAt}
+        onChange={() => undefined}
+        readOnly
+        hint="Read from the claim. This time is not typed."
+      />
       <Field
         id="open-subject"
-        label="Claim identifier"
-        value={subjectHash}
-        onChange={setSubjectHash}
-        hint="Use the claim identifier. The panel stores this as the subject."
+        label="Subject"
+        value={subject}
+        onChange={() => undefined}
+        readOnly
+        hint={subjectHint}
       />
       <Field id="open-reason" label="Reason" value={reason} onChange={setReason} />
-      <button type="submit">Prepare this dispute</button>
+      <button type="submit">{OPEN_AND_LINK_BUTTON}</button>
       <p className="mono">{panel}</p>
     </form>
   )

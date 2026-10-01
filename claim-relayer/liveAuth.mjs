@@ -1,6 +1,10 @@
 /**
  * Live POST /v1/claims authorization.
- * Verification order is fixed:
+ * `release` is refused before any of the steps below. A relayed release would
+ * revert on chain: while the escrow is Open only the payer may call it, and
+ * the relayer address is not the payer. That refusal does not simulate, sign,
+ * broadcast, or consume an intent nonce.
+ * Verification order for a relayable action is fixed:
  *   1. domain chainId + verifyingContract
  *   2. deadline window
  *   3. signer (ECDSA, then ERC-1271 only when enabled)
@@ -11,12 +15,18 @@
  * Abuse limits run after the signature checks and before simulation.
  */
 
+import { senderNoteFor } from "./claims.mjs";
 import { DEADLINE_WINDOW_SECONDS, assertIntentDeadline, assertIntentDomain, assertIntentSigner, nonceKey, parseClaimIntent } from "./claimIntent.mjs";
 import { httpError } from "./config.mjs";
 import { encodeEscrowAction } from "./escrowCalldata.mjs";
+import { isRulingPending } from "./revertData.mjs";
 
 /**
- * Live allowlist is release and refund only.
+ * Live allowlist is refund only.
+ * release(bytes32) is payer-only while the escrow is Open, and payer or payee
+ * only after the linked case is resolved and upheld. The transaction sender is
+ * the relayer key, so a relayed release reverts ReleaseNotAuthorized. It is
+ * refused here, before a nonce is claimed and before simulation or signing.
  * withdraw() and withdrawTo(address) spend pendingWithdrawals[msg.sender]
  * (BotAttestationEscrow.sol withdraw, withdrawTo, and _withdraw). The relayer
  * is that msg.sender, so a relayed withdraw pays the relayer and a relayed
@@ -25,7 +35,14 @@ import { encodeEscrowAction } from "./escrowCalldata.mjs";
  * dispute requires msg.sender to be the payer or the payee, so a relayed
  * dispute reverts. createEscrow is not relayed.
  */
-const LIVE_ACTIONS = new Set(["release", "refund"]);
+const LIVE_ACTIONS = new Set(["refund"]);
+
+/** Refuse release before calldata, escrow reads, nonce claim, simulation, or signing. */
+export function assertReleaseRelayable(action) {
+  if (action === "release") {
+    throw httpError(400, "release_not_relayable", { txHash: null, dryRun: false });
+  }
+}
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -34,11 +51,13 @@ function sameAddress(left, right) {
 }
 
 /**
- * Build release/refund calldata from the signed action and escrow id.
+ * Build refund calldata from the signed action and escrow id.
  * A client-supplied calldata field is checked and then discarded.
  * The transaction uses the bytes this function returns.
+ * release is refused before that encoding.
  */
 export function bindLiveCall(intent, body) {
+  assertReleaseRelayable(intent.action);
   if (!LIVE_ACTIONS.has(intent.action)) throw httpError(400, "action_not_claim", { field: "action" });
   const built = encodeEscrowAction({ action: intent.action, escrowId: intent.escrowId });
   const suppliedValue = body?.amountWei ?? body?.valueWei ?? body?.value;
@@ -77,6 +96,7 @@ function gasWeiFor(gasUsed, valueWei, gasPriceWei) {
 export async function prepareLiveClaim(args) {
   const { body, config, chain, intentNonces, abuse, nowMs, ip } = args;
   const intent = parseClaimIntent(body);
+  assertReleaseRelayable(intent.action);
   assertIntentDomain(intent, config);
   assertIntentDeadline(intent, nowMs);
   await assertIntentSigner(intent, config, chain);
@@ -143,10 +163,21 @@ export async function prepareLiveClaim(args) {
     throw err;
   }
   if (!simulation?.ok) {
+    const revert_data = simulation?.revertData ?? null;
+    if (isRulingPending(revert_data)) {
+      throw Object.assign(httpError(409, "ruling_pending", {
+        txHash: null,
+        dryRun: false,
+        revert_data,
+        action: intent.action,
+        senderConstraint: described.senderConstraint,
+        senderNote: senderNoteFor(intent.action),
+      }), { nonceClaimed: true, nonceKey: key });
+    }
     throw Object.assign(httpError(502, "broadcast_failed", {
       txHash: null,
       dryRun: false,
-      revert_data: simulation?.revertData ?? null,
+      revert_data,
       action: intent.action,
       senderConstraint: described.senderConstraint,
     }), { nonceClaimed: true, nonceKey: key });
