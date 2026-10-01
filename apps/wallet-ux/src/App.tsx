@@ -178,7 +178,7 @@ export function App() {
   return (
     <div className="wrap">
       <header>
-        <h1>Agent A</h1>
+        <h1>Agent.BV</h1>
         <p className="lede">Agent Auditor · Base Sepolia only · chain id {BASE_SEPOLIA_CHAIN_ID}</p>
       </header>
 

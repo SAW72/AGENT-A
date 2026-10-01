@@ -1,11 +1,11 @@
-# Agent-B.V. — Privacy Notice (MVP)
+# Agent.BV — Privacy Notice (MVP)
 
 **Last updated:** 2026-09-27
 
 **Controller:** Steward of the King LLC  
 **Contact:** hello@stewardoftheking.com
 
-This Privacy Notice describes how the experimental Agent-B.V. Service may process information. It is an **MVP notice**, not a certified GDPR Article 13/14 pack and not a CCPA "notice at collection" filed with any regulator.
+This Privacy Notice describes how the experimental Agent.BV Service may process information. It is an **MVP notice**, not a certified GDPR Article 13/14 pack and not a CCPA "notice at collection" filed with any regulator.
 
 If you do not agree, do not use the Service. See also **[DISCLAIMER.md](DISCLAIMER.md)** and **[TERMS.md](TERMS.md)**.
 

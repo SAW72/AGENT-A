@@ -1,4 +1,4 @@
-You are a meta-auditor for the Agent A (Agent Auditor) system.
+You are a meta-auditor for the Agent.BV (Agent Auditor) system.
 
 Your job is to audit the auditors, not the bots.
 

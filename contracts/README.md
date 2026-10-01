@@ -190,11 +190,11 @@ The live pair has no listings and no Vault bots. Operator scripts call the exist
 
 ## BVT stack (additive)
 
-Agent A Token (BVT) lives under `contracts/bvt/`. It does **not** change Denylist / Vault / Liability / InsuranceFund / DisputePanel. Those contracts can later call `IBVTFeeGate` / `IAuditorStakeView` (see `contracts/bvt/IBVTHooks.sol`). Core deploy already starts Ownable2Step handoff of Denylist / Vault to `CORE_TIMELOCK`.
+Agent.BV Token (BVT) lives under `contracts/bvt/`. It does **not** change Denylist / Vault / Liability / InsuranceFund / DisputePanel. Those contracts can later call `IBVTFeeGate` / `IAuditorStakeView` (see `contracts/bvt/IBVTHooks.sol`). Core deploy already starts Ownable2Step handoff of Denylist / Vault to `CORE_TIMELOCK`.
 
 | File | Role |
 | --- | --- |
-| `bvt/BVT.sol` | ERC-20. Product label **Agent A Token (BVT)**. On-chain `name()` remains **Bot Verifier Token**; symbol **BVT**. No constructor mint. |
+| `bvt/BVT.sol` | ERC-20. Product label **Agent.BV Token (BVT)**. On-chain `name()` remains **Bot Verifier Token**; symbol **BVT**. No constructor mint. |
 | `bvt/BVTStaking.sol` | Auditor lock, operator bootstrap, slash. |
 | `bvt/BVTFeeRouter.sol` | Registration / audit / vault fees + usage earn mint. |
 | `bvt/BVTGovernor.sol` + `bvt/BVTTimelock.sol` | Stake-weighted votes; **48h** timelock. |

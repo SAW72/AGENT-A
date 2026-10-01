@@ -1,6 +1,6 @@
 # Claim relayer (Base Sepolia)
 
-Gas and ops service for the Agent A (Agent Auditor) claim flow. Default mode is **fixtures / dry-run**. Live claim submits are unlocked only on Base Sepolia when `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1`. `npm run readonly` is a separate read-only check (`eth_chainId`, `eth_getCode`, `eth_call` only).
+Gas and ops service for the Agent.BV (Agent Auditor) claim flow. Default mode is **fixtures / dry-run**. Live claim submits are unlocked only on Base Sepolia when `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1`. `npm run readonly` is a separate read-only check (`eth_chainId`, `eth_getCode`, `eth_call` only).
 
 Public funding wallet (address only): `0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861` (`…31861`). The same EOA is booked as `claimRelayerWallet` in `deployments/base-sepolia.json`. It is not a contract. The hosted service derives it from `RELAYER_PRIVATE_KEY`. Never commit the private key.
 

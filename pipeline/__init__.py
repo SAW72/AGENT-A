@@ -1,1 +1,1 @@
-"""Agent A (Agent Auditor) audit pipeline."""
+"""Agent.BV (Agent Auditor) audit pipeline."""

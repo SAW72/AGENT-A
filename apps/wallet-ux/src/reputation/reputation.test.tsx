@@ -321,7 +321,7 @@ describe("reputation copy", () => {
     const view = readFileSync(join(dir, "ReputationView.tsx"), "utf8")
     expect(view).toContain('from "../brand"')
     expect(view).toContain("DISPLAY_NAME")
-    expect(view).not.toContain("Agent-BV")
+    expect(view).not.toContain("Agent.BV")
     expect(view).not.toContain("Agent Bot Verifier")
   })
 })
