@@ -27,6 +27,19 @@
   },
   {
     "type": "function",
+    "name": "RULING_GRACE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
     "outputs": [],
@@ -209,6 +222,30 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "panelSubject",
+    "inputs": [
+      {
+        "name": "escrowId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "createdAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -830,6 +867,11 @@
   {
     "type": "error",
     "name": "Replay",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RulingPending",
     "inputs": []
   },
   {
