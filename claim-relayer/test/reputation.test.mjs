@@ -194,6 +194,9 @@ describe("reputation config", () => {
     const allowed = new Set([
       fileURLToPath(new URL("../../config/reputation/sepolia.json", import.meta.url)),
       fileURLToPath(new URL("../fixtures/reputation/config.example.json", import.meta.url)),
+      fileURLToPath(
+        new URL("../../apps/wallet-ux/fixtures/reputation/EXAMPLE-DATA.config.example.json", import.meta.url),
+      ),
     ]);
     const root = fileURLToPath(new URL("../../", import.meta.url));
     for (const label of [raw.product.name, raw.product.title]) {
