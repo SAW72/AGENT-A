@@ -26,6 +26,12 @@ contract LiveDenylistVaultTest is Test {
 
     uint256 internal constant BASE_SEPOLIA = 84532;
 
+    /// @dev Pre-PR23 live Denylist runtime (source 78e3ba0, deployed 2026-09-25).
+    ///      Main now adds InvalidBucket, so this is not `type(Denylist).runtimeCode`.
+    ///      TODO: update when the Denylist is redeployed from main.
+    bytes32 internal constant LIVE_DENYLIST_PRE_PR23_RUNTIME_HASH =
+        0x6d58afc07cebf667421cd28c317e937db9d1ee8df62ee507c48cc13e66b77dc4;
+
     bytes32 internal constant WEIGHT = keccak256("qa-live-denylist-vault-weight");
     bytes32 internal constant SIG = keccak256("qa-live-denylist-vault-sig");
     bytes32 internal constant PROMPT = keccak256("qa-live-denylist-vault-prompt");
@@ -53,12 +59,17 @@ contract LiveDenylistVaultTest is Test {
         console2.log("live fork block", block.number);
     }
 
-    function test_forkIsBaseSepoliaAndRuntimeMatchesTip() public view {
+    function test_forkIsBaseSepoliaAndDenylistRuntimeIsPrePr23() public view {
         assertEq(block.chainid, BASE_SEPOLIA);
         assertGt(DENYLIST.code.length, 0);
         assertGt(VAULT.code.length, 0);
-        assertEq(DENYLIST.code, type(Denylist).runtimeCode);
-        assertEq(VAULT.code, type(Vault).runtimeCode);
+        assertEq(keccak256(DENYLIST.code), LIVE_DENYLIST_PRE_PR23_RUNTIME_HASH);
+        // The CBOR metadata embeds an IPFS hash of the source/metadata JSON, which
+        // changes with comments, paths, or settings even when opcodes are identical.
+        bytes memory liveVault = _stripSolidityCborMetadata(address(VAULT).code);
+        bytes memory compiledVault = _stripSolidityCborMetadata(type(Vault).runtimeCode);
+        assertEq(liveVault.length, compiledVault.length);
+        assertEq(keccak256(liveVault), keccak256(compiledVault));
     }
 
     function test_ownerAndPendingOwnerAreCoreTimelock() public view {
@@ -333,6 +344,22 @@ contract LiveDenylistVaultTest is Test {
         assertEq(denylist.listing(uint8(Denylist.Bucket.Exact), WEIGHT).timesListed, 1);
         assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), WEIGHT));
         assertEq(uint256(denylist.check(WEIGHT, bytes32(0), bytes32(0))), uint256(Denylist.MatchLevel.None));
+    }
+
+    /// @dev Drop Solidity's CBOR metadata suffix. The last two bytes are a big-endian uint16 L,
+    ///      the length of the CBOR blob. The suffix is L + 2 bytes.
+    function _stripSolidityCborMetadata(
+        bytes memory code
+    ) internal pure returns (bytes memory stripped) {
+        uint256 len = code.length;
+        require(len >= 2, "runtime too short to read CBOR length");
+        uint256 metaLen = (uint256(uint8(code[len - 2])) << 8) | uint256(uint8(code[len - 1]));
+        require(metaLen + 2 <= len, "CBOR metadata longer than runtime");
+        uint256 strippedLen = len - (metaLen + 2);
+        stripped = new bytes(strippedLen);
+        for (uint256 i; i < strippedLen; ++i) {
+            stripped[i] = code[i];
+        }
     }
 
     function _eip7702Delegate(

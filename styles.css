@@ -232,3 +232,25 @@ body {
     font-size: 0.98rem;
   }
 }
+
+footer {
+  margin: 0;
+  padding: 0.35rem 1rem 0.85rem;
+  text-align: center;
+  color: var(--page-ink);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+footer a {
+  color: inherit;
+}
+
+@media (min-width: 861px) {
+  footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
+}

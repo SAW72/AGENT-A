@@ -283,6 +283,10 @@ The public funding wallet is not assumed to be a Vault operator. Live submit doe
 
 `npm run readonly` performs `eth_chainId`, `eth_getCode`, and `eth_call` only (`owner`, `governance`, `disputePanel`, `arbitratorCount`). It is not part of `npm test`. It refuses every chain other than 84532.
 
+## Cutover
+
+Spencer runs the cutover himself. [CUTOVER.md](CUTOVER.md) starts with an interim stop against the relayer that is deployed now. The later steps publish the EIP-712 relayer and the Pages bundle, and they name the behavior that code does not have yet.
+
 ## Render
 
 See `render.yaml` in this directory. It is a reference Blueprint, not registered at the repo root, so merging it does not create a Render service. Do not apply it until Spencer says GO.
