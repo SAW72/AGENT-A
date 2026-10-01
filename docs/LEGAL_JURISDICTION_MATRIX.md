@@ -1,12 +1,12 @@
 # Legal jurisdiction matrix (risk map)
 
-**Status:** Informal **risk map** for Agent-B.V. maintainers.  
+**Status:** Informal **risk map** for Agent-BV maintainers.  
 **Not** a formal legal opinion, not a compliance program, and **not a catalog of every law worldwide**.  
 **Operator:** Steward of the King LLC · **Contact:** hello@stewardoftheking.com
 
 Counsel should refresh this before any public launch, token distribution, paid institutional product, or marketing that looks like certification or insurance.
 
-Agent-B.V. is a **US-based experimental** AI/crypto trust-signal project (scores, stamps, denylists, testnet contracts, optional BVT operational token). The table flags **material** regimes that commonly attach to that fact pattern.
+Agent-BV is a **US-based experimental** AI/crypto trust-signal project (scores, stamps, denylists, testnet contracts, optional BVT operational token). The table flags **material** regimes that commonly attach to that fact pattern.
 
 | Regime | Why it can attach | Current experimental posture | Watch-outs |
 | --- | --- | --- | --- |
