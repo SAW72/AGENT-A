@@ -11,7 +11,8 @@ import { DisputePanel } from "../contracts/DisputePanel.sol";
 /// @notice Deploy Denylist → Vault → Liability → InsuranceFund → DisputePanel.
 /// InsuranceFund takes an immutable Liability; Liability then bindInsurance.
 /// After deploy: Denylist/Vault `transferOwnership(CORE_TIMELOCK)` (Ownable2Step;
-/// timelock must `acceptOwnership`). InsuranceFund/Liability/DisputePanel
+/// CORE_TIMELOCK must `acceptOwnership`). CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be
+/// replaced by TimelockController (docs/runbooks/CORE_TIMELOCK_MIGRATION.md). InsuranceFund/Liability/DisputePanel
 /// `setOwner(CORE_TIMELOCK)`. InsuranceFund.payout stays onlyLiability.
 /// Chainid guard: Base Sepolia (84532) only. Mainnet is always refused.
 /// ETH Sepolia (11155111) is documented as a one-line switch — do not enable it

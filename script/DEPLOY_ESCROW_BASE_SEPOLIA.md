@@ -42,7 +42,7 @@ Live escrow create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c
 
 Retired escrow (ESC-M-1 redeploy, retired 2026-09-26): create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` tx `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. Its `acceptOwnership` tx `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` is block 47300275. That contract is `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. It is history, not the book address.
 
-`CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA with EIP-7702 delegation to `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b`, not a timelock contract. `getMinDelay` reverts. It is the same account that owns the live Denylist and Vault. `onlyOwner` is `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call. See [`script/OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md).
+`CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). Delegation target `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b`. `getMinDelay` reverts. It is the same account that owns the live Denylist and Vault. `onlyOwner` is `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call. See [`script/OPS_LIVE_DENYLIST_VAULT.md`](OPS_LIVE_DENYLIST_VAULT.md).
 
 Liability `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` and InsuranceFund `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` stay as they are. This pack does not call them.
 
@@ -63,7 +63,7 @@ export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 | `DENYLIST` | Live Denylist above. The script does not redeploy it. |
 | `VAULT` | Live Vault above. The script does not redeploy it. |
 | `DISPUTE_PANEL` | Live DisputePanel above. The script does not redeploy it. |
-| `CORE_TIMELOCK` | Immutable escrow `governance` and Ownable2Step owner after `acceptOwnership`. EOA with EIP-7702 delegation, not a timelock contract. |
+| `CORE_TIMELOCK` | Immutable escrow `governance` and Ownable2Step owner after `acceptOwnership`. An EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). |
 | `BASE_SEPOLIA_RPC_URL` | Base Sepolia RPC. Chainid must be `84532`. Any other chain reverts. |
 
 ## Escrow simulate (not live)
@@ -342,12 +342,12 @@ A direct `cast send` of `setArbitrator` is not part of this escrow redeploy. Age
 | `DeployEscrow: DENYLIST is not the live Base Sepolia Denylist` | Env denylist is not `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` |
 | `DeployEscrow: VAULT is not the live Base Sepolia Vault` | Env vault is not `0x1463D664fA467FBCDA4B05443434494f05e565bc` |
 | `DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel` | Env panel is not `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` |
-| `DeployEscrow: CORE_TIMELOCK is not the live owner` | Env timelock is not `0x10CC9474b45625ADfd05C209f2518023484878D9` |
+| `DeployEscrow: CORE_TIMELOCK is not the live owner` | `CORE_TIMELOCK` env is not `0x10CC9474b45625ADfd05C209f2518023484878D9` |
 | `DeployEscrow: pass --account and --sender` | Escrow `--broadcast` from Foundry's default sender or from `SIMULATE_SENDER` |
 | `OpsPanel: DISPUTE_PANEL unset` / `ARBITRATOR unset` / `ARBITRATOR_1 unset` (and `_2`, `_3`) | Missing or zero panel-op env |
-| `OpsLive: CORE_TIMELOCK unset` | Panel op missing the timelock env |
+| `OpsLive: CORE_TIMELOCK unset` | Panel op missing the `CORE_TIMELOCK` env |
 | `OpsPanel: DISPUTE_PANEL is not the live Base Sepolia DisputePanel` | Env panel is not the live address |
-| `OpsLive: CORE_TIMELOCK is not the live owner` | Env timelock is not the book address |
+| `OpsLive: CORE_TIMELOCK is not the live owner` | `CORE_TIMELOCK` env is not the book address |
 | `OpsPanel: DisputePanel.owner is not CORE_TIMELOCK` | On-chain owner moved |
 | `OpsPanel: zero arbitrator` / `duplicate arbitrator` | Seat list |
 | `OpsLive` signer is not the live owner | Panel `--broadcast` with any signer other than `CORE_TIMELOCK` |
@@ -488,7 +488,7 @@ After the renounce, `release`, `refund`, and `dispute` keep working. Setters (`s
 
 Retiring does not stop Finding B on `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` and `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. A zero-value `refund` of a missing id still succeeds on both: unset storage reads as `Open` with expiry 0, so the call credits 0 to `address(0)`. `renounceOwnership` does not change that bytecode. No funds are at risk. Indexers should ignore retired addresses.
 
-`CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA with EIP-7702 delegation to `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b` (`EIP7702StatelessDeleGator` 1.3.0). It is not an OpenZeppelin `TimelockController`. `getMinDelay()` reverts. There is no `schedule` or `execute` on that account. `onlyOwner` is `msg.sender == owner()`. The retirement transaction is a transaction whose sender is `CORE_TIMELOCK`, whose `to` is the escrow, and whose `data` is `renounceOwnership()` (`0x715018a6`). Spencer signs it. The OpenZeppelin `TimelockController` `schedule` and `execute` blobs for that same inner call, with placeholder predecessor, salt, and delay, are in the [appendix](#appendix-openzeppelin-timelockcontroller-schedule-and-execute-calldata) at the end of this file. Do not submit them to `0x10CC…`.
+`CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). Delegation target `0x63c0c19a282a1b52b07dd5a65b58948a07dae32b` (`EIP7702StatelessDeleGator` 1.3.0). It is not an OpenZeppelin `TimelockController`. `getMinDelay()` reverts. There is no `schedule` or `execute` on that account. `onlyOwner` is `msg.sender == owner()`. The retirement transaction is a transaction whose sender is `CORE_TIMELOCK`, whose `to` is the escrow, and whose `data` is `renounceOwnership()` (`0x715018a6`). Spencer signs it. The OpenZeppelin `TimelockController` `schedule` and `execute` blobs for that same inner call, with placeholder predecessor, salt, and delay, are in the [appendix](#appendix-openzeppelin-timelockcontroller-schedule-and-execute-calldata) at the end of this file. Do not submit them to `0x10CC…`.
 
 ### Check `lockedValue` first
 

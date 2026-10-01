@@ -15,7 +15,7 @@ JSON has no comments. Field meanings:
 | `network` | `base-sepolia`. |
 | `status` | `live` once core contracts are on Base Sepolia. BVT can still be null. |
 | `notes` | Free text. Keep the warning that agents do not `--broadcast`. |
-| `coreTimelock` | `CORE_TIMELOCK` address (timelock or multisig, not the deployer), or `null`. |
+| `coreTimelock` | `CORE_TIMELOCK` address, or `null`. CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). Not the deployer. |
 | `bvtGuardian` | `BVT_GUARDIAN` address, or `null`. |
 | `claimRelayerWallet` | EOA for claim-relayer signing and funding on Base Sepolia (`0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861`, `…31861`). Not a contract. Derived from `RELAYER_PRIVATE_KEY` on the hosted service. Never commit the private key. |
 | `<Contract>.address` | Deployed contract address, or `null`. Live `Denylist` and `Vault` are the current pair. |

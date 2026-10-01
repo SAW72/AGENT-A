@@ -27,7 +27,7 @@ Liability is created first (with `address(0)` insurance) so `InsuranceFund` can 
 4. `InsuranceFund(liability)`
 5. `liability.bindInsurance(insurance)`
 6. `DisputePanel`
-7. `transferOwnership(CORE_TIMELOCK)` on Denylist and Vault (OZ **Ownable2Step** — deployer stays owner until the timelock calls `acceptOwnership`)
+7. `transferOwnership(CORE_TIMELOCK)` on Denylist and Vault (OZ **Ownable2Step** — deployer stays owner until CORE_TIMELOCK calls `acceptOwnership`). CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)).
 8. `setOwner(CORE_TIMELOCK)` on InsuranceFund, Liability, DisputePanel (immediate; not two-step)
 
 **Post-step (panel seat, Gate B).** `DisputePanel.openDispute` reverts `panel not seated` until `arbitratorCount >= 3`. After `setOwner`, only `CORE_TIMELOCK` can call `setArbitrator`. The core deploy script does not appoint them. On the live panel Gate B is seated (`arbitratorCount` is 3). Seat txs and the three arbitrators: [`script/DEPLOY_ESCROW_BASE_SEPOLIA.md`](../script/DEPLOY_ESCROW_BASE_SEPOLIA.md).
@@ -54,7 +54,7 @@ Run only after (1), using the deployed addresses. Env (all required, non-zero):
 - `DISPUTE_PANEL`
 - `CORE_TIMELOCK` (≠ deployer)
 
-The script deploys `BotAttestationEscrow(denylist, vault, panel, CORE_TIMELOCK)` and `transferOwnership(CORE_TIMELOCK)`. **Ownable2Step:** the timelock must `acceptOwnership` or the deployer remains owner. `governance` is that timelock. `createEscrow` reverts until the timelock has accepted. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they also revert while `lockedValue != 0`. `totalOwed` (credited, unclaimed ETH) does not keep that gate shut. `release` and `refund` do not transfer ETH; the payee or payer pulls it with `withdraw` / `withdrawTo`. The credited account must be an EOA, an EIP-7702 account, or a wallet/contract that can call those functions. A non-upgradeable contract that cannot call them strands its own credit. There is no gasless claim yet, so a payee with 0 ETH needs gas to withdraw. A denylist swap emits `DenylistUpdated` (previous, new, caller, timestamp). Vault and dispute-panel swaps emit `VaultUpdated` and `DisputePanelUpdated` with that same shape. The constructor emits the initial set with previous `address(0)`. Setting the current address again reverts (`DenylistUnchanged`, `VaultUnchanged`, `DisputePanelUnchanged`). That is a governance event. Production has no hot EOA admin for it. Do not fund before `acceptOwnership`. The script does not redeploy Denylist, Vault, or DisputePanel.
+The script deploys `BotAttestationEscrow(denylist, vault, panel, CORE_TIMELOCK)` and `transferOwnership(CORE_TIMELOCK)`. **Ownable2Step:** CORE_TIMELOCK must `acceptOwnership` or the deployer remains owner. CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). `governance` is CORE_TIMELOCK. `createEscrow` reverts until CORE_TIMELOCK has accepted. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they also revert while `lockedValue != 0`. `totalOwed` (credited, unclaimed ETH) does not keep that gate shut. `release` and `refund` do not transfer ETH; the payee or payer pulls it with `withdraw` / `withdrawTo`. The credited account must be an EOA, an EIP-7702 account, or a wallet/contract that can call those functions. A non-upgradeable contract that cannot call them strands its own credit. There is no gasless claim yet, so a payee with 0 ETH needs gas to withdraw. A denylist swap emits `DenylistUpdated` (previous, new, caller, timestamp). Vault and dispute-panel swaps emit `VaultUpdated` and `DisputePanelUpdated` with that same shape. The constructor emits the initial set with previous `address(0)`. Setting the current address again reverts (`DenylistUnchanged`, `VaultUnchanged`, `DisputePanelUnchanged`). That is a governance event. Production has no hot EOA admin for it. Do not fund before `acceptOwnership`. The script does not redeploy Denylist, Vault, or DisputePanel.
 
 ### (3) Optional BVT — `script/DeployBVT.s.sol`
 
@@ -85,7 +85,7 @@ forge install foundry-rs/forge-std
 
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 # PRIVATE_KEY is a Base Sepolia funded key — export it in your shell, do not commit it
-# CORE_TIMELOCK is a timelock or multisig (must not be the deployer) that receives ownership
+# CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController (docs/runbooks/CORE_TIMELOCK_MIGRATION.md). Must not be the deployer.
 
 # compile + local tests (no RPC, no key)
 forge build
@@ -136,7 +136,7 @@ forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow 
   --broadcast
 ```
 
-On the live escrow, `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK`). Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
+On the live escrow, `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK`). Denylist changes go through `setDenylist` from CORE_TIMELOCK, an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). That call reverts while `lockedValue != 0`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
 
 ## Base Sepolia addresses (84532)
 

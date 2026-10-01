@@ -61,7 +61,7 @@ Default fees: register **100**, audit **250**, vault Chat/Data/Financial/Critica
 
 Voting power = **staked BVT** (lockup). Proposal threshold = `minStake`. Voting period **5 days**. Quorum **10%** of `totalStaked` at propose. Pass = more for than against.
 
-Passed proposals **queue** in `BVTTimelock` (default delay **48 hours**, min 1h / max 30d). Execute only after `eta`. Guardian/admin/governor can **cancel** during the delay. Parameter changes (`minStake`, fees, splits, sinks, slash bps, governor params, delay) go through this path. `Deploy.s.sol` starts Ownable2Step `transferOwnership` of `Denylist` / `Vault` to `CORE_TIMELOCK`; the timelock must `acceptOwnership`.
+Passed proposals **queue** in `BVTTimelock` (default delay **48 hours**, min 1h / max 30d). Execute only after `eta`. Guardian/admin/governor can **cancel** during the delay. Parameter changes (`minStake`, fees, splits, sinks, slash bps, governor params, delay) go through this path. `Deploy.s.sol` starts Ownable2Step `transferOwnership` of `Denylist` / `Vault` to `CORE_TIMELOCK`. CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](runbooks/CORE_TIMELOCK_MIGRATION.md)). That account must `acceptOwnership`.
 
 ## What this is not
 

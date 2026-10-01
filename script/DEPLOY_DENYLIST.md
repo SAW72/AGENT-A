@@ -17,7 +17,7 @@ Env:
 | Name | Required | Meaning |
 | --- | --- | --- |
 | `PRIVATE_KEY` | yes | Deployer key. Funded on Base Sepolia. Never commit it. |
-| `CORE_TIMELOCK` | yes | Timelock or multisig that will own both new contracts. Non-zero, and not the deployer. |
+| `CORE_TIMELOCK` | yes | An EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). Non-zero, and not the deployer. |
 | `BASE_SEPOLIA_RPC_URL` | yes, on the CLI | RPC for `--rpc-url`. The Solidity script does not read this variable. It checks `block.chainid` from that RPC. |
 
 Chain guard, same style as `script/Deploy.s.sol`: Base Sepolia **84532** only. Ethereum mainnet (`1`) always reverts. Ethereum Sepolia (`11155111`) is a one-line `ALLOWED_CHAIN_ID` switch. Do not remove the mainnet check.
@@ -39,7 +39,7 @@ What it deploys, in order:
 3. `transferOwnership(CORE_TIMELOCK)` on the Denylist (Ownable2Step)
 4. `transferOwnership(CORE_TIMELOCK)` on the Vault (Ownable2Step)
 
-It does not deploy Liability, InsuranceFund, DisputePanel, BotAttestationEscrow, or BVT. It does not migrate listings. It does not call `acceptOwnership`. The deployer remains `owner` until the timelock accepts. `pendingOwner` is `CORE_TIMELOCK`.
+It does not deploy Liability, InsuranceFund, DisputePanel, BotAttestationEscrow, or BVT. It does not migrate listings. It does not call `acceptOwnership`. The deployer remains `owner` until CORE_TIMELOCK accepts. `pendingOwner` is `CORE_TIMELOCK`.
 
 ### Spencer broadcast
 
@@ -58,7 +58,7 @@ After cutover, the old Denylist `0xF0f260967D377E07Bdd7840862508ddB23C012b8` and
 
 The new Vault starts with an empty bot registry. This procedure does not copy `Vault` bot rows.
 
-Listing history is not copied either. A replayed id on the new Denylist starts at `timesListed = 1`, with `lastListedBy` equal to the timelock and timestamps from the migration block. The old contract remains the historical record.
+Listing history is not copied either. A replayed id on the new Denylist starts at `timesListed = 1`, with `lastListedBy` equal to CORE_TIMELOCK and timestamps from the migration block. CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). The old contract remains the historical record.
 
 ## A) CORE_TIMELOCK `acceptOwnership`
 
@@ -96,7 +96,7 @@ cast send "$NEW_DENYLIST" "acceptOwnership()" --rpc-url "$BASE_SEPOLIA_RPC_URL" 
 cast send "$NEW_VAULT" "acceptOwnership()" --rpc-url "$BASE_SEPOLIA_RPC_URL" --account core-timelock
 ```
 
-When `CORE_TIMELOCK` is a contract, schedule or propose the same call inside that contract. This repo does not assume a particular timelock ABI. Each call is:
+`CORE_TIMELOCK` is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). Do not schedule this `acceptOwnership` through a timelock ABI. Each call is:
 
 | Field | Denylist | Vault |
 | --- | --- | --- |
@@ -203,7 +203,7 @@ forge script script/MigrateDenylistListings.s.sol:MigrateDenylistListings \
   -vvvv
 ```
 
-The script logs the pending ids. When `PRIVATE_KEY` is not `CORE_TIMELOCK`, it stops there and broadcasts nothing. That is the expected simulate for a contract timelock.
+The script logs the pending ids. When `PRIVATE_KEY` is not `CORE_TIMELOCK`, it stops there and broadcasts nothing. That is the expected simulate. CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)).
 
 Spencer broadcasts the adds only when the signing key **is** `CORE_TIMELOCK` (an EOA owner). Agents do not.
 
@@ -214,7 +214,7 @@ forge script script/MigrateDenylistListings.s.sol:MigrateDenylistListings \
   -vvvv
 ```
 
-When `CORE_TIMELOCK` is a contract, do not broadcast that script. Schedule one call per pending id from the timelock. `msg.sender` must be the owner. Value is `0`. Target is `$NEW_DENYLIST` (never the old address).
+`CORE_TIMELOCK` is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). Do not schedule these adds through a timelock ABI. `msg.sender` must be the owner. Value is `0`. Target is `$NEW_DENYLIST` (never the old address).
 
 ```bash
 cast calldata "addExact(bytes32)" "$ID"
