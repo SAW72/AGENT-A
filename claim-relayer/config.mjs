@@ -246,9 +246,9 @@ export function loadConfig(env = process.env) {
     corsOrigins:
       env.CORS_ORIGINS ||
       "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
+    reputationCors: reputationCorsFromEnv(env),
   };
 }
-
 
 /**
  * Runtime commit Render injects as RENDER_GIT_COMMIT.
@@ -263,6 +263,35 @@ export function buildMetadata(env = process.env) {
     commit: commit.length > 0 ? commit : null,
     builtAt: null,
   };
+}
+
+/**
+ * CORS for GET /v1/reputation only. Claim routes keep corsOrigins.
+ * Preview matching is one label under previewHost. `pages.dev` and `*` are refused.
+ */
+export function reputationCorsFromEnv(env) {
+  const pagesOrigin = String(env.REPUTATION_CORS_PAGES_ORIGIN ?? "https://agent-a-wallet-ux.pages.dev")
+    .trim()
+    .replace(/\/$/, "");
+  const previewHost = String(env.REPUTATION_CORS_PREVIEW_HOST ?? "agent-a-wallet-ux.pages.dev")
+    .trim()
+    .toLowerCase()
+    .replace(/^\./, "")
+    .replace(/\.$/, "");
+  const localHosts = String(env.REPUTATION_CORS_LOCAL_HOSTS ?? "localhost,127.0.0.1")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  if (!pagesOrigin || pagesOrigin === "*" || pagesOrigin.includes("*")) {
+    throw httpError(500, "reputation_cors_invalid", { field: "pages_origin" });
+  }
+  if (!previewHost || previewHost.includes("*") || previewHost === "pages.dev" || !previewHost.includes(".")) {
+    throw httpError(500, "reputation_cors_invalid", { field: "preview_host" });
+  }
+  if (localHosts.some((host) => host.includes("*") || host.includes("/") || host.includes(":"))) {
+    throw httpError(500, "reputation_cors_invalid", { field: "local_hosts" });
+  }
+  return { pagesOrigin, previewHost, localHosts };
 }
 
 export function healthPayload(config, killSwitchOn) {

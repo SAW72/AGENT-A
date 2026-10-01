@@ -12,6 +12,9 @@ import {
   wantsLiveSubmit,
 } from "./claims.mjs";
 import { prepareLiveClaim } from "./liveAuth.mjs";
+import { createReputationCors } from "./reputation/cors.mjs";
+import { createRateLimiter } from "./reputation/rateLimit.mjs";
+import { createReputationRuntime, handleReputationRequest } from "./reputation/runtime.mjs";
 
 const MAX_BODY = 32 * 1024;
 
@@ -192,6 +195,11 @@ export function createClaimRelayer(deps) {
   const broadcaster = deps.broadcaster || null;
   const now = deps.now || Date.now;
   const corsHeaders = createCors(config.corsOrigins);
+  const reputationCorsHeaders = createReputationCors(config.reputationCors);
+  const reputation = deps.reputation || createReputationRuntime();
+  const limitReputation =
+    deps.reputationRateLimit ||
+    createRateLimiter({ max: reputation.latest.read_api.rate_limit_per_minute });
 
   function refuseIfKilled(res, req) {
     if (!killSwitch.isOn()) return false;
@@ -201,13 +209,40 @@ export function createClaimRelayer(deps) {
 
   return http.createServer(async (req, res) => {
     try {
+      const url = new URL(req.url || "/", "http://127.0.0.1");
+      const path = url.pathname.replace(/\/+$/, "") || "/";
+
+      if (path === "/v1/reputation" || path.startsWith("/v1/reputation/")) {
+        if (req.method === "OPTIONS") {
+          res.writeHead(204, reputationCorsHeaders(req));
+          res.end();
+          return;
+        }
+        if (req.method !== "GET") {
+          sendJson(res, req, 405, { ok: false, error: "method_not_allowed" }, reputationCorsHeaders);
+          return;
+        }
+        const ip = req.socket?.remoteAddress || "unknown";
+        if (!limitReputation(ip)) {
+          sendJson(res, req, 429, { ok: false, error: "rate_limited" }, reputationCorsHeaders);
+          return;
+        }
+        try {
+          sendJson(res, req, 200, handleReputationRequest(reputation, url), reputationCorsHeaders);
+        } catch (err) {
+          const status = Number(err.status) || 500;
+          const payload = { ok: false, error: err.error || "request_failed" };
+          if (err.chainId !== undefined) payload.chainId = err.chainId;
+          sendJson(res, req, status, payload, reputationCorsHeaders);
+        }
+        return;
+      }
+
       if (req.method === "OPTIONS") {
         res.writeHead(204, corsHeaders(req));
         res.end();
         return;
       }
-      const url = new URL(req.url || "/", "http://127.0.0.1");
-      const path = url.pathname.replace(/\/+$/, "") || "/";
 
       if (req.method === "GET" && (path === "/health" || path === "/v1/health")) {
         sendJson(res, req, 200, healthPayload(config, killSwitch.isOn()), corsHeaders);

@@ -1,0 +1,9 @@
+{
+  "_status": "DRAFT. Each version applies from effective_from_block through the block before the next version. Replay stamps rule_version and config_version from the version active at the completing event's block, so a later config edit does not rescore earlier blocks.",
+  "versions": [
+    {
+      "effective_from_block": 0,
+      "config_file": "sepolia.json"
+    }
+  ]
+}
