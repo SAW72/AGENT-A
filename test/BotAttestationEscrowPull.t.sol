@@ -237,6 +237,14 @@ contract BotAttestationEscrowPullTest is Test {
         assertGe(address(escrow).balance, escrow.lockedValue() + escrow.totalOwed());
     }
 
+    /// @dev Open and disputed `release` is payer-or-payee. These tests call as the payer.
+    function _release(
+        bytes32 id
+    ) internal {
+        vm.prank(payer);
+        escrow.release(id);
+    }
+
     /// @notice PoC 1: rejecting payee on an open release is credited. Setters unlock before withdraw.
     function test_rejectingPayee_openReleaseCreditsAndUnlocks() public {
         bytes32 id = keccak256("d1");
@@ -244,7 +252,7 @@ contract BotAttestationEscrowPullTest is Test {
         _assertFundedGate();
         vm.etch(payee, type(RejectETH).runtimeCode);
 
-        escrow.release(id);
+        _release(id);
 
         assertEq(uint8(_state(id)), uint8(BotAttestationEscrow.EscrowState.Released));
         assertEq(escrow.lockedValue(), 0);
@@ -268,7 +276,7 @@ contract BotAttestationEscrowPullTest is Test {
         vm.warp(block.timestamp + 1 hours + 1);
 
         vm.expectRevert(BotAttestationEscrow.EscrowExpired.selector);
-        escrow.release(id);
+        _release(id);
         _assertFundedGate();
 
         escrow.refund(id);
@@ -300,7 +308,7 @@ contract BotAttestationEscrowPullTest is Test {
         vault.burn(payeeBot);
 
         vm.expectRevert(abi.encodeWithSelector(BotAttestationEscrow.AttestationFailed.selector, "payee bot inactive"));
-        escrow.release(id);
+        _release(id);
         _assertFundedGate();
 
         vm.warp(block.timestamp + 1 hours + 1);
@@ -329,7 +337,7 @@ contract BotAttestationEscrowPullTest is Test {
         vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
         escrow.refund(id);
 
-        escrow.release(id);
+        _release(id);
 
         assertEq(escrow.lockedValue(), 0);
         assertEq(escrow.pendingWithdrawals(payee), 1 ether);
@@ -355,7 +363,7 @@ contract BotAttestationEscrowPullTest is Test {
         vm.etch(payer, type(RejectETH).runtimeCode);
         // Unwind is not an upheld deal. Release stays closed until refund credits the payer.
         vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
-        escrow.release(id);
+        _release(id);
 
         escrow.refund(id);
 
@@ -384,6 +392,7 @@ contract BotAttestationEscrowPullTest is Test {
         vm.warp(block.timestamp + 1);
 
         _assertFundedGate();
+        vm.prank(payee);
         vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
         escrow.release(id);
 
@@ -402,7 +411,7 @@ contract BotAttestationEscrowPullTest is Test {
         bytes32 idA = keccak256("gA");
         bytes32 idB = keccak256("gB");
         _create(idA, 1 ether, 1 hours);
-        escrow.release(idA);
+        _release(idA);
         uint256 g0 = gasleft();
         vm.prank(payee);
         escrow.withdraw();
@@ -410,7 +419,7 @@ contract BotAttestationEscrowPullTest is Test {
 
         _create(idB, 1 ether, 1 hours);
         vm.etch(payee, type(ReturnBomb).runtimeCode);
-        escrow.release(idB);
+        _release(idB);
         g0 = gasleft();
         vm.prank(payee);
         escrow.withdraw();
@@ -454,7 +463,7 @@ contract BotAttestationEscrowPullTest is Test {
         vm.stopPrank();
         vm.warp(block.timestamp + 2);
 
-        escrow.release(idA);
+        _release(idA);
         assertEq(escrow.pendingWithdrawals(address(attacker)), 1 ether);
 
         attacker.pull();
@@ -504,13 +513,13 @@ contract BotAttestationEscrowPullTest is Test {
         escrow.createEscrow{ value: 1 ether }(idC, address(attacker), payerBot, payeeBot, 1);
         vm.stopPrank();
         vm.warp(block.timestamp + 2);
-        escrow.release(idA);
+        _release(idA);
         attacker.pull();
 
         vm.expectRevert(bytes("nothing to withdraw"));
         attacker.pull();
 
-        escrow.release(idB);
+        _release(idB);
         assertEq(uint8(_state(idB)), uint8(BotAttestationEscrow.EscrowState.Released));
         escrow.refund(idC);
         assertEq(uint8(_state(idC)), uint8(BotAttestationEscrow.EscrowState.Refunded));
@@ -526,7 +535,7 @@ contract BotAttestationEscrowPullTest is Test {
     function test_doubleWithdrawReverts() public {
         bytes32 id = keccak256("dbl-wd");
         _create(id, 1 ether, 1 hours);
-        escrow.release(id);
+        _release(id);
 
         vm.prank(payer);
         vm.expectRevert(bytes("nothing to withdraw"));
@@ -551,7 +560,7 @@ contract BotAttestationEscrowPullTest is Test {
         bytes32 id = keccak256("escape");
         _create(id, 1 ether, 1 hours);
         vm.etch(payee, type(RejectETH).runtimeCode);
-        escrow.release(id);
+        _release(id);
 
         vm.prank(payee);
         vm.expectRevert(BotAttestationEscrow.ZeroAddress.selector);
@@ -587,7 +596,7 @@ contract BotAttestationEscrowPullTest is Test {
         emit EscrowReleased(id, amount);
         vm.expectEmit(true, true, true, true, address(escrow));
         emit Credited(id, payee, amount, true);
-        escrow.release(id);
+        _release(id);
 
         address dest = makeAddr("evt-dest");
         vm.expectEmit(true, true, true, true, address(escrow));
@@ -618,8 +627,8 @@ contract BotAttestationEscrowPullTest is Test {
         bytes32 id2 = keccak256("sum-2");
         _create(id1, 1 ether, 1 hours);
         _create(id2, 2 ether, 1 hours);
-        escrow.release(id1);
-        escrow.release(id2);
+        _release(id1);
+        _release(id2);
         assertEq(escrow.pendingWithdrawals(payee), 3 ether);
         assertEq(escrow.totalOwed(), 3 ether);
         assertEq(escrow.lockedValue(), 0);
@@ -647,7 +656,7 @@ contract BotAttestationEscrowPullTest is Test {
         bytes32 idB = keccak256("fuzz-b");
         _create(idA, amtA, 1 hours);
         _create(idB, amtB, 100);
-        escrow.release(idA);
+        _release(idA);
         vm.warp(block.timestamp + 101);
         escrow.refund(idB);
 
@@ -688,7 +697,7 @@ contract BotAttestationEscrowPullTest is Test {
         _create(openId, openA, 2 hours);
         _create(settledId, settledA, 2 hours);
         if (releaseIt) {
-            escrow.release(settledId);
+            _release(settledId);
         } else {
             vm.warp(block.timestamp + 2 hours + 1);
             escrow.refund(settledId);
@@ -800,7 +809,11 @@ contract PullPaymentHandler is StdUtils {
         uint256 i
     ) external {
         if (ids.length == 0) return;
-        try escrow.release(_pick(i)) {
+        bytes32 id = _pick(i);
+        (address rowPayer, address rowPayee,,,,,,,) = escrow.escrows(id);
+        // Open and disputed release is party-only. Alternate the two parties.
+        vm.prank(i % 2 == 0 ? rowPayer : rowPayee);
+        try escrow.release(id) {
             callsRelease++;
         } catch { }
     }

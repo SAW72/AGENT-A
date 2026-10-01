@@ -536,7 +536,7 @@ contract BotAttestationEscrowTest is Test {
         bytes32 disputeId = keccak256("x");
         _openPanel(escrowId, disputeId);
         vm.prank(makeAddr("stranger"));
-        vm.expectRevert(bytes("not a party"));
+        vm.expectRevert(BotAttestationEscrow.NotParty.selector);
         escrow.dispute(escrowId, disputeId);
     }
 
@@ -954,8 +954,8 @@ contract BotAttestationEscrowTest is Test {
     }
 
     /// @notice (5) Two uphold votes before create, still unresolved, same timestamp.
-    /// @dev `resolved` is false and `createdAt` is equal, so checks 2 and 4 pass.
-    ///      The vote total is what rejects the link.
+    /// @dev `resolved` is false and `createdAt` is equal, so the resolved and predate
+    ///      checks pass. Two votes on one side already decide a 3-seat panel.
     function test_escM1_twoUpholdVotesBeforeCreateRejected() public {
         bytes32 escrowId = keccak256("esc-m1-two-votes");
         bytes32 disputeId = keccak256("esc-m1-two-votes-d");
@@ -1035,12 +1035,14 @@ contract BotAttestationEscrowTest is Test {
         escrow.dispute(escrowId, disputeId);
     }
 
-    function test_escM1_votesAlreadyCastRejected() public {
-        bytes32 escrowId = keccak256("esc-m1-one-vote");
-        _create(escrowId, 1 ether, 3600);
-        bytes32 disputeId = keccak256("esc-m1-one-vote-d");
+    /// @notice A vote between `openDispute` and `dispute` still links, then the panel can rule.
+    function test_voteBeforeLinkStillLinksAndResolves() public {
+        bytes32 escrowId = keccak256("vote-before-link");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 3600);
+        bytes32 disputeId = keccak256("vote-before-link-d");
         vm.prank(payee);
-        panel.openDispute(disputeId, escrowId, "voted");
+        panel.openDispute(disputeId, escrowId, "early vote");
         vm.prank(arb1);
         panel.vote(disputeId, true);
 
@@ -1050,8 +1052,171 @@ contract BotAttestationEscrowTest is Test {
         assertFalse(resolved);
 
         vm.prank(payer);
-        vm.expectRevert(BotAttestationEscrow.DisputeVotesCast.selector);
         escrow.dispute(escrowId, disputeId);
+        (,,,,,,, BotAttestationEscrow.EscrowState linked,) = _escrowTuple(escrowId);
+        assertEq(uint256(linked), uint256(BotAttestationEscrow.EscrowState.Disputed));
+
+        // Finish the panel: 2 uphold, 1 against. Upheld. Release pays the payee.
+        vm.prank(arb2);
+        panel.vote(disputeId, true);
+        vm.prank(arb3);
+        panel.vote(disputeId, false);
+        (,,,,, bool ruled, bool upheld,) = panel.disputes(disputeId);
+        assertTrue(ruled);
+        assertTrue(upheld);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.refund(escrowId);
+
+        vm.prank(payee);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), amount);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
+    }
+
+    /// @notice Two votes on one side still refuse the link. A fresh id with no votes links.
+    function test_lockedMajorityRefusedAndFreshIdLinks() public {
+        bytes32 escrowId = keccak256("locked-then-fresh");
+        _create(escrowId, 1 ether, 3600);
+        bytes32 lockedId = keccak256("locked-id");
+        vm.prank(payer);
+        panel.openDispute(lockedId, escrowId, "two votes");
+        vm.prank(arb1);
+        panel.vote(lockedId, false);
+        vm.prank(arb2);
+        panel.vote(lockedId, false);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputeVotesCast.selector);
+        escrow.dispute(escrowId, lockedId);
+        (,,,,,,, BotAttestationEscrow.EscrowState stillOpen,) = _escrowTuple(escrowId);
+        assertEq(uint256(stillOpen), uint256(BotAttestationEscrow.EscrowState.Open));
+
+        bytes32 freshId = keccak256("fresh-id");
+        vm.prank(payee);
+        panel.openDispute(freshId, escrowId, "fresh");
+        vm.prank(payee);
+        escrow.dispute(escrowId, freshId);
+        (,,,,,,, BotAttestationEscrow.EscrowState state, bytes32 linked) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Disputed));
+        assertEq(linked, freshId);
+    }
+
+    function test_strangerCannotReleaseOpenEscrow() public {
+        bytes32 escrowId = keccak256("stranger-release-open");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 3600);
+
+        vm.prank(makeAddr("stranger-release"));
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+        vm.prank(governance);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+
+        (,,,,,,, BotAttestationEscrow.EscrowState openState,) = _escrowTuple(escrowId);
+        assertEq(uint256(openState), uint256(BotAttestationEscrow.EscrowState.Open));
+        assertEq(escrow.lockedValue(), amount);
+
+        vm.prank(payee);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), amount);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
+    }
+
+    /// @notice `release` on a disputed escrow reverts until an uphold, and a stranger never can.
+    function test_releaseOnDisputedEscrowReverts() public {
+        bytes32 escrowId = keccak256("release-while-disputed");
+        uint256 amount = 1 ether;
+        _create(escrowId, amount, 3600);
+        bytes32 disputeId = keccak256("release-while-disputed-d");
+        _openPanel(escrowId, disputeId);
+        vm.prank(payer);
+        escrow.dispute(escrowId, disputeId);
+
+        vm.prank(payer);
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.release(escrowId);
+        vm.prank(payee);
+        vm.expectRevert(BotAttestationEscrow.DisputePending.selector);
+        escrow.release(escrowId);
+        vm.prank(makeAddr("stranger-disputed"));
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+
+        (,,,,,,, BotAttestationEscrow.EscrowState pending,) = _escrowTuple(escrowId);
+        assertEq(uint256(pending), uint256(BotAttestationEscrow.EscrowState.Disputed));
+        assertEq(address(escrow).balance, amount);
+
+        _panelRule(disputeId, true);
+        vm.prank(makeAddr("stranger-after-ruling"));
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+
+        vm.prank(payer);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), amount);
+        (,,,,,,, BotAttestationEscrow.EscrowState state,) = _escrowTuple(escrowId);
+        assertEq(uint256(state), uint256(BotAttestationEscrow.EscrowState.Released));
+    }
+
+    /// @notice Any caller other than the payer or payee reverts on an open escrow.
+    function testFuzz_strangerCannotReleaseOpen(
+        address caller
+    ) public {
+        vm.assume(caller != payer && caller != payee);
+        bytes32 escrowId = keccak256("fuzz-stranger-release");
+        _create(escrowId, 1 ether, 3600);
+        vm.prank(caller);
+        vm.expectRevert(BotAttestationEscrow.ReleaseNotAuthorized.selector);
+        escrow.release(escrowId);
+        assertEq(escrow.lockedValue(), 1 ether);
+    }
+
+    /// @notice Zero or one vote on each side still links, and the panel can then uphold.
+    function testFuzz_voteBelowMajorityLinksAndResolves(
+        uint8 forVotes,
+        uint8 againstVotes
+    ) public {
+        forVotes = uint8(bound(forVotes, 0, 1));
+        againstVotes = uint8(bound(againstVotes, 0, 1));
+        bytes32 escrowId = keccak256("fuzz-below-majority");
+        bytes32 disputeId = keccak256("fuzz-below-majority-d");
+        _create(escrowId, 1 ether, 3600);
+        vm.prank(payer);
+        panel.openDispute(disputeId, escrowId, "fuzz");
+        if (forVotes == 1) {
+            vm.prank(arb1);
+            panel.vote(disputeId, true);
+        }
+        if (againstVotes == 1) {
+            vm.prank(arb2);
+            panel.vote(disputeId, false);
+        }
+
+        vm.prank(payee);
+        escrow.dispute(escrowId, disputeId);
+
+        if (forVotes == 0) {
+            vm.prank(arb1);
+            panel.vote(disputeId, true);
+        }
+        if (againstVotes == 0) {
+            vm.prank(arb2);
+            panel.vote(disputeId, true);
+        }
+        vm.prank(arb3);
+        panel.vote(disputeId, true);
+
+        (,,,,, bool ruled, bool upheld,) = panel.disputes(disputeId);
+        assertTrue(ruled);
+        assertTrue(upheld);
+        vm.prank(payer);
+        escrow.release(escrowId);
+        assertEq(escrow.pendingWithdrawals(payee), 1 ether);
     }
 
     /// @notice Same-block open is allowed: dispute.createdAt >= escrow.createdAt.

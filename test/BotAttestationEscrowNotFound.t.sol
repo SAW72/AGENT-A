@@ -99,6 +99,8 @@ contract BotAttestationEscrowNotFoundTest is Test {
         vm.expectRevert(bytes("not expired"));
         escrow.refund(id);
 
+        // The row exists. A party hits the operator check, not `EscrowNotFound`.
+        vm.prank(payer);
         vm.expectRevert(BotAttestationEscrow.InvalidParties.selector);
         escrow.release(id);
 
