@@ -1,12 +1,12 @@
 # Legal jurisdiction matrix (risk map)
 
-**Status:** Informal **risk map** for Bot Verifier maintainers.  
+**Status:** Informal **risk map** for Agent-B.V. maintainers.  
 **Not** a formal legal opinion, not a compliance program, and **not a catalog of every law worldwide**.  
-**Operator:** [Applicant — redacted pending Spencer approval] · **Contact:** [contact redacted]
+**Operator:** Steward of the King LLC · **Contact:** hello@stewardoftheking.com
 
 Counsel should refresh this before any public launch, token distribution, paid institutional product, or marketing that looks like certification or insurance.
 
-Bot Verifier is a **US-based experimental** AI/crypto trust-signal project (scores, stamps, denylists, testnet contracts, optional BVT operational token). The table flags **material** regimes that commonly attach to that fact pattern.
+Agent-B.V. is a **US-based experimental** AI/crypto trust-signal project (scores, stamps, denylists, testnet contracts, optional BVT operational token). The table flags **material** regimes that commonly attach to that fact pattern.
 
 | Regime | Why it can attach | Current experimental posture | Watch-outs |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@ Bot Verifier is a **US-based experimental** AI/crypto trust-signal project (scor
 | **OFAC / U.S. sanctions & AML** | API, token, or staking access by sanctioned persons or comprehensively sanctioned jurisdictions. | Terms bar restricted users; no KYC product yet. | Screen before any hosted, paid, or withdrawal-capable surface. |
 | **Insurance labeling (state insurance codes; "transacting insurance")** | Calling a fee-funded pool "insurance," promising payouts, or selling "coverage levels." | Pool is an **experimental claims backstop — NOT insurance**. | Never issue certificates of insurance. Institutions that want insurance buy it from a licensed carrier. |
 | **Ohio nexus / multi-state common law & consumer statutes** | Operator nexus and Terms choose **Ohio, USA**. Users and institutions may sit in other states (privacy, UDAP, money-transmission, insurance). | Governing law: Ohio ([TERMS.md](../TERMS.md)). No public street address in this pack. | A choice-of-law clause does not waive mandatory out-of-state consumer or insurance rules. |
-| **CCPA/CPRA and other U.S. state privacy laws** | Account data, logs, prompts/outputs, fingerprints, wallet addresses. | MVP [PRIVACY.md](../PRIVACY.md): no sale; 90-day log suggestion; rights request path redacted. | Production personal data needs a fuller notice-at-collection, retention schedule, and vendor list. |
+| **CCPA/CPRA and other U.S. state privacy laws** | Account data, logs, prompts/outputs, fingerprints, wallet addresses. | MVP [PRIVACY.md](../PRIVACY.md): no sale; retention section with 90-day logs; rights requests to hello@stewardoftheking.com. | Production personal data needs a fuller notice-at-collection, retention schedule, and vendor list. |
 | **GDPR / UK GDPR** | Prompts, logs, and identifiers of EU/UK residents; U.S. hosting; public-chain irreversibility. | **Not certified** for EU/UK; experimental note in Privacy. No representative appointed in this pack. | Do not target EU/UK as a product market without a real transfer mechanism, RoPA, and counsel. |
 | **EU AI Act (and UK AI proposals)** | Scoring/stamping bots that gate financial access can look like a high-risk "AI system" or prohibited social-scoring pattern if oversold. | Positioned as optional experimental signal, not a safety component of a regulated product. | Do not market as an EU-conformity assessment or CE-style AI mark. |
 | **MiCA (EU) and other crypto-asset regimes** | Any public offer, admission to trading, or "crypto-asset service" involving BVT or similar. | No EU offer; testnet only as of this writing; no invented mainnet addresses. | Counsel before any EEA marketing or exchange listing. |

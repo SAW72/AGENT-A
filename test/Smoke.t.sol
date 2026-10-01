@@ -51,10 +51,10 @@ contract SmokeTest is Test {
     function test_denylistUnbanClearsCheckAndKeepsHistory() public {
         bytes32 weight = keccak256("weight");
         denylist.addExact(weight);
-        denylist.remove(weight, Denylist.Bucket.Exact);
+        denylist.remove(weight, uint8(Denylist.Bucket.Exact));
         assertFalse(denylist.denylistedHashes(weight));
         assertEq(uint256(denylist.check(weight, bytes32(0), bytes32(0))), uint256(Denylist.MatchLevel.None));
-        assertTrue(denylist.everListed(Denylist.Bucket.Exact, weight));
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), weight));
     }
 
     function testFuzz_addRemovePreservesHistory(
@@ -69,9 +69,9 @@ contract SmokeTest is Test {
         assertTrue(denylist.denylistedHashes(h));
         vm.expectRevert(abi.encodeWithSelector(Denylist.AlreadyListed.selector, Denylist.Bucket.Exact, h));
         denylist.addExact(h);
-        denylist.remove(h, Denylist.Bucket.Exact);
+        denylist.remove(h, uint8(Denylist.Bucket.Exact));
         assertFalse(denylist.denylistedHashes(h));
-        assertTrue(denylist.everListed(Denylist.Bucket.Exact, h));
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), h));
         assertEq(uint256(denylist.check(h, bytes32(0), bytes32(0))), uint256(Denylist.MatchLevel.None));
     }
 

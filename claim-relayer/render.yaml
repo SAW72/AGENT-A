@@ -1,0 +1,85 @@
+# Reference Blueprint only. This file is claim-relayer/render.yaml, not repo-root
+# render.yaml, so a merge does not register a Render Blueprint and does not create
+# a service. Do not apply until Spencer says GO.
+#
+# Apply later (Spencer GO only):
+#   (a) Move or copy this file to the repo root as render.yaml and set
+#       rootDir: claim-relayer on the service below, or
+#   (b) Create the service from this Blueprint in the Render dashboard.
+# This PR does not move the file. It stays reference-only under claim-relayer/.
+#
+# Product name is Agent A. The Render service slug stays bot-verifier-claim-relayer
+# (intentional locked name; changing it is an import-breaking path). Spencer can
+# rename the slug later in the dashboard.
+#
+# Free web service: plan free, numInstances 1, no disk, no autoscaling block.
+# Render Free spins down after about 15 minutes idle. That is OK for Base Sepolia
+# testnet. Before a mainnet upgrade, change plan to starter (about $7/mo) so the
+# relayer stays warm. The app still hard-refuses mainnet (chain ids 1 and 8453).
+# Do not set a mainnet CHAIN_ID in this file.
+#
+# Single web instance. Quote reservations are in memory. Live-claim (sender, nonce)
+# pairs are a JSONL file at INTENT_NONCE_PATH. Neither is shared across processes.
+# The filesystem is ephemeral. CLAIM_LOG_PATH and INTENT_NONCE_PATH under /tmp are
+# lost on restart or spin-down.
+# Never put RELAYER_PRIVATE_KEY in git.
+# LIVE_SUBMIT and SPENCER_RUN_AUTH stay 0 (fixture mode). Unlock both to 1 in the
+# dashboard, with CHAIN_ID=84532, for Base Sepolia claim submits. Leave that unlock
+# out of this file. Secrets below use sync: false so dashboard values are not
+# overwritten from git.
+# Unset ESCROW_ADDRESS loads the booked escrow from deployments/base-sepolia.json.
+# This service does not deploy contracts and has no forge broadcast.
+# Live POST /v1/claims is authorized by an EIP-712 ClaimIntent from the connected
+# wallet. There is no CLAIM_API_SECRET and no x-claim-secret header.
+# The per-IP limit trusts only the rightmost X-Forwarded-For hop. Render's proxy
+# appends the connecting client. X-Real-IP and Cloudflare headers are not read.
+# ERC1271_ENABLED stays 0. Abuse-limit env vars keep the code defaults.
+# CORS_ORIGINS example (Wallet UX Pages plus local Vite):
+#   https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173
+# Preflight allow-headers are content-type, x-admin-secret, and authorization.
+
+services:
+  - type: web
+    # Agent A product. Slug stays bot-verifier-claim-relayer unless Spencer
+    # renames it in the Render dashboard.
+    name: bot-verifier-claim-relayer
+    runtime: node
+    # Free spins down after ~15 min idle (OK on Base Sepolia). Use starter
+    # (~$7/mo) before mainnet so the process stays warm. Do not enable mainnet.
+    plan: free
+    # One instance only. No scaling block, no disk.
+    numInstances: 1
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: "22"
+      - key: CHAIN_ID
+        value: "84532"
+      - key: LIVE_SUBMIT
+        value: "0"
+      - key: SPENCER_RUN_AUTH
+        value: "0"
+      - key: KILL_SWITCH
+        value: "0"
+      - key: RELAYER_ADDRESS
+        value: "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861"
+      - key: CLAIM_LOG_PATH
+        value: /tmp/claim-relayer/claims.jsonl
+      - key: INTENT_NONCE_PATH
+        value: /tmp/claim-relayer/intent-nonces.jsonl
+      - key: ERC1271_ENABLED
+        value: "0"
+      - key: BASE_SEPOLIA_RPC_URL
+        sync: false
+      - key: RELAYER_PRIVATE_KEY
+        sync: false
+      - key: ESCROW_ADDRESS
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        value: "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173"

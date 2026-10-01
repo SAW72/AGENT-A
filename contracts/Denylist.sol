@@ -78,6 +78,8 @@ contract Denylist is Ownable2Step {
     error ZeroId();
     error AlreadyListed(Bucket bucket, bytes32 id);
     error NotListed(Bucket bucket, bytes32 id);
+    /// @notice `bucket` is not Exact (0), Signature (1), or Prompt (2).
+    error InvalidBucket(uint8 bucket);
 
     constructor() Ownable(msg.sender) { }
 
@@ -107,11 +109,13 @@ contract Denylist is Ownable2Step {
     /// @dev Owner-gated. Does not delete history: `timesListed`, `firstListedAt`, and `everListed` remain.
     ///      Re-adding the same id increments `timesListed` and emits `Listed` again.
     ///      `bytes32(0)` is not a valid id. A bucket must be named because one id can exist in more than one.
+    ///      `bucket` is `Bucket` as `uint8`: Exact = 0, Signature = 1, Prompt = 2.
+    ///      Any other value reverts `InvalidBucket` and does not read or write a row.
     function remove(
         bytes32 id,
-        Bucket bucket
+        uint8 bucket
     ) external onlyOwner {
-        _unlist(id, bucket);
+        _unlist(id, _asBucket(bucket));
     }
 
     /// @notice Strongest active match. `None` is the only level a gate may treat as clean.
@@ -153,19 +157,21 @@ contract Denylist is Ownable2Step {
     }
 
     /// @notice True once `id` has been listed in `bucket`, including after removal.
+    /// @dev `bucket` is `Bucket` as `uint8`. Values other than Exact, Signature, or Prompt revert `InvalidBucket`.
     function everListed(
-        Bucket bucket,
+        uint8 bucket,
         bytes32 id
     ) external view returns (bool) {
-        return _row(bucket, id).timesListed != 0;
+        return _row(_asBucket(bucket), id).timesListed != 0;
     }
 
     /// @notice Full stored record. Survives `remove`.
+    /// @dev `bucket` is `Bucket` as `uint8`. Values other than Exact, Signature, or Prompt revert `InvalidBucket`.
     function listing(
-        Bucket bucket,
+        uint8 bucket,
         bytes32 id
     ) external view returns (Listing memory) {
-        return _row(bucket, id);
+        return _row(_asBucket(bucket), id);
     }
 
     function _list(
@@ -201,12 +207,25 @@ contract Denylist is Ownable2Step {
         emit Unlisted(id, bucket, msg.sender, block.timestamp, row.timesListed);
     }
 
+    /// @dev Only Exact, Signature, and Prompt select a mapping. Anything else reverts.
+    ///      It must not fall through to `_prompt`.
+    function _asBucket(
+        uint8 bucket
+    ) internal pure returns (Bucket) {
+        if (bucket == uint8(Bucket.Exact)) return Bucket.Exact;
+        if (bucket == uint8(Bucket.Signature)) return Bucket.Signature;
+        if (bucket == uint8(Bucket.Prompt)) return Bucket.Prompt;
+        revert InvalidBucket(bucket);
+    }
+
+    /// @dev Exhaustive on the three valid buckets. The else is not a Prompt alias.
     function _row(
         Bucket bucket,
         bytes32 id
     ) internal view returns (Listing storage row) {
         if (bucket == Bucket.Exact) return _exact[id];
         if (bucket == Bucket.Signature) return _signature[id];
-        return _prompt[id];
+        if (bucket == Bucket.Prompt) return _prompt[id];
+        revert InvalidBucket(uint8(bucket));
     }
 }

@@ -50,7 +50,7 @@ from pipeline.security import (
 )
 
 DISCLAIMER_TEXT = (
-    "Bot Verifier stamps are experimental informational signals only. "
+    "Agent A (Agent Auditor) stamps are experimental informational signals only. "
     "They are not a certification, not a safety guarantee, and not insurance. "
     "Scores and denylists are point-in-time heuristics that may be wrong, "
     "gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. "
@@ -70,7 +70,7 @@ LEGAL_REF = "/v1/disclaimer"
 ATTESTATION_STATUS = "stub_not_hardware_attested"
 
 app = FastAPI(
-    title="Bot Verifier Stamp API",
+    title="Agent A (Agent Auditor) Stamp API",
     version="0.2.0",
     description=(
         "Experimental trust-signal API for authorized institutional experiments. "

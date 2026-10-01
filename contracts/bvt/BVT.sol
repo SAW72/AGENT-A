@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
-// Bot Verifier Token — ERC-20. No constructor premine. Mint only via
+// Agent A Token (BVT) — ERC-20. No constructor premine. Mint only via
 // protocol earn (FeeRouter) or operator stake bootstrap (Staking).
+// On-chain ERC-20 name() remains "Bot Verifier Token"; symbol remains BVT.
 // Not audited. For illustration and local testing.
 pragma solidity ^0.8.20;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 
-/// @title Bot Verifier Token (BVT)
-/// @notice Usage / operator-stake token. There is no public sale allocation.
+/// @title Agent A Token (BVT)
+/// @notice Usage / operator-stake token for Agent A (Agent Auditor).
+///         On-chain ERC-20 name is "Bot Verifier Token"; symbol is BVT.
+///         There is no public sale allocation.
 contract BVT is ERC20, AccessControl {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant LOCKER_ROLE = keccak256("LOCKER_ROLE");

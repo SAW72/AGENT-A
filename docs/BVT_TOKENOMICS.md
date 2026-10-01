@@ -2,7 +2,7 @@
 
 > **Securities disclaimer.** This page is **not an offer of securities** or tokens. Do **not** market BVT with ROI, yield, or profit-share claims. Staking is an **operational performance bond**, not an investment product. Testnet tokens have **no value**. Engage counsel before any public distribution. Full text: [BVT_SECURITIES_DISCLAIMER.md](BVT_SECURITIES_DISCLAIMER.md). Also [DISCLAIMER.md](../DISCLAIMER.md).
 
-**Bot Verifier Token (BVT)** is the ERC-20 that prices audits, bonds auditors, and governs protocol parameters. There is **no premine for sale**, no VC allocation, and no public-sale mint.
+**Agent A Token (BVT)** is the ERC-20 that prices audits, bonds auditors, and governs protocol parameters. The on-chain ERC-20 `name()` string remains `Bot Verifier Token`; the symbol remains **BVT**. There is **no premine for sale**, no VC allocation, and no public-sale mint.
 
 ## Who can mint
 

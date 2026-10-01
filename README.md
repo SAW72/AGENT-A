@@ -1,16 +1,28 @@
-# Bot Verifier
+# Agent-B.V.
 
-AI Bot Verifier — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain audit proofs.
+**Agent-B.V.** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain audit proofs.
+
+## License
+
+**Dual license:** [AGPL-3.0-only](LICENSE.AGPL-3.0) (public default) **or** a [paid commercial proprietary license](LICENSE.COMMERCIAL) from Steward of the King LLC.
+
+- No commercial Order → AGPL-3.0-only applies (including network-use source obligations).
+- Want closed / SaaS use without AGPL copyleft? → **contact Steward for a custom commercial quote** (negotiated per partner). No public price list.
+- Older commits published under MIT stay MIT for those snapshots; see [NOTICE](NOTICE).
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE.AGPL-3.0)
+[![Commercial available](https://img.shields.io/badge/License-Commercial-orange.svg)](LICENSE.COMMERCIAL)
 
 ## Disclaimer
 
-**Experimental informational tool only.** Bot Verifier is **not** a certification, safety guarantee, or insurance product. Scores, stamps, and denylists are point-in-time heuristics that may be wrong, gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. Any fee-funded pool is an **experimental claims backstop — not insurance**.
+**Experimental informational tool only.** Agent-B.V. is **not** a certification, safety guarantee, or insurance product. Scores, stamps, and denylists are point-in-time heuristics that may be wrong, gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. Any fee-funded pool is an **experimental claims backstop — not insurance**.
 
 Read before using or relying on any stamp:
 
 - [Disclaimer](DISCLAIMER.md)
 - [Terms of Use](TERMS.md)
 - [Privacy](PRIVACY.md)
+- [Security summary](SECURITY.md)
 
 Related: [BVT securities disclaimer](docs/BVT_SECURITIES_DISCLAIMER.md) · [jurisdiction risk map](docs/LEGAL_JURISDICTION_MATRIX.md) (not a legal opinion).
 
@@ -38,6 +50,7 @@ An experimental stack for testing whether an AI bot is safe, honest, and stable 
 
 ## Buildable code (runnable)
 - `pipeline/end_to_end_runner.py` — full audit runner (stub bot included).
+- `claim-relayer/` — Base Sepolia claim-flow relayer. Escrow address comes from `deployments/base-sepolia.json`. Fixture / dry-run unless `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1` on chain 84532. Live `POST /v1/claims` requires an EIP-712 `ClaimIntent` signed by the payer or payee. Mainnet is refused.
 - `pipeline/run_audit.sh` — one-command runner.
 - `meta_audit/meta_audit_runner.py` — re-audit the auditors.
 - `contracts/Denylist.sol`, `Vault.sol`, `Liability.sol`, `InsuranceFund.sol`, `DisputePanel.sol` — real Solidity.
@@ -81,6 +94,8 @@ export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 # CORE_TIMELOCK = timelock/multisig that will own Denylist/Vault/Liability (≠ deployer)
 # (1) forge script script/Deploy.s.sol:Deploy --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
 #     then CORE_TIMELOCK acceptOwnership() on Denylist and Vault, and setArbitrator x3
+# Escrow is live and Gate B is seated. Record: script/DEPLOY_ESCROW_BASE_SEPOLIA.md
+# SIMULATE is not live. Agents do not --broadcast. Do not replace the live escrow address.
 # (2) escrow — env DENYLIST, VAULT, DISPUTE_PANEL, CORE_TIMELOCK (timelock must acceptOwnership):
 # forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
 # (3) optional BVT stack (hardened roles; sinks default to timelock). BVT_GUARDIAN required (≠ deployer):
@@ -89,9 +104,24 @@ export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 # forge script script/DeployDenylist.s.sol:DeployDenylist --rpc-url $BASE_SEPOLIA_RPC_URL -vvvv
 ```
 
-Core `Deploy.s.sol`, `DeployDenylist.s.sol`, `DeployBotAttestationEscrow.s.sol`, and additive `DeployBVT.s.sol` all revert on Ethereum mainnet (`chainid == 1`) and on any chain other than Base Sepolia. ETH Sepolia (`11155111`) is a documented one-line switch. Paste addresses into `deployments/base-sepolia.json` and `contracts/README.md` after deploy. The Denylist redeploy does not invent those addresses; Spencer writes them after he broadcasts.
+`foundry.toml` pins solc `0.8.20`, the optimizer at 200 runs, and `evm_version = "shanghai"`. Moving `evm_version` from `cancun` to `shanghai` is output-neutral for these contracts: solc 0.8.20 does not implement Cancun, so the compiler was already emitting Shanghai bytecode.
+
+Core `Deploy.s.sol`, `DeployDenylist.s.sol`, `DeployBotAttestationEscrow.s.sol`, and additive `DeployBVT.s.sol` all revert on Ethereum mainnet (`chainid == 1`) and on any chain other than Base Sepolia. ETH Sepolia (`11155111`) is a documented one-line switch. Paste addresses into `deployments/base-sepolia.json` and `contracts/README.md` after deploy. The Denylist redeploy does not invent those addresses; Spencer writes them after he broadcasts. Agents do not `--broadcast`.
+
+
+### Wallet UI (Base Sepolia)
+
+`apps/wallet-ux` connects an injected wallet and reads Gate A, the seated dispute panel, and live escrow. It refuses every chain except Base Sepolia (84532), including Ethereum mainnet and Base mainnet. Escrow and dispute calldata can be submitted from a wallet that is on Base Sepolia.
+
+```bash
+cd apps/wallet-ux
+npm install
+npm run dev
+```
+
+See [`apps/wallet-ux/README.md`](apps/wallet-ux/README.md).
 
 ## Status
-Architecture complete. Core runner (stub + live Grok client), denylist, vault, liability, insurance, dispute, meta-audit, key management, Base Sepolia Foundry deploy, and the BVT staking/fee/governance stack are real code. Remaining: Spencer broadcasts the testnet deploys, and run the first live attested audit.
+Architecture complete. Core runner (stub + live Grok client), denylist, vault, liability, insurance, dispute, meta-audit, key management, Base Sepolia Foundry deploy, and the BVT staking/fee/governance stack are real code. Core, Gate B, and BotAttestationEscrow are on Base Sepolia. BVT is not deployed. Agents do not `--broadcast`. Remaining: the first live attested audit.
 
 Built by Spencer (SAW72) — trades mindset, crypto-native, early on purpose.

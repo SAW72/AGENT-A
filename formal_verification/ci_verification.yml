@@ -29,6 +29,8 @@ jobs:
           slither contracts/Vault.sol || true
       - name: Run Fuzz Tests
         run: forge test --fuzz-runs 10000
+        # Tip: listing history survives remove, PromptBlock is a hard block,
+        # Vault.register fails closed unless check == None, check emits no Checked event.
       - name: Formal Verification
         run: |
           # Placeholder — wire Certora or equivalent

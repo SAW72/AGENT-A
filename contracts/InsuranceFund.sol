@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Insurance fund backstop for bot-verifier liability.
+// Insurance fund backstop for Agent A (Agent Auditor) liability.
 // Funded by vault fees. Pays out when owner/auditor cannot.
 // Not audited. For illustration.
 pragma solidity ^0.8.20;

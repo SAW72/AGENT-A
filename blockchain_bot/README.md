@@ -46,7 +46,7 @@ The bot can *want* whatever it wants. It can only *do* what the rules permit.
 - `policy_contract.md` — the smart contract design and rules schema
 - `action_log_schema.md` — what gets recorded on every on-chain action
 - `brain_hands_split.md` — how to wire the off-chain brain to the on-chain hands
-- `verifier_integration.md` — how the bot verifier reads the on-chain action log
+- `verifier_integration.md` — how Agent A (Agent Auditor) reads the on-chain action log
 - `example_policy.sol` — a minimal Solidity example (stub)
 
 ## Quick start

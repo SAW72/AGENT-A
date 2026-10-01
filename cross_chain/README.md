@@ -1,6 +1,6 @@
 # Cross-Chain Layer
 
-This folder holds the design for making the bot verifier work independently across every blockchain.
+This folder holds the design for making Agent A (Agent Auditor) work independently across every blockchain.
 
 ## Files
 - `hub_spoke_architecture.md` — the canonical hub with decentralized validators, light-client spokes on every chain.

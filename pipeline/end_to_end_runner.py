@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end bot verifier runner.
+"""End-to-end Agent A (Agent Auditor) runner.
 
 This is the missing piece: one script that takes a target bot, runs the
 scenario library, scores each response, builds a fingerprint, hashes it,
@@ -379,7 +379,7 @@ def run_audit(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="End-to-end bot verifier")
+    parser = argparse.ArgumentParser(description="End-to-end Agent A (Agent Auditor) runner")
     parser.add_argument("--target", default="stub", choices=list(BOT_REGISTRY.keys()))
     parser.add_argument("--bot-id", default="bot-001")
     parser.add_argument("--scenarios-dir", default="scenarios")

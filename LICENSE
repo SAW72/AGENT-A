@@ -1,21 +1,17 @@
-MIT License
+# License
 
-Copyright (c) 2026 SAW72 / Spencer
+Copyright (c) 2026 Steward of the King LLC
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This repository is available under a **dual license**:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. **GNU Affero General Public License v3.0 only** (`AGPL-3.0-only`), as set forth in
+   [`LICENSE.AGPL-3.0`](./LICENSE.AGPL-3.0); **or**
+2. A **paid commercial proprietary license**, as set forth in
+   [`LICENSE.COMMERCIAL`](./LICENSE.COMMERCIAL), available from Steward of the King LLC.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You may use, modify, and distribute this software under **either** license.
+If you do not have a commercial license, the AGPL-3.0-only terms apply by default.
+
+See [`NOTICE`](./NOTICE) for relicensing history (prior MIT-licensed commits remain MIT).
+
+SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Steward-Commercial

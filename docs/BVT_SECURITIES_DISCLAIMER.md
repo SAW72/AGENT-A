@@ -7,7 +7,7 @@
 
 ## What you must not do
 
-- Do **not** market BVT (or any Bot Verifier token, point, or credit) with **ROI, APY, yield, profit-share, or "number go up"** claims.
+- Do **not** market BVT (or any Agent A token, point, or credit) with **ROI, APY, yield, profit-share, or "number go up"** claims.
 - Do **not** describe staking as an investment, passive-income product, or claim on protocol profits.
 - Do **not** run a public sale, ICO, IEO, airdrop-for-consideration, or exchange listing without **counsel review**.
 - Do **not** invent circulating supply, FDV, live mainnet addresses, or audit-firm completion.

@@ -1,1 +1,1 @@
-"""Bot verifier audit pipeline."""
+"""Agent A (Agent Auditor) audit pipeline."""

@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import { Test } from "forge-std/Test.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Denylist } from "../contracts/Denylist.sol";
+import { IVault } from "../contracts/interfaces/IVault.sol";
 import { Vault } from "../contracts/Vault.sol";
 
 contract VaultTest is Test {
@@ -67,9 +68,9 @@ contract VaultTest is Test {
         vm.expectRevert(bytes("bot is denylisted"));
         vault.register(BOT, WEIGHT, SIG, PROMPT, Vault.Tier.Chat);
 
-        denylist.remove(PROMPT, Denylist.Bucket.Prompt);
+        denylist.remove(PROMPT, uint8(Denylist.Bucket.Prompt));
         assertEq(uint256(denylist.check(WEIGHT, SIG, PROMPT)), uint256(Denylist.MatchLevel.None));
-        assertTrue(denylist.everListed(Denylist.Bucket.Prompt, PROMPT));
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Prompt), PROMPT));
 
         vault.register(BOT, WEIGHT, SIG, PROMPT, Vault.Tier.Chat);
         (,,,, bool active,) = vault.bots(BOT);
@@ -168,6 +169,70 @@ contract VaultTest is Test {
         vault.burn(BOT);
         (,,,, bool active,) = vault.bots(BOT);
         assertFalse(active);
+    }
+
+    function test_productPath_listBlocksRegister_removeThenRegisterBindsOperator() public {
+        address operator = address(0x0B0);
+        denylist.addExact(WEIGHT);
+        denylist.addSignature(SIG);
+        denylist.addPrompt(PROMPT);
+
+        vm.expectRevert(bytes("bot is denylisted"));
+        vault.register(BOT, WEIGHT, SIG, PROMPT, Vault.Tier.Financial, operator);
+        assertEq(vault.operator(BOT), address(0));
+        (,,,,, uint256 registeredAt) = vault.bots(BOT);
+        assertEq(registeredAt, 0);
+
+        denylist.remove(WEIGHT, uint8(Denylist.Bucket.Exact));
+        vm.expectRevert(bytes("bot is denylisted"));
+        vault.register(BOT, WEIGHT, SIG, PROMPT, Vault.Tier.Financial, operator);
+
+        denylist.remove(SIG, uint8(Denylist.Bucket.Signature));
+        vm.expectRevert(bytes("bot is denylisted"));
+        vault.register(BOT, WEIGHT, SIG, PROMPT, Vault.Tier.Financial, operator);
+
+        denylist.remove(PROMPT, uint8(Denylist.Bucket.Prompt));
+        assertEq(uint256(denylist.check(WEIGHT, SIG, PROMPT)), uint256(Denylist.MatchLevel.None));
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), WEIGHT));
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Signature), SIG));
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Prompt), PROMPT));
+        assertEq(denylist.listing(uint8(Denylist.Bucket.Prompt), PROMPT).timesListed, 1);
+
+        vault.register(BOT, WEIGHT, SIG, PROMPT, Vault.Tier.Financial, operator);
+        assertEq(vault.operator(BOT), operator);
+        (,,,, bool active,) = vault.bots(BOT);
+        assertTrue(active);
+        assertTrue(vault.grantAccess(BOT, 3));
+    }
+
+    function test_IVaultMatchesLiveRegisterOperatorAndBurn() public {
+        IVault hook = IVault(address(vault));
+        assertEq(hook.denylist(), address(denylist));
+        assertEq(hook.owner(), address(this));
+        assertEq(hook.pendingOwner(), address(0));
+        assertEq(hook.tierMaxPermissions(IVault.Tier.Financial), 3);
+
+        hook.register(BOT, WEIGHT, SIG, PROMPT, IVault.Tier.Financial);
+        assertEq(hook.operator(BOT), address(0));
+        (bytes32 weight,, bytes32 prompt, IVault.Tier tier, bool active, uint256 registeredAt) = hook.bots(BOT);
+        assertEq(weight, WEIGHT);
+        assertEq(prompt, PROMPT);
+        assertEq(uint8(tier), uint8(IVault.Tier.Financial));
+        assertTrue(active);
+        assertGt(registeredAt, 0);
+        assertTrue(hook.grantAccess(BOT, 3));
+        assertFalse(hook.grantAccess(BOT, 4));
+
+        bytes32 bot2 = keccak256("operator-bot");
+        hook.register(bot2, WEIGHT, SIG, keccak256("other-prompt"), IVault.Tier.Chat, address(0xBEEF));
+        assertEq(hook.operator(bot2), address(0xBEEF));
+        hook.setOperator(bot2, address(0xCAFE));
+        assertEq(hook.operator(bot2), address(0xCAFE));
+        hook.burn(bot2);
+        (,,,, bool burnedActive,) = hook.bots(bot2);
+        assertFalse(burnedActive);
+        vm.expectRevert(bytes("already registered"));
+        hook.register(bot2, WEIGHT, SIG, PROMPT, IVault.Tier.Chat);
     }
 
     function test_burnIsIrreversible() public {

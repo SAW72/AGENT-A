@@ -1,6 +1,6 @@
 # Verifier Integration with On-Chain Action Logs
 
-How the bot verifier reads and scores the perfect history a policy-enforced bot produces.
+How Agent A (Agent Auditor) reads and scores the perfect history a policy-enforced bot produces.
 
 ## What changes
 For a normal bot, the verifier reconstructs history from behavior (behavioral archaeology). For a policy-enforced bot, the history is already on-chain — complete, timestamped, tamper-evident. The verifier's job shifts from *finding* the history to *scoring* it.

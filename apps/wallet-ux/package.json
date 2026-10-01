@@ -1,0 +1,31 @@
+{
+  "name": "wallet-ux",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/sync-book.mjs && vite",
+    "build": "node scripts/sync-book.mjs && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "sync-abis": "node scripts/sync-abis.mjs",
+    "gen-escrow-abi": "bash ../../scripts/gen-escrow-abi.sh",
+    "sync-book": "node scripts/sync-book.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.103.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "viem": "^2.56.9",
+    "wagmi": "^3.7.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}

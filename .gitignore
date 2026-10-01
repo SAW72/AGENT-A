@@ -22,3 +22,6 @@ meta_report.json
 
 # Other local tooling
 node_modules/
+
+# Claim relayer append-only log (local only; never commit)
+claim-relayer/data/

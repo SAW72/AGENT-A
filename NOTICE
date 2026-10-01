@@ -1,0 +1,31 @@
+Agent-B.V. — NOTICE
+===================
+
+Copyright (c) 2026 Steward of the King LLC
+
+This project is dual-licensed: AGPL-3.0-only OR a paid commercial proprietary
+license from Steward of the King LLC. See LICENSE, LICENSE.AGPL-3.0, and
+LICENSE.COMMERCIAL.
+
+Relicensing history
+-------------------
+Prior to the dual-license cutover commit on or after 2026-09-26, this
+repository (including the former name `bot-verifier`) was published under the
+MIT License, Copyright (c) 2026 SAW72 / Spencer.
+
+- Code obtained from MIT-licensed commits remains usable under MIT for those
+  snapshots.
+- Code added or modified at or after the dual-license cutover is available
+  only under AGPL-3.0-only or a Steward commercial license, unless a file
+  header says otherwise.
+
+Third-party components
+----------------------
+Dependencies and vendored code remain under their own licenses. This NOTICE
+does not relicense third-party material.
+
+Trademarks
+----------
+“Agent-B.V.” (formerly “AGENT-A” and “Bot Verifier”), “Steward”, and related
+marks are not licensed for implied endorsement, certification, or insurance
+claims. See DISCLAIMER.md and TERMS.md in the repository.
