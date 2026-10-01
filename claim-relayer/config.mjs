@@ -4,13 +4,15 @@
  * Escrow defaults from deployments/base-sepolia.json when ESCROW_ADDRESS is unset.
  */
 
-import { loadAddressBook, DEFAULT_ADDRESS_BOOK } from "./addressBook.mjs";
+import { loadAddressBook, DEFAULT_ADDRESS_BOOK, parseStartBlock, rejectRetiredAddress } from "./addressBook.mjs";
 
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
 export const DEFAULT_RELAYER_ADDRESS = "0x9D1b3E1400D2632d435cB7C0fC131C4f42B31861";
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 /** Booked BotAttestationEscrow on Base Sepolia. Live submit refuses every other target. */
-export const BOOKED_SEPOLIA_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c";
+export const BOOKED_SEPOLIA_ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
+/** ESC-M-1 deploy block. Indexer and relayer log scans start here. */
+export const BOOKED_SEPOLIA_ESCROW_START_BLOCK = 47345163;
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAINNET_CHAIN_IDS = new Set([1, 8453]);
@@ -70,29 +72,112 @@ export function liveSubmitStatus(env, escrow = {}) {
   };
 }
 
+function isMissingStartBlock(raw) {
+  if (raw === null || raw === undefined) return true;
+  if (typeof raw === "string" && raw.trim() === "") return true;
+  return false;
+}
+
+/**
+ * The booked start block belongs to the booked escrow only.
+ * When the configured escrow is that contract, use the address-book block, or the
+ * constant when the book omits one. A different contract never inherits that block:
+ * ESCROW_START_BLOCK supplies it, or the value stays null (source "unset").
+ * Null is not block 0. Callers must not coalesce null to 0 or to BOOKED_SEPOLIA_ESCROW_START_BLOCK.
+ */
+function resolveEscrowStartBlock(env, escrowAddress, book) {
+  if (!escrowAddress) {
+    return { escrowStartBlock: null, escrowStartBlockSource: "unbooked" };
+  }
+  const matchesBookSlot = book.escrowAddress && sameAddress(escrowAddress, book.escrowAddress);
+  if (matchesBookSlot && book.escrowStartBlock != null) {
+    return { escrowStartBlock: book.escrowStartBlock, escrowStartBlockSource: "address_book" };
+  }
+  if (sameAddress(escrowAddress, BOOKED_SEPOLIA_ESCROW)) {
+    return { escrowStartBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK, escrowStartBlockSource: "booked_constant" };
+  }
+  const raw = env.ESCROW_START_BLOCK;
+  if (isMissingStartBlock(raw)) {
+    return { escrowStartBlock: null, escrowStartBlockSource: "unset" };
+  }
+  const parsed = parseStartBlock(raw);
+  if (parsed == null) {
+    throw Object.assign(
+      new Error(
+        "ESCROW_START_BLOCK must be a non-negative integer. The booked start block is not used when ESCROW_ADDRESS is a different contract.",
+      ),
+      { status: 400, error: "invalid_escrow_start_block" },
+    );
+  }
+  return { escrowStartBlock: parsed, escrowStartBlockSource: "env" };
+}
+
 function resolveEscrow(env) {
   const book = loadAddressBook(env.ADDRESS_BOOK_PATH || DEFAULT_ADDRESS_BOOK);
-  const base = {
+  const guard = { forbidden: book.forbidden, replacements: book.replacements };
+  rejectRetiredAddress(book.disputePanelAddress, guard);
+  rejectRetiredAddress(book.denylistAddress, guard);
+  rejectRetiredAddress(book.vaultAddress, guard);
+
+  const explicit = env.ESCROW_ADDRESS === undefined ? "" : String(env.ESCROW_ADDRESS).trim();
+  let escrowAddress = book.escrowAddress;
+  let escrowBooked = book.escrowBooked;
+  let escrowSource = "address_book";
+  if (explicit) {
+    const parsed = checkedAddress(explicit);
+    if (!parsed) throw httpError(400, "invalid_escrow_address");
+    if (parsed.toLowerCase() === ZERO_ADDRESS) {
+      escrowAddress = null;
+      escrowBooked = false;
+      escrowSource = "env_cleared";
+    } else {
+      escrowAddress = parsed;
+      escrowBooked = true;
+      escrowSource = "env";
+    }
+  }
+  rejectRetiredAddress(escrowAddress, guard);
+  return {
     disputePanelAddress: book.disputePanelAddress,
     coreTimelock: book.coreTimelock,
     escrowOwner: book.escrowOwner,
     bvtAddress: book.bvtAddress,
+    escrowAddress,
+    escrowBooked,
+    escrowSource,
+    ...resolveEscrowStartBlock(env, escrowAddress, book),
   };
-  const explicit = env.ESCROW_ADDRESS === undefined ? "" : String(env.ESCROW_ADDRESS).trim();
-  if (!explicit) {
-    return {
-      ...base,
-      escrowAddress: book.escrowAddress,
-      escrowBooked: book.escrowBooked,
-      escrowSource: "address_book",
-    };
+}
+
+function positiveInt(value, fallback) {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(String(value).trim());
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw httpError(400, "invalid_abuse_limit");
   }
-  const parsed = checkedAddress(explicit);
-  if (!parsed) throw httpError(400, "invalid_escrow_address");
-  if (parsed.toLowerCase() === ZERO_ADDRESS) {
-    return { ...base, escrowAddress: null, escrowBooked: false, escrowSource: "env_cleared" };
-  }
-  return { ...base, escrowAddress: parsed, escrowBooked: true, escrowSource: "env" };
+  return parsed;
+}
+
+function parseWei(value, fallback, error) {
+  const text = value === undefined || value === null || String(value).trim() === "" ? fallback : String(value).trim();
+  if (!/^[0-9]+$/.test(text)) throw httpError(400, error);
+  return BigInt(text);
+}
+
+/**
+ * Safe defaults. Counts are per window, not authentication.
+ * sender: 5 / minute. IP: 30 / minute. escrow: 8 / day. gas: 0.01 ETH / day at 1 gwei.
+ */
+export function loadAbuseLimits(env) {
+  return {
+    senderLimit: positiveInt(env.CLAIM_RATE_SENDER, 5),
+    ipLimit: positiveInt(env.CLAIM_RATE_IP, 30),
+    windowMs: positiveInt(env.CLAIM_RATE_WINDOW_SEC, 60) * 1000,
+    escrowCap: positiveInt(env.CLAIM_ESCROW_CAP, 8),
+    escrowWindowMs: positiveInt(env.CLAIM_ESCROW_WINDOW_SEC, 86400) * 1000,
+    dailyGasBudgetWei: parseWei(env.DAILY_GAS_BUDGET_WEI, "10000000000000000", "invalid_gas_budget").toString(),
+    gasPriceWei: parseWei(env.CLAIM_GAS_PRICE_WEI, "1000000000", "invalid_gas_price").toString(),
+  };
 }
 
 export function loadConfig(env = process.env) {
@@ -128,6 +213,7 @@ export function loadConfig(env = process.env) {
 
   const ttlRaw = Number(env.QUOTE_TTL_MS || 30 * 60 * 1000);
   const quoteTtlMs = Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : 30 * 60 * 1000;
+  const abuse = loadAbuseLimits(env);
 
   return {
     chainId: BASE_SEPOLIA_CHAIN_ID,
@@ -136,6 +222,8 @@ export function loadConfig(env = process.env) {
     host: env.HOST || (env.RENDER ? "0.0.0.0" : "127.0.0.1"),
     relayerAddress,
     escrowAddress: escrow.escrowAddress,
+    escrowStartBlock: escrow.escrowStartBlock,
+    escrowStartBlockSource: escrow.escrowStartBlockSource,
     escrowBooked: escrow.escrowBooked,
     escrowSource: escrow.escrowSource,
     disputePanelAddress: escrow.disputePanelAddress,
@@ -143,17 +231,67 @@ export function loadConfig(env = process.env) {
     escrowOwner: escrow.escrowOwner,
     bvtAddress: escrow.bvtAddress,
     adminSecret: String(env.ADMIN_SECRET || "").trim(),
-    claimApiSecret: String(env.CLAIM_API_SECRET || "").trim(),
     killSwitchInitial: parseEnvFlag(env.KILL_SWITCH),
     claimLogPath: String(env.CLAIM_LOG_PATH || "./data/claims.jsonl"),
+    intentNoncePath: String(env.INTENT_NONCE_PATH || "./data/intent-nonces.jsonl"),
+    erc1271Enabled: parseEnvFlag(env.ERC1271_ENABLED),
+    abuse,
     quoteTtlMs,
+    build: buildMetadata(env),
     liveSubmit: liveSubmitStatus(env, {
       escrowBooked: escrow.escrowBooked,
       escrowAddress: escrow.escrowAddress,
       chainId: BASE_SEPOLIA_CHAIN_ID,
     }),
-    corsOrigins: env.CORS_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173",
+    corsOrigins:
+      env.CORS_ORIGINS ||
+      "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
+    reputationCors: reputationCorsFromEnv(env),
   };
+}
+
+/**
+ * Runtime commit Render injects as RENDER_GIT_COMMIT.
+ * Unset or blank is null. No git command and no build-time embed.
+ * Other commit env vars are ignored.
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ */
+export function buildMetadata(env = process.env) {
+  const raw = env.RENDER_GIT_COMMIT;
+  const commit = raw == null ? "" : String(raw).trim();
+  return {
+    commit: commit.length > 0 ? commit : null,
+    builtAt: null,
+  };
+}
+
+/**
+ * CORS for GET /v1/reputation only. Claim routes keep corsOrigins.
+ * Preview matching is one label under previewHost. `pages.dev` and `*` are refused.
+ */
+export function reputationCorsFromEnv(env) {
+  const pagesOrigin = String(env.REPUTATION_CORS_PAGES_ORIGIN ?? "https://agent-a-wallet-ux.pages.dev")
+    .trim()
+    .replace(/\/$/, "");
+  const previewHost = String(env.REPUTATION_CORS_PREVIEW_HOST ?? "agent-a-wallet-ux.pages.dev")
+    .trim()
+    .toLowerCase()
+    .replace(/^\./, "")
+    .replace(/\.$/, "");
+  const localHosts = String(env.REPUTATION_CORS_LOCAL_HOSTS ?? "localhost,127.0.0.1")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  if (!pagesOrigin || pagesOrigin === "*" || pagesOrigin.includes("*")) {
+    throw httpError(500, "reputation_cors_invalid", { field: "pages_origin" });
+  }
+  if (!previewHost || previewHost.includes("*") || previewHost === "pages.dev" || !previewHost.includes(".")) {
+    throw httpError(500, "reputation_cors_invalid", { field: "preview_host" });
+  }
+  if (localHosts.some((host) => host.includes("*") || host.includes("/") || host.includes(":"))) {
+    throw httpError(500, "reputation_cors_invalid", { field: "local_hosts" });
+  }
+  return { pagesOrigin, previewHost, localHosts };
 }
 
 export function healthPayload(config, killSwitchOn) {
@@ -169,9 +307,12 @@ export function healthPayload(config, killSwitchOn) {
     escrowBooked: config.escrowBooked,
     escrowAddress: config.escrowAddress,
     escrowSource: config.escrowSource,
+    escrowStartBlock: config.escrowStartBlock ?? null,
+    escrowStartBlockSource: config.escrowStartBlockSource ?? null,
     relayerAddress: config.relayerAddress,
     liveSubmit: live,
     liveSubmitRequested: Boolean(config.liveSubmit?.requested),
     liveSubmitBlockers: config.liveSubmit?.blockers ?? [],
+    build: config.build ?? { commit: null, builtAt: null },
   };
 }

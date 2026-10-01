@@ -1,8 +1,11 @@
 import { pathToFileURL } from "node:url";
 import { createClaimRelayer } from "./app.mjs";
 import { createSepoliaBroadcaster } from "./broadcast.mjs";
-import { loadConfig } from "./config.mjs";
+import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, loadConfig } from "./config.mjs";
+import { createAbuseGuard } from "./abuseLimits.mjs";
 import { createClaimLog } from "./claimLog.mjs";
+import { createRpcEscrowChain, httpRpcRequest } from "./escrowChain.mjs";
+import { createFileIntentNonceStore } from "./intentNonceStore.mjs";
 import { createKillSwitch } from "./killSwitch.mjs";
 import { createNonceStore } from "./nonceStore.mjs";
 
@@ -15,18 +18,40 @@ export function startServer(env = process.env) {
   const killSwitch = createKillSwitch({ initial: config.killSwitchInitial });
   const nonceStore = createNonceStore();
   const claimLog = createClaimLog({ filePath: config.claimLogPath });
+  const intentNonces = createFileIntentNonceStore({ filePath: config.intentNoncePath });
+  const abuse = createAbuseGuard(config.abuse);
+  const rpcUrl = env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  const chain = createRpcEscrowChain({
+    escrowAddress: config.escrowAddress,
+    from: config.relayerAddress,
+    request: httpRpcRequest(rpcUrl),
+  });
   const broadcaster = config.liveSubmit.allowed
     ? createSepoliaBroadcaster({
-        rpcUrl: env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+        rpcUrl,
         privateKey: env.RELAYER_PRIVATE_KEY,
       })
     : null;
-  const server = createClaimRelayer({ config, killSwitch, nonceStore, claimLog, broadcaster });
+  const server = createClaimRelayer({
+    config,
+    killSwitch,
+    nonceStore,
+    intentNonces,
+    abuse,
+    chain,
+    claimLog,
+    broadcaster,
+  });
   const mode = config.liveSubmit.allowed ? "live" : "fixture";
   server.listen(config.port, config.host, () => {
     console.log(
-      `claim-relayer listening on ${config.host}:${config.port} mode=${mode} chainId=${config.chainId} escrowBooked=${config.escrowBooked} killSwitch=${killSwitch.isOn()} liveSubmit=${config.liveSubmit.allowed}`,
+      `claim-relayer listening on ${config.host}:${config.port} mode=${mode} chainId=${config.chainId} escrowBooked=${config.escrowBooked} escrowStartBlock=${config.escrowStartBlock ?? "unset"} escrowStartBlockSource=${config.escrowStartBlockSource} killSwitch=${killSwitch.isOn()} liveSubmit=${config.liveSubmit.allowed}`,
     );
+    if (config.escrowAddress && config.escrowStartBlockSource === "unset") {
+      console.error(
+        `claim-relayer: ESCROW_ADDRESS ${config.escrowAddress} is not the booked escrow ${BOOKED_SEPOLIA_ESCROW}. The booked start block ${BOOKED_SEPOLIA_ESCROW_START_BLOCK} was not applied. Set ESCROW_START_BLOCK to a non-negative integer. escrowStartBlock is unset.`,
+      );
+    }
   });
   return server;
 }
@@ -36,7 +61,9 @@ if (isMain) {
   try {
     startServer();
   } catch (err) {
-    console.error(err.error || err.message || "claim_relayer_config_error");
+    const code = err && err.error;
+    const message = err && err.message;
+    console.error(code && message && message !== code ? `${code}: ${message}` : code || message || "claim_relayer_config_error");
     process.exit(1);
   }
 }

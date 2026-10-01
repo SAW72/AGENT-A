@@ -1,0 +1,43 @@
+{
+  "example": true,
+  "label": "EXAMPLE DATA. Not a live Base Sepolia scan. Fixture logs only. Eligibility is unverified, so points are withheld.",
+  "response_is_live_chain_data": false,
+  "method": "GET",
+  "path": "/v1/reputation/0x1111111111111111111111111111111111111111?chainId=84532",
+  "response": {
+    "address": "0x1111111111111111111111111111111111111111",
+    "chainId": 84532,
+    "ledgers": {
+      "usage": {
+        "ledger": "agent-bv-sepolia-reputation",
+        "final": 0,
+        "provisional": 0
+      },
+      "arbitrator": {
+        "ledger": "agent-bv-sepolia-arbitrator-rep",
+        "final": 0,
+        "provisional": 0
+      }
+    },
+    "eligibility": {
+      "status": "unverified",
+      "points_withheld": true
+    },
+    "config_version": "sepolia-draft-1",
+    "rule_version": "design-v2.2",
+    "indexed_to_block": 48000100,
+    "indexed_to_block_timestamp": 1699920005,
+    "finalized_block": 48000100,
+    "disclaimer": {
+      "text": "Testnet only. Not a token. Can't be transferred, sold, or redeemed. May be adjusted or cancelled, and may never convert to anything.",
+      "links": {
+        "master_disclaimer": null,
+        "bvt_securities_disclaimer": null,
+        "as_is": null,
+        "not_investment": null,
+        "eligibility_notice": null,
+        "abuse_policy": null
+      }
+    }
+  }
+}

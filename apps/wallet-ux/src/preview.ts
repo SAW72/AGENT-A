@@ -1,5 +1,6 @@
-import { encodeFunctionData, type Address, type Hex } from "viem"
+import { encodeAbiParameters, encodeFunctionData, keccak256, type Address, type Hex } from "viem"
 import { disputePanelAbi, escrowAbi } from "./abi"
+import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 
 export const MAX_DURATION_SECONDS = 30 * 24 * 60 * 60
 
@@ -15,35 +16,93 @@ export type ErrorGlossaryEntry = {
   meaning: string
 }
 
-/** Contract revert strings. These builders do not submit. */
+/** Shown when a refund hits an unresolved dispute inside the 7-day ruling window. */
+export const RULING_PENDING_TEXT =
+  "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled."
+
+/**
+ * `DisputePending` on the #56 escrow.
+ * Release: a party while the linked case is unresolved or was unwound.
+ * Refund: before the claim ends, until the panel unwinds the deal; also whenever the panel upheld it.
+ */
+export const DISPUTE_PENDING_TEXT =
+  "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal."
+
+/**
+ * Two votes on one side already decide a 3-member panel, so that case cannot be linked.
+ * One vote, or one vote on each side, still links. The next step is a new case.
+ */
+export const DISPUTE_VOTES_CAST_TEXT =
+  "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one."
+
+export const POST_EXPIRY_REFUND_INTRO = "After the claim ends, a refund is decided in this order."
+
+/** Post-expiry refund checks, in contract order. */
+export const POST_EXPIRY_REFUND_ORDER = [
+  { state: "Open", error: null, outcome: "The payer is refunded." },
+  { state: "Disputed and upheld", error: "DisputePending", outcome: "The payee releases." },
+  {
+    state: "Disputed, unresolved, within 7 days after the claim ends",
+    error: "RulingPending",
+    outcome: RULING_PENDING_TEXT,
+  },
+  { state: "Otherwise", error: null, outcome: "The payer is refunded." },
+] as const
+
+export const OPEN_AND_LINK_TEXT =
+  "Open the case, then link it to this claim right away, using this same identifier. The identifier is random, so it cannot be guessed from the claim."
+
+export const OPEN_AND_LINK_BUTTON = "Prepare opening and linking"
+export const NEW_CASE_ID_BUTTON = "Generate a new identifier"
+export const OPEN_CASE_HEADING = "Open the case"
+export const LINK_CASE_HEADING = "Link the case"
+export const CASE_ID_HINT = "A new random identifier for this case. It is not taken from the claim or the clock."
+
+/** Contract error ReleaseNotAuthorized. */
+export const RELEASE_NOT_AUTHORIZED_TEXT =
+  "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee."
+
+export const RELEASE_NOT_RELAYABLE_TEXT = `${RELEASE_NOT_AUTHORIZED_TEXT} Send it from that wallet. Nothing was sent.`
+
+export const RELEASE_SENDER_NOTE = `${RELEASE_NOT_AUTHORIZED_TEXT} The connected wallet sends this payout on Base Sepolia.`
+
+/** Plain-English meanings for contract reverts. These builders do not submit. */
 export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
-  { name: "FundingBeforeGovernance", meaning: "createEscrow reverts until owner() is governance (CORE_TIMELOCK has accepted)." },
-  { name: "EscrowNotOpen", meaning: "release, refund, or dispute saw a state other than the one that path allows." },
-  { name: "EscrowExpired", meaning: "Open release after expiresAt. An upheld dispute can still release." },
-  { name: "AttestationFailed", meaning: "zero amount, bad duration, or a bot that is inactive, below Financial, access-denied, or denylisted." },
-  { name: "InvalidParties", meaning: "Zero payee, payer equals payee, bot ids match or are zero, or Vault operator does not match." },
-  { name: "Replay", meaning: "escrowId was already used." },
-  { name: "InvalidDispute", meaning: "dispute id is zero, or the panel outcome is missing or its subjectHash is not the escrow id." },
-  { name: "DisputePending", meaning: "refund is closed because the panel upheld the deal." },
-  { name: "ZeroAddress", meaning: "A required address was zero." },
-  { name: "InvalidGovernance", meaning: "Constructor governance was the deployer." },
-  { name: "NotGovernance", meaning: "Caller is not governance, or owner() is not governance." },
-  { name: "DependencyChangeWhileFunded", meaning: "setDenylist, setVault, or setDisputePanel while lockedValue is not zero." },
-  { name: "DenylistUnchanged", meaning: "setDenylist was given the current denylist." },
-  { name: "VaultUnchanged", meaning: "setVault was given the current vault." },
-  { name: "DisputePanelUnchanged", meaning: "setDisputePanel was given the current dispute panel." },
-  { name: "not a party", meaning: "dispute() caller is neither payer nor payee." },
-  { name: "not expired", meaning: "refund() on an Open escrow before expiresAt." },
-  { name: "transfer failed", meaning: "Paying the payee returned false." },
-  { name: "refund failed", meaning: "Paying the payer returned false." },
-  { name: "panel not seated", meaning: "openDispute while arbitratorCount is below PANEL_SIZE." },
-  { name: "exists", meaning: "openDispute id is already on the panel." },
-  { name: "not authorized", meaning: "vote() from an address that is not an arbitrator." },
-  { name: "no dispute", meaning: "vote() for an unknown dispute id." },
-  { name: "resolved", meaning: "vote() after the dispute is already resolved." },
-  { name: "already voted", meaning: "That arbitrator already voted." },
-  { name: "not owner", meaning: "DisputePanel owner call from someone else." },
-  { name: "zero arbitrator", meaning: "setArbitrator was given the zero address." },
+  { name: "FundingBeforeGovernance", meaning: "New claims can't be created yet. The contract owner still needs to accept the governance handover." },
+  { name: "EscrowNotOpen", meaning: "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status." },
+  { name: "EscrowExpired", meaning: "This claim's time window has ended, so it can't be paid out that way. A dispute decided for the payee can still be paid out." },
+  { name: "AttestationFailed", meaning: "This claim can't be created. The amount or the time window isn't allowed, or one of the bots is inactive, not approved for payments, blocked, or on the deny list." },
+  { name: "InvalidParties", meaning: "The payer and payee aren't valid. They must be two different wallets, with two different bots, and the connected wallet must be allowed to act for the payer." },
+  { name: "Replay", meaning: "This claim identifier was already used. Choose a new one." },
+  { name: "InvalidDispute", meaning: "This dispute can't be linked. The dispute identifier is missing, the panel hasn't recorded an outcome, or the outcome is for a different claim." },
+  { name: "DisputeAlreadyResolved", meaning: "This dispute is already resolved, so it can't be linked to this claim." },
+  { name: "DisputeVotesCast", meaning: DISPUTE_VOTES_CAST_TEXT },
+  { name: "DisputePredatesEscrow", meaning: "This dispute was opened before this claim, so it can't be linked." },
+  { name: "DisputeChallengerNotParty", meaning: "The person who opened this dispute is neither the payer nor the payee, so it can't be linked to this claim." },
+  { name: "ReleaseNotAuthorized", meaning: RELEASE_NOT_AUTHORIZED_TEXT },
+  { name: "NotParty", meaning: "This wallet is not a party to this escrow." },
+  { name: "DisputeAfterExpiry", meaning: "The claim window has closed, so this dispute can't be linked." },
+  { name: "DisputePending", meaning: DISPUTE_PENDING_TEXT },
+  { name: "RulingPending", meaning: RULING_PENDING_TEXT },
+  { name: "ZeroAddress", meaning: "A required wallet address was left blank." },
+  { name: "InvalidGovernance", meaning: "This contract was set up with its deployer as the governor, which isn't allowed." },
+  { name: "NotGovernance", meaning: "Only the governor can do that, and the contract owner must already be the governor." },
+  { name: "DependencyChangeWhileFunded", meaning: "Those settings can't be changed while funds are still locked in claims." },
+  { name: "DenylistUnchanged", meaning: "That deny list is already the one in use." },
+  { name: "VaultUnchanged", meaning: "That vault is already the one in use." },
+  { name: "DisputePanelUnchanged", meaning: "That dispute panel is already the one in use." },
+  { name: "not a party", meaning: "Only the payer or payee on this claim can open a dispute. Switch to that wallet." },
+  { name: "not expired", meaning: "This claim can't be refunded yet. Its time window is still open." },
+  { name: "transfer failed", meaning: "Paying the payee didn't go through. No funds were released." },
+  { name: "refund failed", meaning: "The refund didn't go through. No funds were returned." },
+  { name: "panel not seated", meaning: "A dispute can't be opened yet. The panel doesn't have enough members." },
+  { name: "exists", meaning: "A dispute with this identifier is already open." },
+  { name: "not authorized", meaning: "Only a panel member can vote on this dispute." },
+  { name: "no dispute", meaning: "There is no dispute with that identifier to vote on." },
+  { name: "resolved", meaning: "This dispute is already decided, so it can't be voted on." },
+  { name: "already voted", meaning: "You already voted on this dispute." },
+  { name: "not owner", meaning: "Only the panel owner can do that." },
+  { name: "zero arbitrator", meaning: "A panel member's wallet address was left blank." },
 ]
 
 export function previewCreateEscrow(input: {
@@ -65,6 +124,24 @@ export function previewCreateEscrow(input: {
       args: [input.escrowId, input.payee, input.payerBotId, input.payeeBotId, input.durationSeconds],
     }),
   }
+}
+
+/**
+ * Subject a panel case must use for this escrow row.
+ * Matches `BotAttestationEscrow.panelSubject`: `keccak256(abi.encode(chainId, escrow, escrowId, createdAt))`.
+ */
+export function panelSubject(
+  escrow: Address,
+  escrowId: Hex,
+  createdAt: bigint,
+  chainId: number = BASE_SEPOLIA_CHAIN_ID,
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }, { type: "bytes32" }, { type: "uint256" }],
+      [BigInt(chainId), escrow, escrowId, createdAt],
+    ),
+  )
 }
 
 export function previewRelease(escrow: Address, escrowId: Hex): CallPreview {

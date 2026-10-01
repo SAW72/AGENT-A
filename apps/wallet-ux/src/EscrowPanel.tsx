@@ -1,9 +1,11 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { type Address } from "viem"
+import { useAccount } from "wagmi"
 import { ADDRESSES } from "./addresses"
 import { parseBytes32 } from "./bytes32"
 import { FlowPreview } from "./FlowPreview"
-import { errorText, formatEth, isZeroAddress } from "./format"
+import { errorText, formatEth, isZeroAddress, payeeOpenExpiryNotice } from "./format"
+import { PAYEE_NOW_INTERVAL_MS, nowSecondsFrom, startNowTicker } from "./nowClock"
 import { escrowStateLabel, readEscrowById, type EscrowRecord, type EscrowStatus, type SepoliaClient } from "./read"
 import { AddressRow, TextRow } from "./ui"
 
@@ -73,10 +75,14 @@ function EscrowLookup({
   address: Address
   enabled: boolean
 }) {
+  const account = useAccount()
   const [id, setId] = useState("")
   const [row, setRow] = useState<EscrowRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [nowSeconds, setNowSeconds] = useState(() => nowSecondsFrom(Date.now()))
+
+  useEffect(() => startNowTicker(setNowSeconds, PAYEE_NOW_INTERVAL_MS), [])
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -102,6 +108,19 @@ function EscrowLookup({
   }
 
   const empty = row != null && !row.used && isZeroAddress(row.payer) && row.createdAt === 0n
+  const expiryNotice =
+    row == null
+      ? null
+      : payeeOpenExpiryNotice({
+          viewer: account.address,
+          payee: row.payee,
+          payer: row.payer,
+          state: row.state,
+          expiresAt: row.expiresAt,
+          used: row.used,
+          createdAt: row.createdAt,
+          nowSeconds,
+        })
 
   return (
     <form onSubmit={(event) => void onSubmit(event)}>
@@ -131,7 +150,32 @@ function EscrowLookup({
           {empty ? (
             <p>No escrow stored for this id.</p>
           ) : (
-            <dl className="result">
+            <>
+              {expiryNotice ? (
+                <div className="callout" data-testid="payee-expiry-prompt" role="status">
+                  {expiryNotice.urgent && expiryNotice.urgentText ? (
+                    <div className="banner" data-testid="payee-expiry-urgent" role="alert">
+                      <p>{expiryNotice.urgentText}</p>
+                    </div>
+                  ) : null}
+                  <strong>{expiryNotice.beforeExpiry ? "Dispute before this claim ends" : "This claim has ended"}</strong>
+                  <p data-testid="payee-expiry-time">
+                    {expiryNotice.beforeExpiry ? "This claim ends" : "This claim ended"} {expiryNotice.endsLabel}.
+                  </p>
+                  <p>{expiryNotice.text}</p>
+                  {expiryNotice.cta ? (
+                    <p>
+                      <a href="#open-dispute" data-testid="payee-dispute-cta">
+                        {expiryNotice.cta}
+                      </a>
+                    </p>
+                  ) : null}
+                  <p data-testid="payee-grace-time">
+                    While a dispute is unresolved, a refund stays blocked until {expiryNotice.graceEndsLabel}.
+                  </p>
+                </div>
+              ) : null}
+              <dl className="result">
               <div>
                 <dt>usedEscrowIds</dt>
                 <dd>{row.used ? "used" : "unused"}</dd>
@@ -152,7 +196,8 @@ function EscrowLookup({
                 <dt>payee</dt>
                 <dd className="mono">{row.payee}</dd>
               </div>
-            </dl>
+              </dl>
+            </>
           )}
         </div>
       ) : null}

@@ -1,11 +1,11 @@
-# Agent A (Agent Auditor) — Privacy Notice (MVP)
+# Agent-B.V. — Privacy Notice (MVP)
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-27
 
-**Controller:** [Applicant — redacted pending Spencer approval]  
-**Contact:** [contact redacted]
+**Controller:** Steward of the King LLC  
+**Contact:** hello@stewardoftheking.com
 
-This Privacy Notice describes how the experimental Agent A (Agent Auditor) Service may process information. It is an **MVP notice**, not a certified GDPR Article 13/14 pack and not a CCPA "notice at collection" filed with any regulator.
+This Privacy Notice describes how the experimental Agent-B.V. Service may process information. It is an **MVP notice**, not a certified GDPR Article 13/14 pack and not a CCPA "notice at collection" filed with any regulator.
 
 If you do not agree, do not use the Service. See also **[DISCLAIMER.md](DISCLAIMER.md)** and **[TERMS.md](TERMS.md)**.
 
@@ -13,7 +13,7 @@ If you do not agree, do not use the Service. See also **[DISCLAIMER.md](DISCLAIM
 
 ## 1. Who is responsible
 
-The **controller** (or equivalent) is **[Applicant — redacted pending Spencer approval]**. Entity name, public branding, and street address are **redacted pending Spencer approval**. Contact: **[contact redacted]**.
+The **controller** (or equivalent) is **Steward of the King LLC**. Steward of the King LLC is an Ohio (USA) limited liability company. A street address is not published in this MVP notice. Contact: **hello@stewardoftheking.com**.
 
 This Service is **US-first** and experimental. It is not held out as an EU/UK-certified processing operation.
 
@@ -60,13 +60,15 @@ Independent auditors or meta-auditors may see reports you choose to publish or r
 
 ## 6. Retention
 
-**Retention is TBD.** As a working suggestion for this MVP:
+We keep off-chain information only as long as we need it to provide the Service, keep it secure, resolve disputes, and meet our legal obligations. After that, we delete it or anonymize it so it no longer identifies you.
 
-- **Application and security logs:** delete or anonymize after about **90 days**, unless needed for security, disputes, or law;
-- **Registered fingerprints / stamps you ask us to keep:** for the life of the registry entry plus a short wind-down;
-- **On-chain data:** **indefinite and irreversible** from our perspective — we cannot erase a public chain.
+- **Application and security logs:** deleted or anonymized within about **90 days**, unless a specific security incident, dispute, or legal requirement needs them longer.
+- **Contact and account details you give us:** kept while you use the Service and for a reasonable period afterward to handle follow-up, disputes, or legal requirements, then deleted or anonymized.
+- **Fingerprints, scores, stamps, and reports you register:** kept for the life of the registry entry. When the entry is removed, we delete or anonymize the off-chain copy.
+- **Backups:** deleted copies may remain in backups until those backups roll off on their normal cycle.
+- **On-chain data:** anything written to a public blockchain is **permanent and public**. We cannot edit or delete it, and neither can anyone else.
 
-You may request deletion of off-chain records we control via **[contact redacted]**. We may retain what we must for legal, security, or backup purposes.
+You may ask us to delete off-chain records we control by emailing **hello@stewardoftheking.com**. We will honor the request unless we must keep the information for legal, security, or dispute reasons, and in that case we will tell you.
 
 ## 7. Security
 
@@ -74,13 +76,13 @@ We use reasonable administrative and technical measures appropriate to an experi
 
 ## 8. Children
 
-The Service is not directed to children under 13 (or under 16 where that is the relevant age). We do not knowingly collect children's personal information. If you believe we have, contact **[contact redacted]**.
+The Service is not directed to children under 13 (or under 16 where that is the relevant age). We do not knowingly collect children's personal information. If you believe we have, contact **hello@stewardoftheking.com**.
 
 ## 9. U.S. state privacy rights (including California)
 
 If you are a resident of California or another U.S. state with a comprehensive privacy law, you may have rights to know/access, delete, correct, and opt out of sale/share (we do not sell/share as described above), and to non-discrimination for exercising rights.
 
-To exercise rights, email **[contact redacted]** with "Privacy request" and your state. We will verify the request as required. You may use an authorized agent where the law allows. We do not currently process "sensitive" personal information to infer characteristics as a consumer product.
+To exercise rights, email **hello@stewardoftheking.com** with "Privacy request" and your state. We will verify the request as required. You may use an authorized agent where the law allows. We do not currently process "sensitive" personal information to infer characteristics as a consumer product.
 
 This MVP may not yet meet every formal CCPA/CPRA "notice at collection" or annual metrics requirement; treat this as an experimental notice and contact us before sending production personal data.
 
@@ -90,4 +92,4 @@ If you are in the EEA, UK, or Switzerland: the Service is **experimental and not
 
 ## 11. Contact
 
-Privacy questions and requests: **[contact redacted]**.
+Privacy questions and requests: **hello@stewardoftheking.com**.

@@ -9,7 +9,7 @@ Working Solidity for the on-chain layers. **Testnet only.** Mainnet is refused b
 - `InsuranceFund.sol` — fee-funded backstop. Constructor: `InsuranceFund(liability)` (immutable `onlyLiability` on `payout`).
 - `Liability.sol` — owner → auditor → insurance waterfall. Constructor: `Liability(insuranceFund)` or `Liability(address(0))` then `bindInsurance`.
 - `DisputePanel.sol` — 3-arbitrator **allowlist**. Only `setArbitrator` appointees may vote. `openDispute` reverts until three arbitrators are seated.
-- `BotAttestationEscrow.sol` — bot-to-bot escrow. Release after mutual attestation; an upheld dispute stays releasable after expiry. Panel unwind or an unresolved expiry refunds the payer.
+- `BotAttestationEscrow.sol` — bot-to-bot escrow. While `Open`, only the payer releases. An upheld dispute stays releasable after expiry. A panel unwind refunds the payer. An unresolved dispute refunds only after `expiresAt + RULING_GRACE` (7 days); inside that grace `refund` reverts `RulingPending`. `release` and `refund` credit `pendingWithdrawals` (no ETH push). The recipient calls `withdraw` or `withdrawTo`. That recipient must be an EOA, an EIP-7702 account, or a wallet/contract able to make that call. A non-upgradeable contract that cannot call `withdraw` or `withdrawTo` strands its own credit. There is no gasless claim yet, so a payee with 0 ETH needs gas to withdraw. Dependency swaps stay gated on `lockedValue` only; `totalOwed` is excluded on purpose.
 
 ## Deploy order (dependency-correct)
 
@@ -32,6 +32,18 @@ Liability is created first (with `address(0)` insurance) so `InsuranceFund` can 
 
 **Post-step (panel seat, Gate B).** `DisputePanel.openDispute` reverts `panel not seated` until `arbitratorCount >= 3`. After `setOwner`, only `CORE_TIMELOCK` can call `setArbitrator`. The core deploy script does not appoint them. On the live panel Gate B is seated (`arbitratorCount` is 3). Seat txs and the three arbitrators: [`script/DEPLOY_ESCROW_BASE_SEPOLIA.md`](../script/DEPLOY_ESCROW_BASE_SEPOLIA.md).
 
+### Denylist + Vault redeploy — `script/DeployDenylist.s.sol`
+
+Use this for the tip-bytecode cutover. Do not re-run `Deploy.s.sol` for it. The script deploys a new `Denylist` and `Vault(newDenylist)` only, then `transferOwnership(CORE_TIMELOCK)` on both. It does not deploy Liability, InsuranceFund, DisputePanel, Escrow, or BVT, and it does not call the live Denylist.
+
+Env: `PRIVATE_KEY`, `CORE_TIMELOCK` (required, non-zero, **≠ deployer**). RPC is the forge `--rpc-url` (`BASE_SEPOLIA_RPC_URL`). Same chain guard: Base Sepolia **84532** only; mainnet always reverts.
+
+Agents simulate. Spencer broadcasts. `acceptOwnership` on both new contracts, then the listing migration, are in [`script/DEPLOY_DENYLIST.md`](../script/DEPLOY_DENYLIST.md). Spencer writes the real addresses into `deployments/base-sepolia.json` after broadcast. The live Denylist is superseded only after that cutover.
+
+```bash
+forge script script/DeployDenylist.s.sol:DeployDenylist --rpc-url $BASE_SEPOLIA_RPC_URL -vvvv
+```
+
 ### (2) Escrow — `script/DeployBotAttestationEscrow.s.sol`
 
 Run only after (1), using the deployed addresses. Env (all required, non-zero):
@@ -42,7 +54,7 @@ Run only after (1), using the deployed addresses. Env (all required, non-zero):
 - `DISPUTE_PANEL`
 - `CORE_TIMELOCK` (≠ deployer)
 
-The script deploys `BotAttestationEscrow(denylist, vault, panel, CORE_TIMELOCK)` and `transferOwnership(CORE_TIMELOCK)`. **Ownable2Step:** the timelock must `acceptOwnership` or the deployer remains owner. `governance` is that timelock. `createEscrow` reverts until the timelock has accepted. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they also revert while `lockedValue != 0`. A denylist swap emits `DenylistUpdated` (previous, new, caller, timestamp). Vault and dispute-panel swaps emit `VaultUpdated` and `DisputePanelUpdated` with that same shape. The constructor emits the initial set with previous `address(0)`. Setting the current address again reverts (`DenylistUnchanged`, `VaultUnchanged`, `DisputePanelUnchanged`). That is a governance event. Production has no hot EOA admin for it. Do not fund before `acceptOwnership`. The script does not redeploy Denylist, Vault, or DisputePanel.
+The script deploys `BotAttestationEscrow(denylist, vault, panel, CORE_TIMELOCK)` and `transferOwnership(CORE_TIMELOCK)`. **Ownable2Step:** the timelock must `acceptOwnership` or the deployer remains owner. `governance` is that timelock. `createEscrow` reverts until the timelock has accepted. `setDenylist`, `setVault`, and `setDisputePanel` revert unless `owner() == governance`, and they also revert while `lockedValue != 0`. `totalOwed` (credited, unclaimed ETH) does not keep that gate shut. `release` and `refund` do not transfer ETH; the payee or payer pulls it with `withdraw` / `withdrawTo`. The credited account must be an EOA, an EIP-7702 account, or a wallet/contract that can call those functions. A non-upgradeable contract that cannot call them strands its own credit. There is no gasless claim yet, so a payee with 0 ETH needs gas to withdraw. A denylist swap emits `DenylistUpdated` (previous, new, caller, timestamp). Vault and dispute-panel swaps emit `VaultUpdated` and `DisputePanelUpdated` with that same shape. The constructor emits the initial set with previous `address(0)`. Setting the current address again reverts (`DenylistUnchanged`, `VaultUnchanged`, `DisputePanelUnchanged`). That is a governance event. Production has no hot EOA admin for it. Do not fund before `acceptOwnership`. The script does not redeploy Denylist, Vault, or DisputePanel.
 
 ### (3) Optional BVT — `script/DeployBVT.s.sol`
 
@@ -124,7 +136,7 @@ forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow 
   --broadcast
 ```
 
-On the live escrow, `CORE_TIMELOCK` has called `acceptOwnership()`. `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
+On the live escrow, `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` and `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK`). Denylist changes go through timelock-owned `setDenylist` and revert while `lockedValue != 0`. Agents do not `--broadcast` and do not call `createEscrow` from this repo session.
 
 ## Base Sepolia addresses (84532)
 
@@ -145,7 +157,7 @@ Listing migration replay of `Listed` / `Unlisted` from the previous Denylist was
 | InsuranceFund | `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` | `0xa71db2c304d8e80e4043e4d093a0c102ec619624ab0500d0bc7246dc27d3edd7` |
 | Liability | `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` | `0x99865db9b9f4a6807b085cec8c50d22160025c4df09afc609fb52b9758fe6261` |
 | DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` | `0x9ecd10d67054fbf9e63ad25dd1520ed809fbf94c4ab1f19ad84e81899562b77f` |
-| BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` | `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` |
+| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` | `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` |
 
 `DisputePanel.owner()` is `CORE_TIMELOCK`. Gate B is seated: `arbitratorCount` is 3.
 
@@ -155,11 +167,13 @@ Listing migration replay of `Listed` / `Unlisted` from the previous Denylist was
 | 2 | `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30` | `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6` |
 | 3 | `0xB87Ed5F74276AC6172ef53fE866675093F75936E` | `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3` |
 
-`BotAttestationEscrow` is live and linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) and `pendingOwner` is the zero address.
+`BotAttestationEscrow` is the ESC-M-1 redeploy at `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, built from commit `444c427`, and linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block). Deployer `0x5D467FA00eC0E92044f779e495a17db66c5964aa` called `transferOwnership` in `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. `acceptOwnership` is complete. `owner` is `CORE_TIMELOCK` (`0x10CC9474b45625ADfd05C209f2518023484878D9`) and `pendingOwner` is the zero address. The accept tx is `0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9` (block 47345442, status 1, from `CORE_TIMELOCK`). Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON, shanghai): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`.
 
-`acceptOwnership` tx (status success): `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` (block 47300275). The `transferOwnership(CORE_TIMELOCK)` tx was `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` (block 47299930), the same block as the create tx.
+Create txs: Denylist block 47294163, Vault block 47294164, BotAttestationEscrow block 47345163. The Tx column is the create transaction.
 
-Create txs: Denylist block 47294163, Vault block 47294164, BotAttestationEscrow block 47299930. The Tx column is the create transaction.
+### Retired escrow
+
+The previous `BotAttestationEscrow` `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC-M-1 redeploy, retired 2026-09-26). It stays on chain under `retired` in [`deployments/base-sepolia.json`](../deployments/base-sepolia.json). Its create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. Its `acceptOwnership` `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` (block 47300275) was complete, so on that contract `owner` is `CORE_TIMELOCK` and `pendingOwner` is zero. That record is history. It is not the live slot.
 
 ### Superseded (deprecated, left on chain)
 

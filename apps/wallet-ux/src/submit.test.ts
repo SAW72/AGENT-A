@@ -3,6 +3,8 @@ import { ADDRESSES, BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 import {
   assertSubmitTarget,
   evaluateEscrowSubmit,
+  FORM_ERRORS,
+  previewCardCopy,
   submitControl,
   submitSenderNote,
 } from "./submit"
@@ -50,7 +52,7 @@ describe("evaluateEscrowSubmit", () => {
 
 describe("submit target", () => {
   it("allows the booked escrow and dispute panel only", () => {
-    expect(escrow).toBe("0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c")
+    expect(escrow).toBe("0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d")
     expect(panel).toBe("0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb")
     if (!escrow || !panel) throw new Error("booked addresses missing")
     expect(() => assertSubmitTarget(escrow, [escrow, panel])).not.toThrow()
@@ -60,8 +62,27 @@ describe("submit target", () => {
     )
   })
 
-  it("states that createEscrow depends on the Vault operator", () => {
-    expect(submitSenderNote("createEscrow")).toMatch(/Vault operator/)
-    expect(submitSenderNote("release")).toMatch(/permissionless/)
+  it("states who sends each prepared transaction in plain English", () => {
+    expect(submitSenderNote("createEscrow")).toMatch(/allowed to fund claims for the payer/)
+    expect(submitSenderNote("release")).toBe(
+      "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee. The connected wallet sends this payout on Base Sepolia.",
+    )
+    expect(submitSenderNote("refund")).toBe("Anyone can send a refund. The connected wallet sends this on Base Sepolia.")
+    expect(submitSenderNote("dispute")).toBe("The payer or the payee has to send this. The connected wallet is the sender.")
+    expect(previewCardCopy("dispute", false)).toBe(
+      "This prepares linking a dispute to a claim. Submit sends it from the connected wallet on Base Sepolia only.",
+    )
+    expect(previewCardCopy("dispute", true)).not.toMatch(/claim relayer/)
+    expect(previewCardCopy("release", true)).not.toMatch(/claim relayer/)
+    expect(previewCardCopy("release", true)).toMatch(/connected wallet on Base Sepolia only/)
+    expect(previewCardCopy("refund", true)).toMatch(/claim relayer on Base Sepolia/)
+    expect(previewCardCopy("openDispute", true)).not.toMatch(/claim relayer/)
+    expect(previewCardCopy("createEscrow", true)).not.toMatch(/claim relayer/)
+    expect(FORM_ERRORS.disputeClaim).toBe("Enter the claim identifier before opening a dispute.")
+    for (const text of [submitSenderNote("dispute"), previewCardCopy("dispute", true), FORM_ERRORS.disputeClaim]) {
+      expect(text).not.toMatch(/[()]/)
+      expect(text).not.toMatch(/0x[0-9a-fA-F]+/)
+      expect(text).not.toMatch(/\b[a-z]+[A-Z][A-Za-z0-9]*\b/)
+    }
   })
 })
