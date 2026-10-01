@@ -10,12 +10,14 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 ///      `admin` is `address(0)`, so `DEFAULT_ADMIN_ROLE` stays on the timelock itself. No EOA is admin.
 ///      Broadcast is `vm.startBroadcast()` with no key. Foundry signs from `--account` / `--sender`.
 ///      This script never reads `PRIVATE_KEY`.
-///      Chain ids 8453 (Base) and 1 (Ethereum) revert unless `ALLOW_MAINNET=1`. Mainnet is not in scope.
-///      The deploy target is Base Sepolia (84532). Testnet `TIMELOCK_MIN_DELAY` may be short (for example 300).
+///      Runs only on chainid 84532 (Base Sepolia) or 31337 (Anvil). Every other chain reverts unless
+///      `ALLOW_MAINNET=1`. Mainnet is not in scope.
+///      Testnet `TIMELOCK_MIN_DELAY` may be short (for example 300).
 ///      A delay under 48 hours on chainid 8453 logs a warning and does not revert.
 ///      Agents do not pass `--broadcast`. Spencer broadcasts from his keystore.
 contract DeployTimelock is Script {
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84532;
+    uint256 public constant ANVIL_CHAIN_ID = 31337;
     uint256 public constant BASE_MAINNET_CHAIN_ID = 8453;
     uint256 public constant ETH_MAINNET_CHAIN_ID = 1;
     uint256 public constant MIN_MAINNET_DELAY = 48 hours;
@@ -41,13 +43,12 @@ contract DeployTimelock is Script {
         }
     }
 
-    /// @notice Base Sepolia proceeds. Chain ids 8453 and 1 revert unless `ALLOW_MAINNET=1`.
-    ///         Other chain ids (local tests) proceed. Mainnet is not an intended target.
+    /// @notice Base Sepolia (84532) and Anvil (31337) proceed. Every other chain reverts unless `ALLOW_MAINNET=1`.
+    ///         Mainnet is not an intended target.
     function requireAllowedChain() public view {
-        if (block.chainid == BASE_MAINNET_CHAIN_ID || block.chainid == ETH_MAINNET_CHAIN_ID) {
-            if (!allowMainnet()) revert("DeployTimelock: mainnet refused; set ALLOW_MAINNET=1");
-            console.log("WARNING: mainnet is not in scope");
-        }
+        if (block.chainid == BASE_SEPOLIA_CHAIN_ID || block.chainid == ANVIL_CHAIN_ID) return;
+        if (!allowMainnet()) revert("DeployTimelock: chain refused; only 84532 or 31337 unless ALLOW_MAINNET=1");
+        console.log("WARNING: mainnet is not in scope");
     }
 
     /// @notice Broadcast must name a keystore account. The default Foundry sender and the dry-run burn address are

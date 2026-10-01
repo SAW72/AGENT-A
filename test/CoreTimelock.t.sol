@@ -29,6 +29,7 @@ contract CoreTimelockTest is Test {
     function setUp() public {
         deploy = new DeployTimelock();
         mig = new MigrateOwnershipToTimelock();
+        vm.setEnv("MIGRATE_ESCROWS", "0");
     }
 
     function test_delayIsEnforced() public {
@@ -139,11 +140,16 @@ contract CoreTimelockTest is Test {
     function test_chainGuardAndShortDelayWarning() public {
         vm.chainId(84532);
         deploy.requireAllowedChain();
+        vm.chainId(31337);
+        deploy.requireAllowedChain();
         deploy.noteShortDelay(300);
         assertFalse(deploy.shortDelayWarned());
 
         vm.chainId(8453);
-        vm.expectRevert(bytes("DeployTimelock: mainnet refused; set ALLOW_MAINNET=1"));
+        vm.expectRevert(bytes("DeployTimelock: chain refused; only 84532 or 31337 unless ALLOW_MAINNET=1"));
+        deploy.requireAllowedChain();
+        vm.chainId(11155111);
+        vm.expectRevert(bytes("DeployTimelock: chain refused; only 84532 or 31337 unless ALLOW_MAINNET=1"));
         deploy.requireAllowedChain();
         vm.chainId(1);
         vm.expectRevert(bytes("MigrateOwnership: mainnet refused; set ALLOW_MAINNET=1"));
@@ -202,11 +208,13 @@ contract CoreTimelockTest is Test {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         (TimelockController tl, address safe) = _controller(300, address(0));
+        vm.setEnv("SAFE_ADDRESS", vm.toString(safe));
 
         MigrateOwnershipToTimelock.TransferResult memory first = mig.transferAll(targets, address(tl));
         assertEq(first.immediate, 3);
-        assertEq(first.twoStepQueued, 5);
+        assertEq(first.twoStepQueued, 3);
         assertEq(first.pendingThenQueued, 1);
+        assertEq(first.skipped, 2);
 
         assertEq(liability.owner(), address(tl));
         assertEq(insurance.owner(), address(tl));
@@ -215,6 +223,10 @@ contract CoreTimelockTest is Test {
         assertEq(denylist.pendingOwner(), address(tl));
         assertEq(oldVault.owner(), core);
         assertEq(oldVault.pendingOwner(), address(tl));
+        assertEq(escrow.owner(), core);
+        assertEq(escrow.pendingOwner(), address(0));
+        assertEq(retired.owner(), core);
+        assertEq(retired.pendingOwner(), address(0));
         assertEq(escrow.governance(), core);
         assertEq(retired.governance(), core);
 
@@ -228,7 +240,7 @@ contract CoreTimelockTest is Test {
             bytes32 predecessor,
             bytes32 salt
         ) = mig.collectAccept(targets, address(tl));
-        assertEq(batchTargets.length, 6);
+        assertEq(batchTargets.length, 4);
         assertEq(predecessor, bytes32(0));
         assertEq(salt, mig.ACCEPT_SALT());
         assertEq(bytes4(payloads[0]), bytes4(keccak256("acceptOwnership()")));
@@ -249,18 +261,15 @@ contract CoreTimelockTest is Test {
         assertEq(denylist.pendingOwner(), address(0));
         assertEq(vault.owner(), address(tl));
         assertEq(vault.pendingOwner(), address(0));
-        assertEq(escrow.owner(), address(tl));
-        assertEq(escrow.pendingOwner(), address(0));
         assertEq(oldDenylist.owner(), address(tl));
         assertEq(oldVault.owner(), address(tl));
         assertEq(oldVault.pendingOwner(), address(0));
-        assertEq(retired.owner(), address(tl));
+        assertEq(escrow.owner(), core);
+        assertEq(escrow.pendingOwner(), address(0));
+        assertEq(retired.owner(), core);
         assertEq(retired.pendingOwner(), address(0));
         assertEq(escrow.governance(), core);
         assertEq(retired.governance(), core);
-
-        vm.expectRevert(BotAttestationEscrow.FundingBeforeGovernance.selector);
-        escrow.createEscrow(keccak256("id"), address(0xBEEF), keccak256("payer"), keccak256("payee"), 1 days);
 
         MigrateOwnershipToTimelock.TransferResult memory done = mig.transferAll(targets, address(tl));
         assertEq(done.immediate, 0);
@@ -274,9 +283,12 @@ contract CoreTimelockTest is Test {
     function test_migrationIsIdempotent() public {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
-        (TimelockController tl,) = _controller(300, address(0));
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        vm.setEnv("SAFE_ADDRESS", vm.toString(safe));
 
         mig.transferAll(targets, address(tl));
+        assertEq(escrow.owner(), core);
+        assertEq(retired.owner(), core);
         address[] memory owners = new address[](targets.length);
         address[] memory pendings = new address[](targets.length);
         for (uint256 i = 0; i < targets.length; i++) {
@@ -292,6 +304,136 @@ contract CoreTimelockTest is Test {
             (, address owner,, address pending) = mig.inspect(targets[i]);
             assertEq(owner, owners[i]);
             assertEq(pending, pendings[i]);
+        }
+        assertEq(escrow.owner(), core);
+        assertEq(retired.owner(), core);
+    }
+
+    function test_escrowOptInMigratesAndPostCheckRequiresIt() public {
+        address core = mig.CORE_TIMELOCK();
+        address[] memory targets = _seed(core);
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        vm.setEnv("SAFE_ADDRESS", vm.toString(safe));
+
+        mig.transferAll(targets, address(tl));
+        _acceptAll(tl, safe, targets);
+        mig.postCheck(targets, address(tl));
+        assertEq(escrow.owner(), core);
+        assertEq(retired.owner(), core);
+
+        vm.setEnv("MIGRATE_ESCROWS", "1");
+        vm.expectRevert(bytes("MigrateOwnership: escrow owner is not the timelock"));
+        mig.postCheck(targets, address(tl));
+
+        MigrateOwnershipToTimelock.TransferResult memory queued = mig.transferAll(targets, address(tl));
+        assertEq(queued.immediate, 0);
+        assertEq(queued.twoStepQueued, 2);
+        assertEq(queued.pendingThenQueued, 0);
+        assertEq(escrow.owner(), core);
+        assertEq(escrow.pendingOwner(), address(tl));
+        assertEq(retired.pendingOwner(), address(tl));
+        vm.expectRevert(bytes("MigrateOwnership: escrow owner is not the timelock"));
+        mig.postCheck(targets, address(tl));
+
+        MigrateOwnershipToTimelock.TransferResult memory again = mig.transferAll(targets, address(tl));
+        assertEq(again.twoStepQueued, 0);
+        assertEq(again.skipped, targets.length);
+        assertEq(escrow.pendingOwner(), address(tl));
+
+        _acceptAll(tl, safe, targets);
+        mig.postCheck(targets, address(tl));
+        assertEq(escrow.owner(), address(tl));
+        assertEq(escrow.pendingOwner(), address(0));
+        assertEq(retired.owner(), address(tl));
+        assertEq(retired.pendingOwner(), address(0));
+        assertEq(escrow.governance(), core);
+
+        vm.expectRevert(BotAttestationEscrow.FundingBeforeGovernance.selector);
+        escrow.createEscrow(keccak256("id"), address(0xBEEF), keccak256("payer"), keccak256("payee"), 1 days);
+
+        MigrateOwnershipToTimelock.TransferResult memory done = mig.transferAll(targets, address(tl));
+        assertEq(done.skipped, targets.length);
+        assertEq(escrow.owner(), address(tl));
+    }
+
+    function test_badTimelockRevertsBeforeHandoff() public {
+        address core = mig.CORE_TIMELOCK();
+        address[] memory targets = _seed(core);
+        address safe = _etchSafe();
+        vm.setEnv("SAFE_ADDRESS", vm.toString(safe));
+        address[] memory executors = new address[](1);
+
+        address[] memory wrong = new address[](1);
+        wrong[0] = makeAddr("otherProposer");
+        TimelockController wrongProposer = new TimelockController(300, wrong, executors, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: SAFE missing PROPOSER_ROLE"));
+        mig.transferAll(targets, address(wrongProposer));
+        _assertUnchanged(targets, core);
+
+        address[] memory proposers = new address[](1);
+        proposers[0] = safe;
+        TimelockController adminEoa = new TimelockController(300, proposers, executors, address(this));
+        vm.expectRevert(bytes("MigrateOwnership: msg.sender holds DEFAULT_ADMIN_ROLE"));
+        mig.transferAll(targets, address(adminEoa));
+        _assertUnchanged(targets, core);
+
+        TimelockController coreAdmin = new TimelockController(300, proposers, executors, core);
+        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE"));
+        mig.transferAll(targets, address(coreAdmin));
+        _assertUnchanged(targets, core);
+
+        TimelockController zeroDelay = new TimelockController(0, proposers, executors, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: minDelay is zero"));
+        mig.transferAll(targets, address(zeroDelay));
+        _assertUnchanged(targets, core);
+
+        TimelockController stripped = new TimelockController(300, proposers, executors, address(this));
+        stripped.revokeRole(stripped.DEFAULT_ADMIN_ROLE(), address(stripped));
+        vm.expectRevert(bytes("MigrateOwnership: timelock is not self-administered"));
+        mig.transferAll(targets, address(stripped));
+        _assertUnchanged(targets, core);
+
+        vm.setEnv("NEW_TIMELOCK", vm.toString(address(wrongProposer)));
+        vm.setEnv("MIGRATION_STEP", "accept");
+        vm.expectRevert(bytes("MigrateOwnership: SAFE missing PROPOSER_ROLE"));
+        mig.run();
+        _assertUnchanged(targets, core);
+    }
+
+    function _acceptAll(
+        TimelockController tl,
+        address safe,
+        address[] memory targets
+    ) internal {
+        (
+            address[] memory batchTargets,
+            uint256[] memory values,
+            bytes[] memory payloads,
+            bytes32 predecessor,
+            bytes32 salt
+        ) = mig.collectAccept(targets, address(tl));
+        uint256 delay = tl.getMinDelay();
+        vm.prank(safe);
+        tl.scheduleBatch(batchTargets, values, payloads, predecessor, salt, delay);
+        vm.warp(block.timestamp + delay);
+        tl.executeBatch(batchTargets, values, payloads, predecessor, salt);
+    }
+
+    function _assertUnchanged(
+        address[] memory targets,
+        address core
+    ) internal view {
+        for (uint256 i = 0; i < targets.length; i++) {
+            (bool hasOwner, address owner, bool twoStep, address pending) = mig.inspect(targets[i]);
+            assertTrue(hasOwner);
+            if (targets[i] == address(oldVault)) {
+                assertEq(owner, address(this));
+                assertTrue(twoStep);
+                assertEq(pending, core);
+            } else {
+                assertEq(owner, core);
+                if (twoStep) assertEq(pending, address(0));
+            }
         }
     }
 
