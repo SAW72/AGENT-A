@@ -5,7 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAddressBook, parseStartBlock } from "../addressBook.mjs";
-import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, DEFAULT_RELAYER_ADDRESS, healthPayload, liveSubmitStatus, loadConfig } from "../config.mjs";
+import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, DEFAULT_RELAYER_ADDRESS, buildMetadata, healthPayload, liveSubmitStatus, loadConfig } from "../config.mjs";
 
 const RETIRED_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c";
 const SUPERSEDED_DENYLIST = "0xF0f260967D377E07Bdd7840862508ddB23C012b8";
@@ -326,6 +326,22 @@ describe("start block parsing", () => {
     assert.match(bad.message, /non-negative integer/);
     assert.match(bad.message, /booked start block is not used/);
   });
+
+  it("reads the health commit only from RENDER_GIT_COMMIT", () => {
+    assert.deepEqual(buildMetadata({}), { commit: null, builtAt: null });
+    assert.deepEqual(buildMetadata({ RENDER_GIT_COMMIT: "  " }), { commit: null, builtAt: null });
+    assert.deepEqual(buildMetadata({ GIT_COMMIT: "abc", VERCEL_GIT_COMMIT_SHA: "def" }), {
+      commit: null,
+      builtAt: null,
+    });
+    assert.deepEqual(buildMetadata({ RENDER_GIT_COMMIT: " deff214 " }), {
+      commit: "deff214",
+      builtAt: null,
+    });
+    const config = loadConfig({ RENDER_GIT_COMMIT: "deff214" });
+    assert.equal(healthPayload(config, false).build.commit, "deff214");
+  });
+
 });
 
 function loadConfigThrows(env) {

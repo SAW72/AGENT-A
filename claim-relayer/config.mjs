@@ -237,6 +237,7 @@ export function loadConfig(env = process.env) {
     erc1271Enabled: parseEnvFlag(env.ERC1271_ENABLED),
     abuse,
     quoteTtlMs,
+    build: buildMetadata(env),
     liveSubmit: liveSubmitStatus(env, {
       escrowBooked: escrow.escrowBooked,
       escrowAddress: escrow.escrowAddress,
@@ -245,6 +246,22 @@ export function loadConfig(env = process.env) {
     corsOrigins:
       env.CORS_ORIGINS ||
       "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
+  };
+}
+
+
+/**
+ * Runtime commit Render injects as RENDER_GIT_COMMIT.
+ * Unset or blank is null. No git command and no build-time embed.
+ * Other commit env vars are ignored.
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ */
+export function buildMetadata(env = process.env) {
+  const raw = env.RENDER_GIT_COMMIT;
+  const commit = raw == null ? "" : String(raw).trim();
+  return {
+    commit: commit.length > 0 ? commit : null,
+    builtAt: null,
   };
 }
 
@@ -267,5 +284,6 @@ export function healthPayload(config, killSwitchOn) {
     liveSubmit: live,
     liveSubmitRequested: Boolean(config.liveSubmit?.requested),
     liveSubmitBlockers: config.liveSubmit?.blockers ?? [],
+    build: config.build ?? { commit: null, builtAt: null },
   };
 }
