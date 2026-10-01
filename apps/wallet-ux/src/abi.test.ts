@@ -28,8 +28,28 @@ describe("forge ABIs", () => {
     for (const name of ["owner", "arbitratorCount", "PANEL_SIZE"]) {
       expect(names(disputePanelAbi).has(name)).toBe(true)
     }
-    for (const name of ["owner", "pendingOwner", "governance", "disputePanel", "lockedValue", "escrows", "createEscrow", "release", "refund", "dispute"]) {
+    for (const name of [
+      "owner",
+      "pendingOwner",
+      "governance",
+      "disputePanel",
+      "lockedValue",
+      "totalOwed",
+      "pendingWithdrawals",
+      "escrows",
+      "createEscrow",
+      "release",
+      "refund",
+      "dispute",
+      "withdraw",
+      "withdrawTo",
+      "panelSubject",
+      "RULING_GRACE",
+    ]) {
       expect(names(escrowAbi).has(name)).toBe(true)
+    }
+    for (const name of ["Credited", "Withdrawn"]) {
+      expect(names(escrowAbi, "event").has(name)).toBe(true)
     }
     for (const name of [
       "DisputeAlreadyResolved",
@@ -37,6 +57,11 @@ describe("forge ABIs", () => {
       "DisputePredatesEscrow",
       "DisputeChallengerNotParty",
       "DisputeAfterExpiry",
+      "ReleaseNotAuthorized",
+      "NotParty",
+      "RulingPending",
+      "EscrowNotFound",
+      "WithdrawFailed",
     ]) {
       expect(names(escrowAbi, "error").has(name)).toBe(true)
     }
@@ -45,13 +70,10 @@ describe("forge ABIs", () => {
   })
 })
 
-const FORBIDDEN = [
-  "useWriteContract",
-  "useSignTypedData",
-  "writeContract(",
-  "signTypedData(",
-  "wallet_sendTransaction",
-]
+const FORBIDDEN = ["useWriteContract", "useSignTypedData", "writeContract(", "wallet_sendTransaction"]
+
+/** ClaimIntent is the only typed-data signature this app asks the wallet to make. */
+const CLAIM_INTENT_SIGN_FILES = new Set(["relayer.ts", "FlowPreview.tsx"])
 
 const SEND_ONLY = ["useSendTransaction", "sendTransactionAsync"]
 
@@ -70,20 +92,30 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("wallet writes", () => {
-  it("limits sends to the Base Sepolia escrow submit and keeps typed-data signing out", () => {
+  it("limits sends to the Base Sepolia escrow submit and signs only a claim intent", () => {
     const src = dirname(fileURLToPath(import.meta.url))
     const hits: string[] = []
     const sendHits: string[] = []
+    const signHits: string[] = []
     for (const path of sourceFiles(src)) {
       const text = readFileSync(path, "utf8")
+      const file = path.slice(path.lastIndexOf("/") + 1)
       for (const token of FORBIDDEN) {
         if (text.includes(token)) hits.push(`${path} contains ${token}`)
+      }
+      if (text.includes("signTypedData(")) {
+        signHits.push(file)
+        if (!CLAIM_INTENT_SIGN_FILES.has(file)) hits.push(`${path} contains signTypedData(`)
       }
       for (const token of SEND_ONLY) {
         if (text.includes(token)) sendHits.push(`${path} contains ${token}`)
       }
     }
     expect(hits).toEqual([])
+    expect(signHits.sort()).toEqual(["FlowPreview.tsx", "relayer.ts"])
+    const relayer = readFileSync(join(src, "relayer.ts"), "utf8")
+    expect(relayer).toContain("CLAIM_INTENT_PRIMARY_TYPE")
+    expect(relayer).toContain("signTypedData(signArgs)")
     expect(sendHits.every((hit) => hit.includes("FlowPreview.tsx"))).toBe(true)
     expect(sendHits.length).toBeGreaterThan(0)
   })

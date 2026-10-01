@@ -27,12 +27,23 @@ jobs:
         with:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Check operator guard in bash and zsh
+        run: bash script/check-ops-guard.sh && zsh script/check-ops-guard.sh
       # Main's forge-std install plus OpenZeppelin (BVT ERC-20).
       # Submodules are vendored; install is a fallback if checkout skips them.
       - name: Install forge-std
         run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts --no-commit
       - name: Build
         run: forge build
+      - name: Wallet-ux escrow ABI matches forge artifact
+        run: |
+          ./scripts/gen-escrow-abi.sh
+          if ! git diff --exit-code -- apps/wallet-ux/src/abi/BotAttestationEscrow.json; then
+            echo "::error::apps/wallet-ux/src/abi/BotAttestationEscrow.json drifted from the forge artifact for contracts/BotAttestationEscrow.sol:BotAttestationEscrow. Regenerate and commit it with: forge build && ./scripts/gen-escrow-abi.sh"
+            exit 1
+          fi
       - name: Test
         run: forge test
 
@@ -50,6 +61,22 @@ jobs:
         working-directory: claim-relayer
         run: npm test
 
+  # Public Base Sepolia fork of LiveDenylistVaultTest. continue-on-error so an RPC
+  # failure cannot fail the required CI checks. No keys, no broadcast.
+  fork-test-base-sepolia:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install forge-std
+        run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts --no-commit
+      - name: Live Denylist and Vault fork test (public Base Sepolia)
+        run: forge test --fork-url https://sepolia.base.org --match-contract LiveDenylistVaultTest -vv
+
   wallet-ux:
     runs-on: ubuntu-latest
     defaults:
@@ -65,6 +92,11 @@ jobs:
       - name: Install
         run: npm ci
       - name: Test
+        # Includes src/**/*.test.ts and scripts/**/*.test.mjs (deploy guard scripts).
         run: npm test
       - name: Build
         run: npm run build
+      - name: Reject retired claim-secret markers
+        # apps/wallet-ux via defaults.run.working-directory. A leak fails the pull request.
+        # A clean scan logs "Claim leak scan passed".
+        run: node scripts/guard-claim-secret.mjs dist

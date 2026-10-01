@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "sync-abis": "node scripts/sync-abis.mjs",
+    "gen-escrow-abi": "bash ../../scripts/gen-escrow-abi.sh",
     "sync-book": "node scripts/sync-book.mjs"
   },
   "dependencies": {

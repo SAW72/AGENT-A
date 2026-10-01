@@ -1,0 +1,19 @@
+{
+  "domainName": "AgentBV Claim Relayer",
+  "domainVersion": "1",
+  "primaryType": "ClaimIntent",
+  "deadlineWindowSeconds": 300,
+  "actions": ["refund"],
+  "actionValues": { "refund": 1 },
+  "refusedActions": { "release": 0 },
+  "typeString": "ClaimIntent(uint8 action,bytes32 escrowId,address sender,uint256 nonce,uint256 deadline)",
+  "types": {
+    "ClaimIntent": [
+      { "name": "action", "type": "uint8" },
+      { "name": "escrowId", "type": "bytes32" },
+      { "name": "sender", "type": "address" },
+      { "name": "nonce", "type": "uint256" },
+      { "name": "deadline", "type": "uint256" }
+    ]
+  }
+}

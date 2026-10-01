@@ -2,6 +2,8 @@
 
 On-chain registry of dangerous bot fingerprints.
 
+The live Base Sepolia Denylist is pre–PR #10 bytecode. The tip-bytecode redeploy (new Denylist, new Vault, timelock `acceptOwnership`, active-listing migration) is [`script/DEPLOY_DENYLIST.md`](../script/DEPLOY_DENYLIST.md). Agents simulate. Spencer broadcasts.
+
 Active listings block registration and escrow verification. The owner (CORE_TIMELOCK on the live Denylist) can clear an active listing. Clearing does not erase history: `everListed` and `listing.timesListed` stay set, and `Listed` / `Unlisted` events record who, when, bucket, and listing count.
 
 ## Purpose

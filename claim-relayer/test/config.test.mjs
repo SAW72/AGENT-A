@@ -5,7 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAddressBook, parseStartBlock } from "../addressBook.mjs";
-import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, DEFAULT_RELAYER_ADDRESS, healthPayload, liveSubmitStatus, loadConfig } from "../config.mjs";
+import { BOOKED_SEPOLIA_ESCROW, BOOKED_SEPOLIA_ESCROW_START_BLOCK, DEFAULT_RELAYER_ADDRESS, buildMetadata, healthPayload, liveSubmitStatus, loadConfig } from "../config.mjs";
 
 const RETIRED_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c";
 const SUPERSEDED_DENYLIST = "0xF0f260967D377E07Bdd7840862508ddB23C012b8";
@@ -32,7 +32,16 @@ describe("config gates", () => {
     assert.equal(config.coreTimelock, "0x10CC9474b45625ADfd05C209f2518023484878D9");
     assert.equal(config.bvtAddress, null);
     assert.equal(config.liveSubmit.allowed, false);
-    assert.equal(config.claimApiSecret, "");
+    assert.equal(config.claimApiSecret, undefined);
+    assert.equal(config.erc1271Enabled, false);
+    assert.equal(config.abuse.senderLimit, 5);
+    assert.equal(config.abuse.ipLimit, 30);
+    assert.equal(config.abuse.escrowCap, 8);
+    assert.equal(config.abuse.dailyGasBudgetWei, "10000000000000000");
+    assert.equal(
+      config.corsOrigins,
+      "https://agent-a-wallet-ux.pages.dev,http://localhost:5173,http://127.0.0.1:5173",
+    );
     assert.deepEqual(config.liveSubmit.blockers, ["spencer_run_auth_required", "live_submit_off"]);
     assert.equal(JSON.stringify(config).includes(SECRET), false);
     assert.equal(Object.hasOwn(config, "RELAYER_PRIVATE_KEY"), false);
@@ -62,14 +71,14 @@ describe("config gates", () => {
     assert.equal(health.escrowStartBlockSource, "unset");
   });
 
-  it("keeps CLAIM_API_SECRET off the health payload", () => {
+  it("does not load CLAIM_API_SECRET onto config or health", () => {
     const config = loadConfig({
       LIVE_SUBMIT: "1",
       SPENCER_RUN_AUTH: "1",
       CLAIM_API_SECRET: "claim-health-secret",
       ADMIN_SECRET: "admin-health-secret",
     });
-    assert.equal(config.claimApiSecret, "claim-health-secret");
+    assert.equal(Object.hasOwn(config, "claimApiSecret"), false);
     assert.equal(config.adminSecret, "admin-health-secret");
     const health = JSON.stringify(healthPayload(config, false));
     assert.equal(health.includes("claim-health-secret"), false);
@@ -146,6 +155,11 @@ describe("config gates", () => {
       "escrowCalldata.mjs",
       "addressBook.mjs",
       "readonlyEscrow.mjs",
+      "claimIntent.mjs",
+      "liveAuth.mjs",
+      "intentNonceStore.mjs",
+      "abuseLimits.mjs",
+      "escrowChain.mjs",
     ];
     for (const name of quiet) {
       const text = await readFile(new URL(`../${name}`, import.meta.url), "utf8");
@@ -312,6 +326,22 @@ describe("start block parsing", () => {
     assert.match(bad.message, /non-negative integer/);
     assert.match(bad.message, /booked start block is not used/);
   });
+
+  it("reads the health commit only from RENDER_GIT_COMMIT", () => {
+    assert.deepEqual(buildMetadata({}), { commit: null, builtAt: null });
+    assert.deepEqual(buildMetadata({ RENDER_GIT_COMMIT: "  " }), { commit: null, builtAt: null });
+    assert.deepEqual(buildMetadata({ GIT_COMMIT: "abc", VERCEL_GIT_COMMIT_SHA: "def" }), {
+      commit: null,
+      builtAt: null,
+    });
+    assert.deepEqual(buildMetadata({ RENDER_GIT_COMMIT: " deff214 " }), {
+      commit: "deff214",
+      builtAt: null,
+    });
+    const config = loadConfig({ RENDER_GIT_COMMIT: "deff214" });
+    assert.equal(healthPayload(config, false).build.commit, "deff214");
+  });
+
 });
 
 function loadConfigThrows(env) {

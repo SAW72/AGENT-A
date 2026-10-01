@@ -35,10 +35,20 @@ export type DecodedRevert = {
 export type ErrorPresentation = {
   main: string
   detail: string | null
+  /** Optional next step, such as a block explorer link. */
+  link?: { href: string; label: string }
 }
 
 export const WALLET_CANCEL_TEXT = "You cancelled in your wallet"
 export const REVERT_FALLBACK_TEXT = "The contract rejected this transaction. No funds moved."
+
+/** Hide a details line that has no status, code, or reason after the label. */
+export function visibleDetail(detail: string | null | undefined): string | null {
+  if (detail == null) return null
+  const rest = detail.replace(/^Details:\s*/, "").trim()
+  if (detail.trim() === "" || rest === "") return null
+  return detail
+}
 
 const REVERT_TEXT = /execution reverted|reverted for an unknown reason|the contract function .+ reverted/i
 
@@ -197,7 +207,9 @@ function presentDecoded(data: Hex): ErrorPresentation {
     if (meaning) return { main: meaning, detail: `Details: ${decoded.errorName} (${selector})` }
     if (decoded.errorName === "Panic") return { main: REVERT_FALLBACK_TEXT, detail: `Details: ${panicLabel(args)}` }
     if (decoded.errorName === "Error" && typeof args?.[0] === "string") {
-      return { main: REVERT_FALLBACK_TEXT, detail: `Details: ${args[0]}` }
+      const message = args[0].trim()
+      if (!message) return { main: REVERT_FALLBACK_TEXT, detail: null }
+      return { main: REVERT_FALLBACK_TEXT, detail: `Details: ${message}` }
     }
     return { main: REVERT_FALLBACK_TEXT, detail: `Details: ${decoded.errorName} (${selector})` }
   } catch {

@@ -1,14 +1,21 @@
-import { decodeFunctionData, parseEther } from "viem"
+import { decodeFunctionData, parseEther, toFunctionSelector } from "viem"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import { disputePanelAbi, escrowAbi } from "./abi"
+import { randomBytes32 } from "./bytes32"
 import {
   ERROR_GLOSSARY,
   MAX_DURATION_SECONDS,
+  DISPUTE_PENDING_TEXT,
+  DISPUTE_VOTES_CAST_TEXT,
+  POST_EXPIRY_REFUND_ORDER,
+  RELEASE_NOT_AUTHORIZED_TEXT,
+  RULING_PENDING_TEXT,
   previewCreateEscrow,
   previewDispute,
+  panelSubject,
   previewOpenDispute,
   previewRefund,
   previewRelease,
@@ -61,7 +68,113 @@ describe("calldata preview", () => {
     expect(names).toContain("DisputeVotesCast")
     expect(names).toContain("DisputePredatesEscrow")
     expect(names).toContain("DisputeChallengerNotParty")
+    expect(names).toContain("ReleaseNotAuthorized")
+    expect(names).toContain("NotParty")
     expect(names).toContain("DisputeAfterExpiry")
+    expect(RELEASE_NOT_AUTHORIZED_TEXT).toBe(
+      "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee.",
+    )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "ReleaseNotAuthorized")?.meaning).toBe(
+      RELEASE_NOT_AUTHORIZED_TEXT,
+    )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "NotParty")?.meaning).toBe(
+      "This wallet is not a party to this escrow.",
+    )
+    expect(DISPUTE_PENDING_TEXT).toBe(
+      "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal.",
+    )
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "DisputePending")?.meaning).toBe(DISPUTE_PENDING_TEXT)
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "RulingPending")?.meaning).toBe(RULING_PENDING_TEXT)
+    expect(ERROR_GLOSSARY.find((entry) => entry.name === "DisputeVotesCast")?.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
+    expect(DISPUTE_VOTES_CAST_TEXT).not.toMatch(/already has votes/)
+    expect(toFunctionSelector("DisputeVotesCast()")).toBe("0x8aab0a8f")
+    const revertCopy = JSON.parse(
+      readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../claim-relayer/revertCopy.json"), "utf8"),
+    ) as {
+      DisputeVotesCast: { selector: string; meaning: string }
+      ReleaseNotAuthorized: { selector: string; meaning: string }
+      DisputePending: { selector: string; meaning: string }
+    }
+    expect(revertCopy.DisputeVotesCast.selector).toBe("0x8aab0a8f")
+    expect(revertCopy.DisputeVotesCast.meaning).toBe(DISPUTE_VOTES_CAST_TEXT)
+    expect(revertCopy.ReleaseNotAuthorized.selector).toBe("0xfe28f476")
+    expect(toFunctionSelector("ReleaseNotAuthorized()")).toBe("0xfe28f476")
+    expect(revertCopy.ReleaseNotAuthorized.meaning).toBe(RELEASE_NOT_AUTHORIZED_TEXT)
+    expect(revertCopy.DisputePending.selector).toBe("0xfd29e9e5")
+    expect(revertCopy.DisputePending.meaning).toBe(DISPUTE_PENDING_TEXT)
+    expect(toFunctionSelector("DisputePending()")).toBe("0xfd29e9e5")
+    expect(toFunctionSelector("RulingPending()")).toBe("0x3a0621bd")
+    expect(toFunctionSelector("RULING_GRACE()")).toBe("0x3cfbadae")
+    expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.error)).toEqual([
+      null,
+      "DisputePending",
+      "RulingPending",
+      null,
+    ])
+    expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.state)).toEqual([
+      "Open",
+      "Disputed and upheld",
+      "Disputed, unresolved, within 7 days after the claim ends",
+      "Otherwise",
+    ])
+    expect(POST_EXPIRY_REFUND_ORDER.map((step) => step.outcome)).toEqual([
+      "The payer is refunded.",
+      "The payee releases.",
+      RULING_PENDING_TEXT,
+      "The payer is refunded.",
+    ])
+    const flow = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "FlowPreview.tsx"), "utf8")
+    expect(flow).toContain('data-testid="post-expiry-refund-order"')
+    expect(flow).toContain("POST_EXPIRY_REFUND_ORDER")
+  })
+
+  it("fills the dispute subject from the claim id and the time the claim was created", () => {
+    const createdAt = 1_700_000_000n
+    const subject = panelSubject(escrow, id, createdAt)
+    expect(subject).toBe("0xbb13800c96edf91bb23cf6e0b3563c7f804d0f2215f3c390d62689d2a4ca1d7a")
+    expect(subject).not.toBe(id)
+    expect(panelSubject(escrow, id, createdAt)).toBe(subject)
+    expect(panelSubject(escrow, other, createdAt)).not.toBe(subject)
+    expect(panelSubject(panel, id, createdAt)).not.toBe(subject)
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "FlowPreview.tsx"), "utf8")
+    expect(source).not.toContain("panelSubject(escrow, claim, created)")
+    expect(source).toContain('id="open-subject"')
+    expect(source).toContain('id="open-created-at"')
+    expect(source).toContain("readOnly")
+    expect(source).not.toContain("Use the claim identifier. The panel stores this as the subject.")
+    const openForm = source.slice(source.indexOf("function OpenDisputeForm"), source.indexOf("function DisputeForm"))
+    expect(openForm).toContain("readDisputeSubject")
+    expect(openForm).toContain("currentNowSeconds()")
+    expect(openForm).toContain("disputeWindowMessage")
+    expect(openForm).not.toContain("panelSubject(")
+    expect(openForm).not.toContain("setCreatedAt")
+    expect(openForm).not.toContain("parseCreatedAt")
+    expect(openForm).toContain("randomBytes32()")
+    expect(openForm).toContain("previewOpenDispute")
+    expect(openForm).toContain("previewDispute(escrow, claim, id)")
+    expect(openForm).toContain('id="open-dispute"')
+    expect(openForm).not.toContain("keccak256")
+    expect(openForm).not.toContain("Date.now")
+    expect(source).toContain('data-testid="open-and-link"')
+  })
+
+  it("draws a case identifier from 32 random bytes", () => {
+    const seen: Uint8Array[] = []
+    const first = randomBytes32((bytes) => {
+      seen.push(bytes)
+      bytes.fill(0xab)
+    })
+    expect(seen[0]).toHaveLength(32)
+    expect(first).toBe(`0x${"ab".repeat(32)}`)
+    const second = randomBytes32((bytes) => {
+      bytes.fill(0xcd)
+    })
+    expect(second).not.toBe(first)
+    expect(randomBytes32((bytes) => bytes.fill(0))).toBe(`0x${"00".repeat(31)}01`)
+    const helper = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "bytes32.ts"), "utf8")
+    expect(helper).toContain("crypto.getRandomValues")
+    expect(helper).not.toContain("createdAt")
+    expect(helper).not.toContain("escrowId")
   })
 })
 

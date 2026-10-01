@@ -324,11 +324,12 @@ describe("reputation read API", () => {
       const claimPreview = await request(ctx.port, "OPTIONS", "/v1/claims", {
         origin: "https://feat-wallet.agent-a-wallet-ux.pages.dev",
         "access-control-request-method": "POST",
-        "access-control-request-headers": "content-type,x-claim-secret",
+        "access-control-request-headers": "content-type,authorization",
       });
       assert.equal(claimPreview.status, 204);
       assert.equal(claimPreview.headers["access-control-allow-origin"], undefined);
-      assert.match(String(claimPreview.headers["access-control-allow-headers"]), /x-claim-secret/);
+      assert.match(String(claimPreview.headers["access-control-allow-headers"]), /authorization/);
+      assert.equal(String(claimPreview.headers["access-control-allow-headers"]).includes("x-claim-secret"), false);
       assert.match(String(claimPreview.headers["access-control-allow-methods"]), /POST/);
 
       const claimApex = await request(ctx.port, "OPTIONS", "/v1/claims", {

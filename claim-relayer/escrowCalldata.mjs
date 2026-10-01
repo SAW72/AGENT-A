@@ -33,12 +33,31 @@ export const MAX_DURATION_SECONDS = 2_592_000n;
 
 const CLAIM_ACTIONS = new Set(Object.keys(ESCROW_SIGNATURES));
 
+/**
+ * Who the contract accepts as msg.sender.
+ * release is not relayable. While Open, only the payer stored at createEscrow
+ * may call it. After the linked case is resolved and upheld, the payer or the
+ * payee may. The relayer key is neither, so a relayed release reverts.
+ */
 const SENDER_CONSTRAINT = {
   createEscrow: "vault_operator_must_send",
-  release: "permissionless",
+  release: "payer_while_open",
   refund: "permissionless",
   dispute: "party_must_send",
 };
+
+/** Signature, selector, and sender constraint for an allowlisted claim action. */
+export function claimActionMeta(action) {
+  const name = String(action || "").trim();
+  if (!CLAIM_ACTIONS.has(name)) throw httpError(400, "action_not_claim", { field: "action" });
+  const signature = ESCROW_SIGNATURES[name];
+  return {
+    action: name,
+    signature,
+    selector: selectorFor(signature),
+    senderConstraint: SENDER_CONSTRAINT[name],
+  };
+}
 
 export function selectorFor(signature) {
   const hash = keccak_256(new TextEncoder().encode(signature));

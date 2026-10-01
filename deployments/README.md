@@ -47,4 +47,5 @@ The previous escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` is retired (ESC
 
 Spencer fills this file. Agents do not `--broadcast`.
 
+A tip-bytecode Denylist + Vault redeploy is `script/DeployDenylist.s.sol` (see [`script/DEPLOY_DENYLIST.md`](../script/DEPLOY_DENYLIST.md)). That script does not edit `base-sepolia.json`. After Spencer broadcasts, replace `Denylist` and `Vault` `address` and `deployTx` with the real values from that broadcast. Until then the live addresses in the JSON stay. After cutover, Denylist `0xF0f260967D377E07Bdd7840862508ddB23C012b8` and Vault `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7` are superseded. Liability, InsuranceFund, and DisputePanel are not part of that redeploy.
 The read-only wallet UI loads live slots from this file (`apps/wallet-ux`). `superseded` is not a read target. If this book fails validation, the UI falls back to the corrected Gate A pin in `apps/wallet-ux/src/book.ts`.

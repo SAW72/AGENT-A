@@ -1,6 +1,6 @@
-# Agent A
+# Agent-B.V.
 
-**Agent A (Agent Auditor)** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain audit proofs.
+**Agent-B.V.** — adversarial scenario library, scoring rubric, behavioral auditing pipeline, and on-chain attestation for detecting deceptive or harmful AI bots. Built for on-chain audit proofs.
 
 ## License
 
@@ -15,13 +15,14 @@
 
 ## Disclaimer
 
-**Experimental informational tool only.** Agent A is **not** a certification, safety guarantee, or insurance product. Scores, stamps, and denylists are point-in-time heuristics that may be wrong, gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. Any fee-funded pool is an **experimental claims backstop — not insurance**.
+**Experimental informational tool only.** Agent-B.V. is **not** a certification, safety guarantee, or insurance product. Scores, stamps, and denylists are point-in-time heuristics that may be wrong, gamed, or stale. TEE/attestation may be a stub. Contracts may be unaudited. Any fee-funded pool is an **experimental claims backstop — not insurance**.
 
 Read before using or relying on any stamp:
 
 - [Disclaimer](DISCLAIMER.md)
 - [Terms of Use](TERMS.md)
 - [Privacy](PRIVACY.md)
+- [Security summary](SECURITY.md)
 
 Related: [BVT securities disclaimer](docs/BVT_SECURITIES_DISCLAIMER.md) · [jurisdiction risk map](docs/LEGAL_JURISDICTION_MATRIX.md) (not a legal opinion).
 
@@ -49,7 +50,7 @@ An experimental stack for testing whether an AI bot is safe, honest, and stable 
 
 ## Buildable code (runnable)
 - `pipeline/end_to_end_runner.py` — full audit runner (stub bot included).
-- `claim-relayer/` — Base Sepolia claim-flow relayer. Escrow address comes from `deployments/base-sepolia.json`. Fixture / dry-run unless `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1` on chain 84532. Live `POST /v1/claims` then also requires `CLAIM_API_SECRET`. Mainnet is refused.
+- `claim-relayer/` — Base Sepolia claim-flow relayer. Escrow address comes from `deployments/base-sepolia.json`. Fixture / dry-run unless `LIVE_SUBMIT=1` and `SPENCER_RUN_AUTH=1` on chain 84532. Live `POST /v1/claims` requires an EIP-712 `ClaimIntent` signed by the payer or payee. Mainnet is refused.
 - `pipeline/run_audit.sh` — one-command runner.
 - `meta_audit/meta_audit_runner.py` — re-audit the auditors.
 - `contracts/Denylist.sol`, `Vault.sol`, `Liability.sol`, `InsuranceFund.sol`, `DisputePanel.sol` — real Solidity.
@@ -99,9 +100,14 @@ export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 # forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
 # (3) optional BVT stack (hardened roles; sinks default to timelock). BVT_GUARDIAN required (≠ deployer):
 # forge script script/DeployBVT.s.sol:DeployBVT --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
+# Denylist + Vault tip-bytecode redeploy (simulate only; Spencer broadcasts). See script/DEPLOY_DENYLIST.md
+# forge script script/DeployDenylist.s.sol:DeployDenylist --rpc-url $BASE_SEPOLIA_RPC_URL -vvvv
 ```
 
-Core `Deploy.s.sol`, `DeployBotAttestationEscrow.s.sol`, and additive `DeployBVT.s.sol` all revert on Ethereum mainnet (`chainid == 1`) and on any chain other than Base Sepolia. ETH Sepolia (`11155111`) is a documented one-line switch. Paste addresses into `deployments/base-sepolia.json` and `contracts/README.md` after deploy.
+`foundry.toml` pins solc `0.8.20`, the optimizer at 200 runs, and `evm_version = "shanghai"`. Moving `evm_version` from `cancun` to `shanghai` is output-neutral for these contracts: solc 0.8.20 does not implement Cancun, so the compiler was already emitting Shanghai bytecode.
+
+Core `Deploy.s.sol`, `DeployDenylist.s.sol`, `DeployBotAttestationEscrow.s.sol`, and additive `DeployBVT.s.sol` all revert on Ethereum mainnet (`chainid == 1`) and on any chain other than Base Sepolia. ETH Sepolia (`11155111`) is a documented one-line switch. Paste addresses into `deployments/base-sepolia.json` and `contracts/README.md` after deploy. The Denylist redeploy does not invent those addresses; Spencer writes them after he broadcasts. Agents do not `--broadcast`.
+
 
 ### Wallet UI (Base Sepolia)
 
