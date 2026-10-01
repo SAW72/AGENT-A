@@ -8,6 +8,8 @@ import { errorText, formatEth, shortAddress } from "./format"
 import { gateAOwnershipNotes, liabilityLinkNotes } from "./gate"
 import { evaluateReadGuard, resolveWalletChainId } from "./guard"
 import { createSepoliaClient, panelNotSeated, readGateStatus, rpcHost, type GateStatus } from "./read"
+import { relayerConfigFromEnv } from "./relayer"
+import { ReputationView } from "./reputation/ReputationView"
 import { useConnectorChainId } from "./useWalletChain"
 import { AddressRow, NoteList, TextRow } from "./ui"
 import { rpcUrl } from "./wagmi"
@@ -299,6 +301,13 @@ export function App() {
       </section>
 
       <DenylistLookup client={client} enabled={guard.ok} blockedReason={blockedReason} />
+
+      <ReputationView
+        connected={account.isConnected}
+        chainId={walletChainId}
+        address={account.address ?? null}
+        relayerUrl={relayerConfigFromEnv({ VITE_CLAIM_RELAYER_URL: import.meta.env.VITE_CLAIM_RELAYER_URL }).url}
+      />
 
       <footer>
         <p>
