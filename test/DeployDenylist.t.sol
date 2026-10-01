@@ -179,8 +179,8 @@ contract MigrateDenylistListingsTest is Test {
         assertTrue(denylist.denylistedHashes(exactId));
         assertTrue(denylist.denylistedSignatures(signatureId));
         assertTrue(denylist.denylistedPrompts(promptId));
-        assertTrue(denylist.everListed(Denylist.Bucket.Exact, exactId));
-        Denylist.Listing memory row = denylist.listing(Denylist.Bucket.Exact, exactId);
+        assertTrue(denylist.everListed(uint8(Denylist.Bucket.Exact), exactId));
+        Denylist.Listing memory row = denylist.listing(uint8(Denylist.Bucket.Exact), exactId);
         assertTrue(row.active);
         assertEq(row.timesListed, 1);
         assertEq(row.lastListedBy, timelock);
