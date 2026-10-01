@@ -41,15 +41,19 @@ contract LiveDenylistVaultTest is Test {
     Vault internal vault;
 
     function setUp() public {
-        if (block.chainid != BASE_SEPOLIA) {
+        // `vm.getChainId()` rather than `block.chainid`: after `createSelectFork` the
+        // compiler may treat `block.chainid` as a constant and fold the pre-fork id.
+        uint256 chainId = vm.getChainId();
+        if (chainId != BASE_SEPOLIA) {
             string memory rpc = vm.envOr("BASE_SEPOLIA_RPC_URL", string(""));
             if (bytes(rpc).length == 0) {
                 vm.skip(true, "set BASE_SEPOLIA_RPC_URL or pass --fork-url for Base Sepolia (84532)");
                 return;
             }
             vm.createSelectFork(rpc);
+            chainId = vm.getChainId();
         }
-        if (block.chainid != BASE_SEPOLIA) {
+        if (chainId != BASE_SEPOLIA) {
             vm.skip(true, "fork is not Base Sepolia (84532)");
             return;
         }
@@ -60,14 +64,27 @@ contract LiveDenylistVaultTest is Test {
     }
 
     function test_forkIsBaseSepoliaAndDenylistRuntimeIsPrePr23() public view {
-        assertEq(block.chainid, BASE_SEPOLIA);
+        assertEq(vm.getChainId(), BASE_SEPOLIA);
         assertGt(DENYLIST.code.length, 0);
         assertGt(VAULT.code.length, 0);
         assertEq(keccak256(DENYLIST.code), LIVE_DENYLIST_PRE_PR23_RUNTIME_HASH);
         // The CBOR metadata embeds an IPFS hash of the source/metadata JSON, which
         // changes with comments, paths, or settings even when opcodes are identical.
-        bytes memory liveVault = _stripSolidityCborMetadata(address(VAULT).code);
-        bytes memory compiledVault = _stripSolidityCborMetadata(type(Vault).runtimeCode);
+        // Moving foundry.toml evm_version from cancun to shanghai is output-neutral
+        // for these contracts: solc 0.8.20 does not implement Cancun, so the compiler
+        // was already emitting Shanghai bytecode.
+        bytes memory liveCode = address(VAULT).code;
+        bytes memory compiledCode = type(Vault).runtimeCode;
+        assertGt(compiledCode.length, 0);
+        uint256 liveMetaLen = _solidityCborMetadataLength(liveCode);
+        uint256 compiledMetaLen = _solidityCborMetadataLength(compiledCode);
+        require(liveMetaLen == compiledMetaLen, "trailing CBOR metadata lengths differ");
+        assertEq(liveMetaLen, 51);
+        assertEq(compiledMetaLen, 51);
+        _assertCborIpfsHeader(liveCode, liveMetaLen);
+        _assertCborIpfsHeader(compiledCode, compiledMetaLen);
+        bytes memory liveVault = _stripSolidityCborMetadata(liveCode);
+        bytes memory compiledVault = _stripSolidityCborMetadata(compiledCode);
         assertEq(liveVault.length, compiledVault.length);
         assertEq(keccak256(liveVault), keccak256(compiledVault));
     }
@@ -346,20 +363,59 @@ contract LiveDenylistVaultTest is Test {
         assertEq(uint256(denylist.check(WEIGHT, bytes32(0), bytes32(0))), uint256(Denylist.MatchLevel.None));
     }
 
+    /// @dev CBOR metadata header: map(2) `a2`, text(4) `64`, key `ipfs`.
+    bytes6 internal constant CBOR_IPFS_PREFIX = hex"a26469706673";
+
     /// @dev Drop Solidity's CBOR metadata suffix. The last two bytes are a big-endian uint16 L,
-    ///      the length of the CBOR blob. The suffix is L + 2 bytes.
+    ///      the length of the CBOR blob. The suffix is L + 2 bytes. L must be greater than zero
+    ///      and the blob must start with `a2 64 'ipfs'`.
     function _stripSolidityCborMetadata(
         bytes memory code
     ) internal pure returns (bytes memory stripped) {
-        uint256 len = code.length;
-        require(len >= 2, "runtime too short to read CBOR length");
-        uint256 metaLen = (uint256(uint8(code[len - 2])) << 8) | uint256(uint8(code[len - 1]));
-        require(metaLen + 2 <= len, "CBOR metadata longer than runtime");
-        uint256 strippedLen = len - (metaLen + 2);
+        uint256 metaLen = _solidityCborMetadataLength(code);
+        uint256 strippedLen = code.length - (metaLen + 2);
         stripped = new bytes(strippedLen);
         for (uint256 i; i < strippedLen; ++i) {
             stripped[i] = code[i];
         }
+    }
+
+    /// @dev Read trailing CBOR length L. Requires L > 0, that the blob fits, and that it starts
+    ///      with the `a2 64 'ipfs'` prefix.
+    function _solidityCborMetadataLength(
+        bytes memory code
+    ) internal pure returns (uint256 metaLen) {
+        uint256 len = code.length;
+        require(len >= 2, "runtime too short to read CBOR length");
+        metaLen = (uint256(uint8(code[len - 2])) << 8) | uint256(uint8(code[len - 1]));
+        require(metaLen > 0, "CBOR metadata length is zero");
+        require(metaLen + 2 <= len, "CBOR metadata longer than runtime");
+        require(metaLen >= 6, "CBOR metadata shorter than ipfs prefix");
+        require(_cborIpfsPrefix(code, metaLen) == CBOR_IPFS_PREFIX, "CBOR metadata missing a2 64 ipfs prefix");
+    }
+
+    function _cborIpfsPrefix(
+        bytes memory code,
+        uint256 metaLen
+    ) internal pure returns (bytes6 prefix) {
+        uint256 start = code.length - (metaLen + 2);
+        assembly {
+            prefix := mload(add(add(code, 32), start))
+        }
+    }
+
+    /// @dev Header bytes are `a2 64 'ipfs'` (`0xa2 0x64 0x69 0x70 0x66 0x73`).
+    function _assertCborIpfsHeader(
+        bytes memory code,
+        uint256 metaLen
+    ) internal pure {
+        bytes6 prefix = _cborIpfsPrefix(code, metaLen);
+        assertEq(uint8(prefix[0]), 0xa2);
+        assertEq(uint8(prefix[1]), 0x64);
+        assertEq(uint8(prefix[2]), 0x69);
+        assertEq(uint8(prefix[3]), 0x70);
+        assertEq(uint8(prefix[4]), 0x66);
+        assertEq(uint8(prefix[5]), 0x73);
     }
 
     function _eip7702Delegate(

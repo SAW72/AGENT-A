@@ -38,7 +38,7 @@ Retired history, not the live escrow: Gate B was seated (block 47299643), then t
 | 2 | `0xF4253A3a3C102Ee59e38b2AA92989C3232eDcC30` | `0xf1ad4d9221b2393863d9bc6a72c1a716cf389532d2cfa63fd4df682303ed6df6` |
 | 3 | `0xB87Ed5F74276AC6172ef53fE866675093F75936E` | `0xa1f8f0fb6ad78dd2d9fd9d33dabf9cde5b73195a1b292869e7d96cc985cb79a3` |
 
-Live escrow create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block), from commit `444c427`. `transferOwnership` tx `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. Constructor args: denylist `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, vault `0x1463D664fA467FBCDA4B05443434494f05e565bc`, panel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, governance `0x10CC9474b45625ADfd05C209f2518023484878D9`. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON; Basescan recorded evm version shanghai for this already-verified contract. Repo `foundry.toml` `evm_version` is `cancun`): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
+Live escrow create tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa` is block 47345163 (indexer and relayer start block), from commit `444c427`. `transferOwnership` tx `0xbffb1df647a1ecc3ec0ab479956b0564de0efe58d1664e0aad3c61a28fd76da8`. Constructor args: denylist `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`, vault `0x1463D664fA467FBCDA4B05443434494f05e565bc`, panel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`, governance `0x10CC9474b45625ADfd05C209f2518023484878D9`. Sourcify exact match: `https://repo.sourcify.dev/84532/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Blockscout: `https://base-sepolia.blockscout.com/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`. Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON; Basescan recorded evm version shanghai for this already-verified contract. Repo `foundry.toml` `evm_version` is `shanghai` (moving from `cancun` to `shanghai` is output-neutral for these contracts)): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. The escrow is linked to DisputePanel `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`. Canonical copy: [`deployments/base-sepolia.json`](../deployments/base-sepolia.json).
 
 Retired escrow (ESC-M-1 redeploy, retired 2026-09-26): create tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e` and `transferOwnership` tx `0x00aaef315f23de346bfe63e77e0f04d3fbcadc370b0db21bb7abb8f8e12c40f2` are both block 47299930. Its `acceptOwnership` tx `0xd2e982568811c3706eec074d296ef7fa4c54838de714e1a5bfc8afc9fbb73983` is block 47300275. That contract is `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`. It is history, not the book address.
 
@@ -165,7 +165,7 @@ Before this call, `owner()` is the deployer and `pendingOwner()` is `CORE_TIMELO
 
 ### Verify (Sourcify, then Basescan via Etherscan v2)
 
-Compiler settings match `foundry.toml`: solc `0.8.20`, optimizer on, 200 runs, `cancun`. Basescan verification reads `ETHERSCAN_API_KEY` from the environment. Never commit it. Set it in the shell without echoing it:
+Compiler settings match `foundry.toml`: solc `0.8.20`, optimizer on, 200 runs, `shanghai`. Moving `foundry.toml` `evm_version` from `cancun` to `shanghai` is output-neutral for these contracts: solc 0.8.20 does not implement Cancun, so the compiler was already emitting Shanghai bytecode. Basescan verification reads `ETHERSCAN_API_KEY` from the environment. Never commit it. Set it in the shell without echoing it:
 
 ```bash
 read -s ETHERSCAN_API_KEY && export ETHERSCAN_API_KEY
@@ -185,7 +185,7 @@ forge verify-contract \
   --verifier sourcify \
   --compiler-version 0.8.20 \
   --num-of-optimizations 200 \
-  --evm-version cancun \
+  --evm-version shanghai \
   --creation-transaction-hash "$DEPLOY_TX" \
   "$NEW_ESCROW" \
   contracts/BotAttestationEscrow.sol:BotAttestationEscrow
@@ -196,13 +196,13 @@ forge verify-contract \
   --verifier-url "https://api.etherscan.io/v2/api?chainid=84532" \
   --compiler-version 0.8.20 \
   --num-of-optimizations 200 \
-  --evm-version cancun \
+  --evm-version shanghai \
   --constructor-args "$CTOR_ARGS" \
   "$NEW_ESCROW" \
   contracts/BotAttestationEscrow.sol:BotAttestationEscrow
 ```
 
-The already-verified live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` was recorded on Basescan (Pass - Verified) via Etherscan v2 as solc `v0.8.20+commit.a1b79de6`, standard JSON, evm version shanghai: `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. That shanghai label is Basescan metadata for `0x1069…` only. This repo compiles with `foundry.toml` `evm_version = "cancun"` (solc `0.8.20`, optimizer 200 runs). The pull-payment deploy in [Deploy and retire](#deploy-and-retire) is verified with `--evm-version cancun`, the same flag as the commands above.
+The already-verified live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` was recorded on Basescan (Pass - Verified) via Etherscan v2 as solc `v0.8.20+commit.a1b79de6`, standard JSON, evm version shanghai: `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`. That shanghai label is Basescan metadata for `0x1069…` only. This repo compiles with `foundry.toml` `evm_version = "shanghai"` (solc `0.8.20`, optimizer 200 runs). The pull-payment deploy in [Deploy and retire](#deploy-and-retire) is verified with `--evm-version shanghai`, the same flag as the commands above.
 
 ### Read-only smoke checks
 
@@ -568,7 +568,7 @@ Claim-relayer escrow address config:
 - [x] Live escrow address and txs are in `deployments/base-sepolia.json` and `contracts/README.md` (`0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`, block 47345163, commit `444c427`)
 - [x] Agents do not `--broadcast` and do not touch mainnet
 - [x] ESC-M-1 escrow-only redeploy landed (deploy tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa`)
-- [x] Wiring records the live escrow and retires the previous one. `acceptOwnership` on the live escrow is complete (`0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442). Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON; Basescan recorded evm version shanghai for this already-verified contract. Repo `foundry.toml` `evm_version` is `cancun`): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`.
+- [x] Wiring records the live escrow and retires the previous one. `acceptOwnership` on the live escrow is complete (`0xe4286328ff1d177c724888255d3607187e4b4ea68d0f1e66d697e6152367e0e9`, block 47345442). Basescan is verified (Pass - Verified) via Etherscan v2 (solc v0.8.20+commit.a1b79de6, standard JSON; Basescan recorded evm version shanghai for this already-verified contract. Repo `foundry.toml` `evm_version` is `shanghai` (moving from `cancun` to `shanghai` is output-neutral for these contracts)): `https://sepolia.basescan.org/address/0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d#code`.
 
 ## Appendix: OpenZeppelin TimelockController schedule and execute calldata
 
