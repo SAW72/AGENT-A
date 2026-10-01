@@ -32,5 +32,5 @@ Every action a policy-enforced bot takes is recorded immutably. This is the bot'
 - Actions targeting a specific counterparty.
 - Drift: compare action patterns before and after a policy update.
 
-## Integration with Agent.BV (Agent Auditor)
+## Integration with B.V. (Agent Auditor)
 The `background/` incident log and the `chain/` attestation both read from this log. The on-chain action log is the source of truth; the off-chain reports are derived from it.

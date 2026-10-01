@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Liability waterfall for Agent.BV (Agent Auditor).
+// Liability waterfall for B.V. (Agent Auditor).
 // Owner -> Auditor -> InsuranceFund. Not audited. For illustration.
 pragma solidity ^0.8.20;
 
