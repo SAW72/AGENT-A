@@ -5,6 +5,10 @@ import { Script, console } from "forge-std/Script.sol";
 import { VmSafe } from "forge-std/Vm.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 
+interface ISafe {
+    function getThreshold() external view returns (uint256);
+}
+
 /// @notice Deploy an OpenZeppelin `TimelockController` (v5.7.0, the version pinned in `foundry.lock`).
 /// @dev Proposer is `SAFE_ADDRESS` only. OZ v5 grants that proposer `CANCELLER_ROLE` in the constructor.
 ///      `admin` is `address(0)`, so `DEFAULT_ADMIN_ROLE` stays on the timelock itself. No EOA is admin.
@@ -27,6 +31,9 @@ contract DeployTimelock is Script {
 
     /// @dev Foundry's sender when `--sender` / `--account` is omitted.
     address public constant FOUNDRY_DEFAULT_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
+
+    /// @dev The EOA this controller replaces. It must not hold a timelock role.
+    address public constant CORE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
 
     /// @dev Set when `noteShortDelay` sees chainid 8453 and a delay under 48 hours.
     bool public shortDelayWarned;
@@ -103,7 +110,8 @@ contract DeployTimelock is Script {
     }
 
     /// @notice Deploy the controller and assert no EOA holds `DEFAULT_ADMIN_ROLE`.
-    /// @dev `SAFE_ADDRESS` must already have code. This function does not create a Safe.
+    /// @dev `SAFE_ADDRESS` must already have code and `getThreshold() >= 2`. `minDelay` must be non-zero.
+    ///      This function does not create a Safe. `CORE_TIMELOCK` must hold no timelock role.
     function deployTimelock(
         address safe,
         uint256 minDelay,
@@ -111,6 +119,8 @@ contract DeployTimelock is Script {
     ) public returns (TimelockController timelock) {
         if (safe == address(0)) revert("DeployTimelock: SAFE_ADDRESS unset");
         if (safe.code.length == 0) revert("DeployTimelock: SAFE_ADDRESS has no code");
+        if (minDelay == 0) revert("DeployTimelock: minDelay is zero");
+        if (ISafe(safe).getThreshold() < 2) revert("DeployTimelock: SAFE threshold is below 2");
 
         address[] memory proposers = new address[](1);
         proposers[0] = safe;
@@ -134,6 +144,18 @@ contract DeployTimelock is Script {
             revert("DeployTimelock: executor missing EXECUTOR_ROLE");
         }
         if (timelock.getMinDelay() != minDelay) revert("DeployTimelock: minDelay mismatch");
+        if (timelock.hasRole(timelock.PROPOSER_ROLE(), CORE_TIMELOCK)) {
+            revert("DeployTimelock: CORE_TIMELOCK holds PROPOSER_ROLE");
+        }
+        if (timelock.hasRole(timelock.EXECUTOR_ROLE(), CORE_TIMELOCK)) {
+            revert("DeployTimelock: CORE_TIMELOCK holds EXECUTOR_ROLE");
+        }
+        if (timelock.hasRole(timelock.CANCELLER_ROLE(), CORE_TIMELOCK)) {
+            revert("DeployTimelock: CORE_TIMELOCK holds CANCELLER_ROLE");
+        }
+        if (timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), CORE_TIMELOCK)) {
+            revert("DeployTimelock: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE");
+        }
     }
 
     function run() external {

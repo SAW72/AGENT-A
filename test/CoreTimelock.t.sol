@@ -400,6 +400,69 @@ contract CoreTimelockTest is Test {
         _assertUnchanged(targets, core);
     }
 
+    function test_thresholdOneRevertsBeforeDeployOrHandoff() public {
+        address core = mig.CORE_TIMELOCK();
+        address[] memory targets = _seed(core);
+        address oneOfOne = address(new SafeThresholdStub(1));
+
+        vm.expectRevert(bytes("DeployTimelock: SAFE threshold is below 2"));
+        deploy.deployTimelock(oneOfOne, 300, address(0));
+
+        vm.setEnv("SAFE_ADDRESS", vm.toString(oneOfOne));
+        address[] memory proposers = new address[](1);
+        proposers[0] = oneOfOne;
+        address[] memory executors = new address[](1);
+        TimelockController tl = new TimelockController(300, proposers, executors, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: SAFE threshold is below 2"));
+        mig.transferAll(targets, address(tl));
+        _assertUnchanged(targets, core);
+
+        address safe = _etchSafe();
+        vm.expectRevert(bytes("DeployTimelock: minDelay is zero"));
+        deploy.deployTimelock(safe, 0, address(0));
+    }
+
+    function test_coreTimelockRolesAreRejected() public {
+        address core = mig.CORE_TIMELOCK();
+        address[] memory targets = _seed(core);
+        address safe = _etchSafe();
+        vm.setEnv("SAFE_ADDRESS", vm.toString(safe));
+        address[] memory executors = new address[](1);
+        address[] memory proposers = new address[](1);
+        proposers[0] = safe;
+
+        address[] memory withCore = new address[](2);
+        withCore[0] = safe;
+        withCore[1] = core;
+        TimelockController coreProposer = new TimelockController(300, withCore, executors, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds PROPOSER_ROLE"));
+        mig.transferAll(targets, address(coreProposer));
+        _assertUnchanged(targets, core);
+
+        address[] memory coreExec = new address[](1);
+        coreExec[0] = core;
+        TimelockController coreExecutor = new TimelockController(300, proposers, coreExec, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds EXECUTOR_ROLE"));
+        mig.transferAll(targets, address(coreExecutor));
+        _assertUnchanged(targets, core);
+
+        TimelockController coreCanceller = new TimelockController(300, proposers, executors, address(this));
+        coreCanceller.grantRole(coreCanceller.CANCELLER_ROLE(), core);
+        coreCanceller.revokeRole(coreCanceller.DEFAULT_ADMIN_ROLE(), address(this));
+        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds CANCELLER_ROLE"));
+        mig.transferAll(targets, address(coreCanceller));
+        _assertUnchanged(targets, core);
+
+        TimelockController coreAdmin = new TimelockController(300, proposers, executors, core);
+        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE"));
+        mig.transferAll(targets, address(coreAdmin));
+        _assertUnchanged(targets, core);
+
+        vm.expectRevert(bytes("DeployTimelock: CORE_TIMELOCK holds EXECUTOR_ROLE"));
+        deploy.deployTimelock(safe, 300, core);
+        _assertUnchanged(targets, core);
+    }
+
     function _acceptAll(
         TimelockController tl,
         address safe,
@@ -483,8 +546,7 @@ contract CoreTimelockTest is Test {
     }
 
     function _etchSafe() internal returns (address safe) {
-        safe = makeAddr("safe");
-        vm.etch(safe, hex"00");
+        safe = address(new SafeThresholdStub(2));
     }
 
     function _controller(
@@ -504,6 +566,21 @@ contract CoreTimelockTest is Test {
         vm.prank(eoa);
         tl = deploy.deployTimelock(safe, delay, executor);
         safeOut = safe;
+    }
+}
+
+/// @dev Stand-in for an existing Safe. The scripts call `getThreshold()` and nothing else on it.
+contract SafeThresholdStub {
+    uint256 internal immutable _threshold;
+
+    constructor(
+        uint256 threshold_
+    ) {
+        _threshold = threshold_;
+    }
+
+    function getThreshold() external view returns (uint256) {
+        return _threshold;
     }
 }
 

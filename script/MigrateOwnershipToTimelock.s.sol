@@ -5,6 +5,10 @@ import { Script, console } from "forge-std/Script.sol";
 import { VmSafe } from "forge-std/Vm.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 
+interface ISafe {
+    function getThreshold() external view returns (uint256);
+}
+
 /// @notice Move ownership off `CORE_TIMELOCK` `0x10CC…78D9` onto a deployed `TimelockController`.
 /// @dev `CORE_TIMELOCK` is an EOA with EIP-7702 delegation, not a timelock. Step `transfer` is the
 ///      only broadcast, and only Spencer runs it (`--account` / `--sender` that EOA, `vm.startBroadcast()`
@@ -101,18 +105,28 @@ contract MigrateOwnershipToTimelock is Script {
     }
 
     /// @notice Reject a controller that is not the Safe's self-administered timelock, before any ownership call.
-    /// @dev `SAFE_ADDRESS` must be the proposer. `DEFAULT_ADMIN_ROLE` must sit on the timelock only.
-    ///      `CORE_TIMELOCK` and `msg.sender` must not hold it. `getMinDelay()` must be non-zero. The address must
-    ///      have code.
+    /// @dev `SAFE_ADDRESS` must be the proposer and `getThreshold()` must be at least 2. `DEFAULT_ADMIN_ROLE` must sit
+    ///      on the timelock only. `CORE_TIMELOCK` must not hold proposer, executor, canceller, or admin.
+    ///      `getMinDelay()` must be non-zero. The address must have code.
     function requireValidTimelock(
         address newTimelock
     ) public view {
         if (newTimelock.code.length == 0) revert("MigrateOwnership: NEW_TIMELOCK has no code");
         address safe = readAddress("SAFE_ADDRESS", "MigrateOwnership: SAFE_ADDRESS unset");
+        if (ISafe(safe).getThreshold() < 2) revert("MigrateOwnership: SAFE threshold is below 2");
         TimelockController tl = TimelockController(payable(newTimelock));
         if (!tl.hasRole(tl.PROPOSER_ROLE(), safe)) revert("MigrateOwnership: SAFE missing PROPOSER_ROLE");
         if (!tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), newTimelock)) {
             revert("MigrateOwnership: timelock is not self-administered");
+        }
+        if (tl.hasRole(tl.PROPOSER_ROLE(), CORE_TIMELOCK)) {
+            revert("MigrateOwnership: CORE_TIMELOCK holds PROPOSER_ROLE");
+        }
+        if (tl.hasRole(tl.EXECUTOR_ROLE(), CORE_TIMELOCK)) {
+            revert("MigrateOwnership: CORE_TIMELOCK holds EXECUTOR_ROLE");
+        }
+        if (tl.hasRole(tl.CANCELLER_ROLE(), CORE_TIMELOCK)) {
+            revert("MigrateOwnership: CORE_TIMELOCK holds CANCELLER_ROLE");
         }
         if (tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), CORE_TIMELOCK)) {
             revert("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE");

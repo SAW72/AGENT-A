@@ -31,6 +31,8 @@ Live escrow `0x1069…298d` and retired escrow `0x1412…284c` store `governance
 
 The default is to skip both. The log says why: immutable governance; migrating bricks `createEscrow` and the setters. `postCheck` accepts those rows still owned by `CORE_TIMELOCK` while `MIGRATE_ESCROWS` is unset.
 
+Any escrow left on CORE (`MIGRATE_ESCROWS` unset) stays under single-key control by the CORE EOA until that escrow is retired or replaced by an escrow whose `governance` is the `TimelockController`.
+
 Set `MIGRATE_ESCROWS=1` only when that brick is intentional. After `owner` moves to the `TimelockController`, neither the EOA nor the timelock can call those four functions. `release`, `refund`, `withdraw`, and `withdrawTo` are not owner-gated and keep working. A new escrow, constructed with `governance` set to the `TimelockController`, is required before anyone can create another escrow or retarget the denylist, vault, or panel. This script does not deploy that escrow. With the flag set, `postCheck` requires both escrows on the timelock with `pendingOwner == 0`.
 
 ### Immediate `setOwner` risk
@@ -47,12 +49,13 @@ Import the deployer keystore out of band. Do not put the key in the environment.
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 export SAFE_ADDRESS=<existing-safe-with-code>
 export TIMELOCK_MIN_DELAY=300
-# Testnet may leave TIMELOCK_EXECUTOR unset. address(0) is an open executor: anyone can execute after the delay.
-# Mainnet, if it is ever in scope, should set the Safe as the executor. Do not leave mainnet open.
+# Testnet may leave TIMELOCK_EXECUTOR unset. address(0) is an open executor.
+# With an open executor, anyone, CORE included, can execute an op that is already scheduled and past its delay.
+# They still cannot schedule one. Mainnet should set the Safe as executor for that reason. Do not leave mainnet open.
 # export TIMELOCK_EXECUTOR=$SAFE_ADDRESS
 ```
 
-On Base Sepolia the open executor is acceptable. For mainnet, set `TIMELOCK_EXECUTOR` to `SAFE_ADDRESS` so only the Safe can execute. Mainnet is not in scope for this runbook.
+`SAFE_ADDRESS` must already have code and `getThreshold()` of at least 2. `TIMELOCK_MIN_DELAY` must be greater than 0. On Base Sepolia the open executor is acceptable. For mainnet, set `TIMELOCK_EXECUTOR` to `SAFE_ADDRESS` so only the Safe can execute. An open executor lets anyone, including `CORE_TIMELOCK`, call `execute` / `executeBatch` once an operation is scheduled and the delay has passed. That account still cannot `schedule`. That is another reason to prefer the Safe as executor on mainnet. Mainnet is not in scope for this runbook.
 
 Simulate. This command does not broadcast.
 
@@ -76,7 +79,7 @@ Proposers are `[SAFE_ADDRESS]`. OpenZeppelin v5.7.0 also grants that Safe `CANCE
 
 ## 1. Transfer, signed by the EOA
 
-`MIGRATION_STEP=transfer` (the default). Before any ownership call, the script reads `SAFE_ADDRESS` and reverts unless `NEW_TIMELOCK` has code, `getMinDelay() > 0`, the Safe holds `PROPOSER_ROLE`, the timelock holds `DEFAULT_ADMIN_ROLE`, and neither `CORE_TIMELOCK` nor the sender holds `DEFAULT_ADMIN_ROLE`. The script skips a row whose `owner` is already `NEW_TIMELOCK` and whose `pendingOwner` is zero, and it skips an Ownable2Step row already pending `NEW_TIMELOCK`. It also skips both escrows unless `MIGRATE_ESCROWS=1`. Re-running it is safe.
+`MIGRATION_STEP=transfer` (the default). Before any ownership call, the script reads `SAFE_ADDRESS` and reverts unless `NEW_TIMELOCK` has code, `getMinDelay() > 0`, `ISafe(SAFE_ADDRESS).getThreshold()` is at least 2, the Safe holds `PROPOSER_ROLE`, the timelock holds `DEFAULT_ADMIN_ROLE`, the sender does not hold `DEFAULT_ADMIN_ROLE`, and `CORE_TIMELOCK` holds none of `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE`, or `DEFAULT_ADMIN_ROLE`. The script skips a row whose `owner` is already `NEW_TIMELOCK` and whose `pendingOwner` is zero, and it skips an Ownable2Step row already pending `NEW_TIMELOCK`. It also skips both escrows unless `MIGRATE_ESCROWS=1`. Re-running it is safe.
 
 Simulate. This command does not broadcast. On a fork it pranks `CORE_TIMELOCK` and prints the accept batch from the simulated state.
 
@@ -118,7 +121,7 @@ forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock 
 
 The log is the Safe proposal. Predecessor is `bytes32(0)`. Salt is `keccak256("CORE_TIMELOCK_MIGRATION_ACCEPT_V1")`. Delay is `getMinDelay()`. Each payload is `acceptOwnership()` (`0x79ba5097`). Values are `0`.
 
-The Safe calls `scheduleBatch(targets, values, payloads, predecessor, salt, delay)` on `NEW_TIMELOCK`. After the delay, `executeBatch(targets, values, payloads, predecessor, salt)` runs. On this testnet, an open executor (`TIMELOCK_EXECUTOR` unset or `address(0)`) means any account can execute. For mainnet, deploy with `TIMELOCK_EXECUTOR` set to the Safe so only the Safe can execute.
+The Safe calls `scheduleBatch(targets, values, payloads, predecessor, salt, delay)` on `NEW_TIMELOCK`. After the delay, `executeBatch(targets, values, payloads, predecessor, salt)` runs. On this testnet, an open executor (`TIMELOCK_EXECUTOR` unset or `address(0)`) means any account can execute an operation that is already scheduled and past its delay. That includes `CORE_TIMELOCK`. An open executor does not let that account schedule. For mainnet, deploy with `TIMELOCK_EXECUTOR` set to the Safe so only the Safe can execute.
 
 If the remaining set changes, the operation id changes. Cancel the previously scheduled operation from the Safe before scheduling a different batch. `acceptOwnership` on a row that already completed reverts, and that reverts the whole batch.
 
@@ -136,6 +139,62 @@ forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock 
 ```
 
 It reverts unless every in-scope row has `owner() == NEW_TIMELOCK` and `pendingOwner() == 0`, and no enumerated non-escrow contract still has `CORE_TIMELOCK` as `owner` or `pendingOwner`. With `MIGRATE_ESCROWS` unset, the two escrows may still be owned by `CORE_TIMELOCK`. With `MIGRATE_ESCROWS=1`, those two must be on the timelock and `pendingOwner` must be zero. Immutable `governance` is unchanged either way.
+
+## Before funding any contract
+
+Do this again immediately before sending ETH or opening an escrow. These commands do not broadcast.
+
+An escrow left on `CORE_TIMELOCK` (`MIGRATE_ESCROWS` unset) is still a single key. Do not fund it. Fund only after that escrow is retired or replaced by one whose `governance` is `NEW_TIMELOCK`, and after the checks below match.
+
+```bash
+export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
+export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
+export SAFE_ADDRESS=<existing-safe>
+export NEW_TIMELOCK=<timelock-from-step-0>
+
+cast call "$SAFE_ADDRESS" "getThreshold()(uint256)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "getMinDelay()(uint256)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+
+PROPOSER_ROLE=$(cast keccak "PROPOSER_ROLE")
+EXECUTOR_ROLE=$(cast keccak "EXECUTOR_ROLE")
+CANCELLER_ROLE=$(cast keccak "CANCELLER_ROLE")
+DEFAULT_ADMIN_ROLE=0x0000000000000000000000000000000000000000000000000000000000000000
+
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$PROPOSER_ROLE" "$SAFE_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$DEFAULT_ADMIN_ROLE" "$NEW_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$PROPOSER_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$EXECUTOR_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$CANCELLER_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$DEFAULT_ADMIN_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
+
+`getThreshold()` must be at least 2. `getMinDelay()` must be greater than 0. The Safe's proposer result must be `true`. The timelock's own admin result must be `true`. Every `CORE_TIMELOCK` role result must be `false`.
+
+Ownable2Step rows. `owner()` must be `NEW_TIMELOCK` and `pendingOwner()` must be `0`. The two escrows are in this list only when `MIGRATE_ESCROWS=1`. Otherwise their `owner()` is still `CORE_TIMELOCK`, and they stay under that single key.
+
+```bash
+for addr in \
+  0xeE76876bECcFc1B58fC06fF4E654a517d784B224 \
+  0x1463D664fA467FBCDA4B05443434494f05e565bc \
+  0xF0f260967D377E07Bdd7840862508ddB23C012b8 \
+  0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7
+do
+  cast call "$addr" "owner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+  cast call "$addr" "pendingOwner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+done
+```
+
+Immediate `setOwner` rows have no `pendingOwner()`. `owner()` must be `NEW_TIMELOCK`.
+
+```bash
+for addr in \
+  0x554Caf5a214B8d70D675C09186C5EAE24FEB7307 \
+  0x19fc26B36Cb2031062eD90C19db64b3b09753ab8 \
+  0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb
+do
+  cast call "$addr" "owner()(address)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+done
+```
 
 ## Kill switch / rollback
 
