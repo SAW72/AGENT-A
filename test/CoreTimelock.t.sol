@@ -29,7 +29,6 @@ contract CoreTimelockTest is Test {
     function setUp() public {
         deploy = new DeployTimelock();
         mig = new MigrateOwnershipToTimelock();
-        vm.setEnv("MIGRATE_ESCROWS", "0");
     }
 
     function test_delayIsEnforced() public {
@@ -321,7 +320,8 @@ contract CoreTimelockTest is Test {
         assertEq(escrow.owner(), core);
         assertEq(retired.owner(), core);
 
-        vm.setEnv("MIGRATE_ESCROWS", "1");
+        mig.optInEscrows();
+        assertTrue(mig.migrateEscrows());
         vm.expectRevert(bytes("MigrateOwnership: escrow owner is not the timelock"));
         mig.postCheck(targets, address(tl));
 

@@ -27,6 +27,9 @@ contract MigrateOwnershipToTimelock is Script {
     address public constant SIMULATE_SENDER = 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001;
     address public constant FOUNDRY_DEFAULT_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
+    /// @dev Set by tests so parallel `forge test` runs do not share `MIGRATE_ESCROWS`. Operators use the env var.
+    bool public forceEscrowMigration;
+
     /// @dev Stable salt so a resumed print of the same remaining set matches the scheduled operation.
     bytes32 public constant ACCEPT_SALT = keccak256("CORE_TIMELOCK_MIGRATION_ACCEPT_V1");
     bytes32 public constant PREDECESSOR = bytes32(0);
@@ -81,13 +84,20 @@ contract MigrateOwnershipToTimelock is Script {
         if (a == address(0)) revert(unsetErr);
     }
 
-    /// @notice Escrow rows are included only when `MIGRATE_ESCROWS=1`. Unset or any other value skips them.
+    /// @notice Escrow rows are included only when `MIGRATE_ESCROWS=1`, or when a test called `optInEscrows`.
     function migrateEscrows() public view returns (bool enabled) {
+        if (forceEscrowMigration) return true;
         try vm.envUint("MIGRATE_ESCROWS") returns (uint256 flag) {
             enabled = flag == 1;
         } catch {
             enabled = false;
         }
+    }
+
+    /// @notice Opt the in-memory script instance into escrow migration. Broadcast still requires `MIGRATE_ESCROWS=1`.
+    function optInEscrows() external {
+        if (broadcasting()) revert("MigrateOwnership: set MIGRATE_ESCROWS=1");
+        forceEscrowMigration = true;
     }
 
     /// @notice Reject a controller that is not the Safe's self-administered timelock, before any ownership call.
