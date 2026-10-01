@@ -1,6 +1,7 @@
 /**
  * EIP-712 ClaimIntent. The JSON file is the single schema shared with wallet-ux.
- * Action enum order is the `actions` array: 0 release, 1 refund.
+ * The signed uint8 for refund stays 1. Release stays uint8 0 so an old approval
+ * is recognized and refused, and is not remapped onto refund.
  * createEscrow, dispute, withdraw, and withdrawTo are not in this list.
  */
 
@@ -26,8 +27,38 @@ export const CLAIM_INTENT_TYPEHASH = keccak256(toBytes(CLAIM_INTENT_TYPE_STRING)
 export const DEADLINE_WINDOW_SECONDS = CLAIM_INTENT_SCHEMA.deadlineWindowSeconds;
 export const RETIRED_ESCROW = SUPERSEDED.botAttestationEscrow;
 
-const ACTION_INDEX = new Map(CLAIM_INTENT_SCHEMA.actions.map((name, index) => [name, index]));
-const INDEX_ACTION = new Map(CLAIM_INTENT_SCHEMA.actions.map((name, index) => [index, name]));
+const ACTION_VALUES = CLAIM_INTENT_SCHEMA.actionValues;
+const REFUSED_ACTIONS = CLAIM_INTENT_SCHEMA.refusedActions;
+
+function isNonScalar(value) {
+  return Array.isArray(value) || (value !== null && typeof value === "object");
+}
+
+/** Case, whitespace, and numeric-string aliases of release. Not "0x0" and not "1". */
+export function isReleaseAlias(action) {
+  if (isNonScalar(action)) return false;
+  if (typeof action === "bigint") return action === 0n;
+  if (typeof action === "number") return Number.isInteger(action) && action === 0;
+  if (typeof action !== "string") return false;
+  const trimmed = action.trim();
+  return trimmed.toLowerCase() === "release" || /^0+$/.test(trimmed);
+}
+
+function valueForName(name) {
+  if (Object.prototype.hasOwnProperty.call(ACTION_VALUES, name)) return ACTION_VALUES[name];
+  if (Object.prototype.hasOwnProperty.call(REFUSED_ACTIONS, name)) return REFUSED_ACTIONS[name];
+  return null;
+}
+
+function nameForValue(value) {
+  for (const [name, index] of Object.entries(ACTION_VALUES)) {
+    if (index === value) return name;
+  }
+  for (const [name, index] of Object.entries(REFUSED_ACTIONS)) {
+    if (index === value) return name;
+  }
+  return null;
+}
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -48,17 +79,27 @@ export function claimIntentDomain(chainId, verifyingContract) {
 }
 
 export function actionIndex(action) {
-  if (typeof action === "number" && INDEX_ACTION.has(action)) return action;
-  if (typeof action === "bigint" && INDEX_ACTION.has(Number(action))) return Number(action);
-  const name = String(action ?? "").trim();
-  if (!ACTION_INDEX.has(name)) return null;
-  return ACTION_INDEX.get(name);
+  if (isNonScalar(action)) return null;
+  if (typeof action === "bigint") {
+    if (action < 0n || action > 255n) return null;
+    return actionIndex(Number(action));
+  }
+  if (typeof action === "number" && Number.isInteger(action)) {
+    return nameForValue(action) === null ? null : action;
+  }
+  const value = valueForName(String(action ?? "").trim());
+  return value === null ? null : value;
 }
 
 export function actionName(action) {
-  const index = actionIndex(action);
-  if (index === null) return null;
-  return INDEX_ACTION.get(index);
+  if (isNonScalar(action)) return null;
+  if (typeof action === "bigint") {
+    if (action < 0n || action > 255n) return null;
+    return actionName(Number(action));
+  }
+  if (typeof action === "number" && Number.isInteger(action)) return nameForValue(action);
+  const name = String(action ?? "").trim();
+  return valueForName(name) === null ? null : name;
 }
 
 function sameAddress(left, right) {
@@ -101,11 +142,20 @@ export function parseClaimIntent(body) {
   if (!intent || typeof intent !== "object" || Array.isArray(intent)) {
     throw httpError(400, "intent_required");
   }
+  if (isNonScalar(intent.action)) {
+    throw httpError(400, "action_not_claim", { field: "action", txHash: null, dryRun: false });
+  }
+  if (isReleaseAlias(intent.action)) {
+    throw httpError(400, "release_not_relayable", { txHash: null, dryRun: false });
+  }
+  const action = actionName(intent.action);
+
   const signature = String(body.signature ?? "").trim();
   if (!isHex(signature) || signature.length < 10) throw httpError(400, "invalid_signature");
 
-  const action = actionName(intent.action);
-  if (!action) throw httpError(400, "action_not_claim", { field: "action", txHash: null, dryRun: false });
+  if (!action || !Object.prototype.hasOwnProperty.call(ACTION_VALUES, action)) {
+    throw httpError(400, "action_not_claim", { field: "action", txHash: null, dryRun: false });
+  }
   const escrowId = parseBytes32(intent.escrowId, "escrowId");
   const senderText = String(intent.sender ?? "").trim();
   if (!isAddress(senderText) || sameAddress(senderText, ZERO_ADDRESS)) {

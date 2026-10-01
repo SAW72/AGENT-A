@@ -15,17 +15,20 @@ import { mnemonicToAccount } from "viem/accounts"
 import { describe, expect, it, vi } from "vitest"
 import {
   CLAIM_INTENT_ACTIONS,
+  CLAIM_INTENT_ACTION_VALUES,
+  CLAIM_INTENT_REFUSED_ACTIONS,
   CLAIM_INTENT_DOMAIN_NAME,
   CLAIM_INTENT_DOMAIN_VERSION,
   CLAIM_INTENT_PRIMARY_TYPE,
   CLAIM_INTENT_TYPE_STRING,
   CLAIM_INTENT_TYPES,
 } from "./claimIntent"
-import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRelease } from "./preview"
+import { previewCreateEscrow, previewDispute, previewOpenDispute, previewRefund, previewRelease } from "./preview"
 import {
   claimBodyFromPreview,
   postLiveClaim,
   presentRelayerError,
+  RelayerRequestError,
   readRelayerHealth,
   readRelayerPaused,
   RELAYER_CHECK_WALLET_LABEL,
@@ -121,7 +124,7 @@ describe("relayer chain guard", () => {
 })
 
 describe("postLiveClaim", () => {
-  const releasePreview = previewRelease(escrow, id)
+  const releasePreview = previewRefund(escrow, id)
   const release = liveBody(releasePreview)
 
   it("posts a signed intent on chain 84532 and does not send a claim secret", async () => {
@@ -146,7 +149,7 @@ describe("postLiveClaim", () => {
     expect(body).not.toHaveProperty("calldata")
     expect(body.intent).not.toHaveProperty("calldataHash")
     expect(body.intent.chainId).toBe(84532)
-    expect(body.intent.action).toBe("release")
+    expect(body.intent.action).toBe("refund")
     expect(body.intent.escrowId).toBe(id)
     expect(body.intent.sender).toBe(payerAccount.address)
   })
@@ -238,7 +241,7 @@ describe("postLiveClaim", () => {
 
 describe("relayer broadcast failures", () => {
   it("shows plain English for 502 broadcast_failed and keeps the raw status in the details", async () => {
-    const body = liveBody(previewRelease(escrow, id))
+    const body = liveBody(previewRefund(escrow, id))
     const failed = postLiveClaim({
       url: relayerUrl,
       body,
@@ -259,7 +262,7 @@ describe("relayer broadcast failures", () => {
   })
 
   it("decodes revert_data on a 502 and still works when that field is absent", async () => {
-    const body = liveBody(previewRelease(escrow, id))
+    const body = liveBody(previewRefund(escrow, id))
     const withData = await postLiveClaim({
       url: relayerUrl,
       body,
@@ -285,7 +288,9 @@ describe("relayer broadcast failures", () => {
         }),
     }).catch((cause: unknown) => cause)
     const revertDataHit = presentRelayerError(fromRevertData)
-    expect(revertDataHit.main).toBe("This dispute already has votes, so it can't be linked to this claim.")
+    expect(revertDataHit.main).toBe(
+      "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one.",
+    )
     expect(revertDataHit.detail).toContain("0x8aab0a8f")
     expect(revertDataHit.main).not.toMatch(/0x[0-9a-fA-F]+/)
     expect(revertDataHit.main).not.toMatch(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/)
@@ -357,7 +362,8 @@ function assertServerBuildsCalldata(): void {
   const claimsSource = readFileSync(join(relayerPackage, "claims.mjs"), "utf8")
   const liveSource = readFileSync(join(relayerPackage, "liveAuth.mjs"), "utf8")
   expect(claimsSource).toContain("const encoded = prepared?.encoded || describeCalldata(body)")
-  expect(liveSource).toContain('const LIVE_ACTIONS = new Set(["release", "refund"])')
+  expect(liveSource).toContain('const LIVE_ACTIONS = new Set(["refund"])')
+  expect(liveSource).toContain("release_not_relayable")
   expect(liveSource).toContain("encodeEscrowAction({ action: intent.action, escrowId: intent.escrowId })")
 }
 
@@ -371,10 +377,50 @@ function readyClient(receipt: { status: "success" | "reverted" } | Error) {
   }
 }
 
-describe("release submit via the claim relayer", () => {
-  const release = previewRelease(escrow, id)
+describe("release is not relayed", () => {
+  it("refuses a relayed release before signing, simulation, or a post", async () => {
+    const sign = vi.fn(async (args: ClaimSignArgs) => payerAccount.signTypedData(args))
+    const client = {
+      call: vi.fn(async () => "0x"),
+      waitForTransactionReceipt: vi.fn(),
+    }
+    let fetches = 0
+    const result = await runRelayerSubmission({
+      url: relayerUrl,
+      ...signerInput(sign),
+      preview: previewRelease(escrow, id),
+      client,
+      fetchImpl: async () => {
+        fetches += 1
+        return jsonResponse(200, { ok: true, mode: "live", txHash })
+      },
+    })
+    expect(sign).not.toHaveBeenCalled()
+    expect(client.call).not.toHaveBeenCalled()
+    expect(client.waitForTransactionReceipt).not.toHaveBeenCalled()
+    expect(fetches).toBe(0)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.code).toBe("release_not_relayable")
+      expect(result.presentation.main).toBe(
+        "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee. Send it from that wallet. Nothing was sent.",
+      )
+    }
+  })
 
-  it("posts a signed release and lets the relayer build the calldata", async () => {
+  it("explains a ruling_pending refusal in plain English", () => {
+    const presented = presentRelayerError(new RelayerRequestError("ruling_pending", 409, "ruling_pending"))
+    expect(presented.main).toBe(
+      "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled. Nothing was sent.",
+    )
+    expect(presented.main).not.toMatch(/409|ruling_pending/)
+  })
+})
+
+describe("refund submit via the claim relayer", () => {
+  const release = previewRefund(escrow, id)
+
+  it("posts a signed refund and lets the relayer build the calldata", async () => {
     const phases: string[] = []
     let posted = ""
     let method = ""
@@ -410,7 +456,7 @@ describe("release submit via the claim relayer", () => {
     expect(body.live).toBe(true)
     expect(body).not.toHaveProperty("calldata")
     expect(body.intent).not.toHaveProperty("calldataHash")
-    expect(body.intent.action).toBe("release")
+    expect(body.intent.action).toBe("refund")
     expect(body.intent.escrowId).toBe(id)
     expect(body.intent.chainId).toBe(84532)
     expect(body.intent.verifyingContract).toBe(escrow)
@@ -570,7 +616,7 @@ describe("release submit via the claim relayer", () => {
 })
 
 describe("relayer response copy", () => {
-  const release = previewRelease(escrow, id)
+  const release = previewRefund(escrow, id)
   const cases: { status: number; body: Record<string, unknown>; main: string; detail: string }[] = [
     {
       status: 400,
@@ -742,6 +788,15 @@ describe("relayer button", () => {
         action: "dispute",
       }).visible,
     ).toBe(false)
+    expect(
+      relayerButtonModel({
+        url: relayerUrl,
+        health: "ok",
+        phase: "idle",
+        gate: { ok: true },
+        action: "release",
+      }).visible,
+    ).toBe(false)
   })
 
   it("enables the button only when health is ok, and explains checking, down, and paused", () => {
@@ -750,7 +805,7 @@ describe("relayer button", () => {
       health: "unknown",
       phase: "idle",
       gate: { ok: true },
-      action: "release",
+      action: "refund",
     })
     expect(checking).toMatchObject({ visible: true, disabled: true, note: RELAYER_CHECKING_NOTE })
     const down = relayerButtonModel({
@@ -758,7 +813,7 @@ describe("relayer button", () => {
       health: "down",
       phase: "idle",
       gate: { ok: true },
-      action: "release",
+      action: "refund",
     })
     expect(down).toMatchObject({ visible: true, disabled: true, note: RELAYER_DOWN_NOTE })
     const paused = relayerButtonModel({
@@ -766,7 +821,7 @@ describe("relayer button", () => {
       health: "paused",
       phase: "idle",
       gate: { ok: true },
-      action: "release",
+      action: "refund",
     })
     expect(paused).toMatchObject({ visible: true, disabled: true, note: RELAYER_PAUSED_NOTE })
     const ready = relayerButtonModel({
@@ -774,7 +829,7 @@ describe("relayer button", () => {
       health: "ok",
       phase: "idle",
       gate: { ok: true },
-      action: "release",
+      action: "refund",
     })
     expect(ready).toMatchObject({ visible: true, disabled: false, label: "Submit via claim relayer", note: null })
   })
@@ -785,7 +840,7 @@ describe("relayer button", () => {
       health: "ok",
       phase: "submitting",
       gate: { ok: true },
-      action: "release",
+      action: "refund",
     })
     const waiting = relayerButtonModel({
       url: relayerUrl,
@@ -839,6 +894,8 @@ describe("signed claim intent", () => {
       primaryType: string
       typeString: string
       actions: string[]
+      actionValues: { refund: number }
+      refusedActions: { release: number }
       types: { ClaimIntent: { name: string; type: string }[] }
     }
     expect(schema.domainName).toBe(CLAIM_INTENT_DOMAIN_NAME)
@@ -846,6 +903,10 @@ describe("signed claim intent", () => {
     expect(schema.primaryType).toBe(CLAIM_INTENT_PRIMARY_TYPE)
     expect(schema.typeString).toBe(CLAIM_INTENT_TYPE_STRING)
     expect(schema.actions).toEqual([...CLAIM_INTENT_ACTIONS])
+    expect(schema.actions).not.toContain("release")
+    expect(schema.actionValues).toEqual(CLAIM_INTENT_ACTION_VALUES)
+    expect(schema.refusedActions).toEqual(CLAIM_INTENT_REFUSED_ACTIONS)
+    expect(CLAIM_INTENT_ACTION_VALUES.refund).toBe(1)
     expect(schema.types.ClaimIntent).toEqual(
       CLAIM_INTENT_TYPES.ClaimIntent.map((field) => ({ name: field.name, type: field.type })),
     )
@@ -854,7 +915,7 @@ describe("signed claim intent", () => {
   })
 
   it("signs with the connected wallet and posts that signature to a mock relayer", async () => {
-    const release = previewRelease(escrow, id)
+    const release = previewRefund(escrow, id)
     const order: string[] = []
     let posted = ""
     let headerNames: string[] = []
@@ -886,7 +947,7 @@ describe("signed claim intent", () => {
     expect(headerNames).not.toContain("x-claim-secret")
     const body = JSON.parse(posted) as SignedLiveClaim
     expect(body).not.toHaveProperty("calldata")
-    expect(body.intent.action).toBe("release")
+    expect(body.intent.action).toBe("refund")
     expect(body.intent.nonce).toBe("42")
     expect(body.intent.deadline).toBe(String(1_780_000_000 + 240))
     const recovered = await recoverTypedDataAddress({
@@ -899,7 +960,7 @@ describe("signed claim intent", () => {
       types: CLAIM_INTENT_TYPES,
       primaryType: CLAIM_INTENT_PRIMARY_TYPE,
       message: {
-        action: 0,
+        action: 1,
         escrowId: id,
         sender: payerAccount.address,
         nonce: 42n,
@@ -920,7 +981,7 @@ describe("signed claim intent", () => {
     try {
       const result = await runRelayerSubmission({
         url: relayerUrl,
-        preview: previewRelease(escrow, id),
+        preview: previewRefund(escrow, id),
         ...signerInput(async (args) => {
           signed = args.message
           const signature = await payerAccount.signTypedData(args)

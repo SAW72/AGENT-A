@@ -146,6 +146,7 @@ label { display: block; margin-bottom: 4px; }
 
 .callout strong, .empty strong { display: block; margin-bottom: 4px; }
 .callout p, .empty p { margin: 0; }
+.callout p + p { margin-top: 8px; }
 
 .empty {
   background: #f6f3ec;

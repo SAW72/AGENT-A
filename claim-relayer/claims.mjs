@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { BASE_SEPOLIA_CHAIN_ID, ZERO_ADDRESS, httpError, isAddress } from "./config.mjs";
 import { encodeEscrowAction } from "./escrowCalldata.mjs";
-import { revertDataFrom } from "./revertData.mjs";
+import { isRulingPending, revertDataFrom } from "./revertData.mjs";
 
 const CLAIM_ID_RE = /^(?:fixture-[0-9a-f]{8,32}|0x[0-9a-fA-F]{64}|[A-Za-z0-9:_-]{1,80})$/;
 
@@ -76,7 +76,10 @@ export function senderNoteFor(action) {
   if (action === "dispute") {
     return "dispute() succeeds only when the relayer signer is the payer or the payee.";
   }
-  return "release and refund are permissionless. The relayer signs the credit. The credited account withdraws its own balance.";
+  if (action === "release") {
+    return "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee. Release is not relayed. Send it from that wallet.";
+  }
+  return "refund is permissionless. The relayer signs the credit. The credited account withdraws its own balance.";
 }
 
 export function liveSubmitError(config) {
@@ -207,6 +210,13 @@ export async function submitLiveClaim({ body, config, broadcaster, prepared }) {
     sent = await broadcaster.send(tx);
   } catch (err) {
     const revert_data = revertDataFrom(err);
+    if (isRulingPending(revert_data)) {
+      const pending = httpError(409, "ruling_pending", { txHash: null, dryRun: false, revert_data });
+      pending.senderConstraint = encoded.senderConstraint;
+      pending.senderNote = senderNoteFor(encoded.action);
+      pending.action = encoded.action;
+      throw pending;
+    }
     const wrapped = err?.status
       ? err
       : httpError(502, "broadcast_failed", { txHash: null, dryRun: false, revert_data });

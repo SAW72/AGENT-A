@@ -1,11 +1,11 @@
-# Agent A (Agent Auditor) — Master Disclaimer
+# Agent-B.V. — Master Disclaimer
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-27
 
-**Operator:** [Applicant — redacted pending Spencer approval]  
-**Contact:** [contact redacted]
+**Operator:** Steward of the King LLC  
+**Contact:** hello@stewardoftheking.com
 
-This Disclaimer applies to the Agent A (Agent Auditor) project, including its software, documentation, APIs, scores, stamps, denylists, attestation reports, smart contracts, tokens, and any related experimental claims-backstop or liability-waterfall designs (together, the "**Service**"). By accessing or using the Service, you acknowledge this Disclaimer. **[Terms of Use](TERMS.md)** govern if there is a conflict.
+This Disclaimer applies to the Agent-B.V. project, including its software, documentation, APIs, scores, stamps, denylists, attestation reports, smart contracts, tokens, and any related experimental claims-backstop or liability-waterfall designs (together, the "**Service**"). By accessing or using the Service, you acknowledge this Disclaimer. **[Terms of Use](TERMS.md)** govern if there is a conflict.
 
 This document is **not** a legal opinion, insurance policy, certification, or offer of any security or token.
 
@@ -13,7 +13,7 @@ This document is **not** a legal opinion, insurance policy, certification, or of
 
 ## 1. Informational and experimental only
 
-Agent A is an **experimental, US-based research and engineering project**. Outputs are provided **for information and authorized testing only**. They are not a substitute for your own diligence, independent audit, legal review, risk management, or access-control policy.
+Agent-B.V. is an **experimental, US-based research and engineering project**. Outputs are provided **for information and authorized testing only**. They are not a substitute for your own diligence, independent audit, legal review, risk management, or access-control policy.
 
 Nothing in the Service is a representation that any model, bot, wallet, protocol, or operator is safe, honest, compliant, or fit for any particular use.
 
@@ -29,7 +29,7 @@ The Service does **not** certify that a bot:
 - has been audited by a licensed professional; or
 - is approved by any regulator, standard-setting body, or insurer.
 
-**Do not market or represent an Agent A stamp as a certification, safety guarantee, or hardware attestation** unless and until a live TEE/attestation path is explicitly documented as production-ready. The current attestation path may be a **stub**.
+**Do not market or represent an Agent-B.V. stamp as a certification, safety guarantee, or hardware attestation** unless and until a live TEE/attestation path is explicitly documented as production-ready. The current attestation path may be a **stub**.
 
 ## 3. NOT insurance
 

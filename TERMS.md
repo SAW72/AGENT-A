@@ -1,27 +1,27 @@
-# Agent A (Agent Auditor) — Terms of Use (MVP)
+# Agent-B.V. — Terms of Use (MVP)
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-27
 
-**Operator:** [Applicant — redacted pending Spencer approval]  
-**Contact:** [contact redacted]
+**Operator:** Steward of the King LLC  
+**Contact:** hello@stewardoftheking.com
 
 These Terms of Use (the "**Terms**") are a legally binding agreement between you and the operator named above (the "**Operator**"). If you do not agree, do not use the Service.
 
-The Operator line is a **placeholder**. No public LLC, trade name, or street address is authorized for these pages until Spencer approval. Ohio appears below only as **governing law**, not as a public business address.
+The Operator is Steward of the King LLC, an Ohio (USA) limited liability company.
 
 ---
 
 ## 1. Agreement
 
-By accessing the Agent A (Agent Auditor) repository, documentation, APIs, stamps, contracts, or related materials (the "**Service**"), you agree to these Terms, the **[Disclaimer](DISCLAIMER.md)**, and the **[Privacy Notice](PRIVACY.md)**. If you use the Service on behalf of an organization, you represent that you have authority to bind it.
+By accessing the Agent-B.V. repository, documentation, APIs, stamps, contracts, or related materials (the "**Service**"), you agree to these Terms, the **[Disclaimer](DISCLAIMER.md)**, and the **[Privacy Notice](PRIVACY.md)**. If you use the Service on behalf of an organization, you represent that you have authority to bind it.
 
 ## 2. Operator
 
-The Service is operated on an experimental basis by **[Applicant — redacted pending Spencer approval]**. Public branding, entity name, and mailing address are intentionally omitted from this MVP pack.
+The Service is operated on an experimental basis by **Steward of the King LLC**, an Ohio (USA) limited liability company. A mailing address is not published in this MVP pack.
 
 ## 3. The Service
 
-Agent A is an **experimental AI / crypto trust-signal toolkit**. It may include adversarial scenarios, scoring, behavioral fingerprints, denylists, vault/registry designs, dispute and claims-backstop prototypes, APIs, and (where deployed) testnet smart contracts and a BVT token used for fees, auditor bonds, and governance experiments.
+Agent-B.V. is an **experimental AI / crypto trust-signal toolkit**. It may include adversarial scenarios, scoring, behavioral fingerprints, denylists, vault/registry designs, dispute and claims-backstop prototypes, APIs, and (where deployed) testnet smart contracts and a BVT token used for fees, auditor bonds, and governance experiments.
 
 The Service is **not** a certification body, insurance product, licensed financial service, or investment offering. Features may be incomplete, stubbed, in-memory, unaudited, or testnet-only.
 
@@ -70,7 +70,16 @@ The Service may call third-party model APIs (for example, xAI/Grok), public bloc
 
 ## 10. Intellectual property
 
-The Operator and contributors retain all rights in the Service not expressly granted. Source code is licensed under the **MIT License** in `LICENSE` unless a file says otherwise. You receive no rights in trademarks or in any third-party model weights. Feedback you submit may be used without restriction or compensation.
+The Operator and contributors retain all rights in the Service not expressly granted.
+
+Source code in this repository is dual-licensed. You may use it under either:
+
+(a) the GNU Affero General Public License, version 3.0 only ("AGPL-3.0-only"), as set out in `LICENSE.AGPL-3.0`; or
+(b) a paid commercial license from Steward of the King LLC, as set out in `LICENSE.COMMERCIAL` and a signed order.
+
+If you do not have a signed commercial order, AGPL-3.0-only applies. Snapshots of this repository published under the MIT License before the dual-license change on 2026-09-26 remain under MIT for those snapshots only, as explained in `NOTICE`. A file header that states a different license controls for that file. Third-party components remain under their own licenses.
+
+You receive no rights in trademarks or in any third-party model weights. Feedback you submit may be used without restriction or compensation.
 
 ## 11. Disclaimer and limitation of liability
 
@@ -86,7 +95,7 @@ The Operator may suspend or terminate access at any time, including for legal, s
 
 ## 14. Governing law
 
-These Terms are governed by the laws of the **State of Ohio, United States of America**, without regard to conflict-of-law rules. Exclusive venue for disputes that are not subject to a separate written agreement lies in the state or federal courts located in Ohio, and you consent to personal jurisdiction there, to the extent permitted by law.
+These Terms are governed by the laws of the **State of Ohio, United States of America**, without regard to conflict-of-law rules. Exclusive venue for disputes that are not subject to a separate written agreement lies in the state courts located in Stark County, Ohio, and you consent to personal jurisdiction there, to the extent permitted by law.
 
 Consumer-protection and mandatory local rules that cannot be waived still apply where they apply.
 
@@ -96,4 +105,4 @@ The Operator may update these Terms by posting a revised version in this reposit
 
 ## 16. Contact
 
-Questions about these Terms: **[contact redacted]**.
+Questions about these Terms: **hello@stewardoftheking.com**.

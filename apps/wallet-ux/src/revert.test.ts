@@ -16,7 +16,13 @@ import { describe, expect, it, vi } from "vitest"
 import { escrowAbi } from "./abi"
 import { ADDRESSES } from "./addresses"
 import { errorText, presentError } from "./format"
-import { ERROR_GLOSSARY } from "./preview"
+import {
+  DISPUTE_VOTES_CAST_TEXT,
+  ERROR_GLOSSARY,
+  POST_EXPIRY_REFUND_INTRO,
+  POST_EXPIRY_REFUND_ORDER,
+  RULING_PENDING_TEXT,
+} from "./preview"
 import { CLAIM_RELAYER_WALLET, submitAfterPreflight, submitRelayerAfterPreflight } from "./preflight"
 import { RELAYER_RECEIPT_REVERTED_TEXT, RELAYER_USER_TEXT } from "./relayer"
 import { REVERT_FALLBACK_TEXT, visibleDetail, WALLET_CANCEL_TEXT } from "./revert"
@@ -34,7 +40,7 @@ const ESC_M1 = [
   {
     name: "DisputeVotesCast",
     selector: "0x8aab0a8f",
-    meaning: "This dispute already has votes, so it can't be linked to this claim.",
+    meaning: DISPUTE_VOTES_CAST_TEXT,
   },
   {
     name: "DisputePredatesEscrow",
@@ -50,6 +56,11 @@ const ESC_M1 = [
     name: "DisputeAfterExpiry",
     selector: "0xaf6c5d51",
     meaning: "The claim window has closed, so this dispute can't be linked.",
+  },
+  {
+    name: "RulingPending",
+    selector: "0x3a0621bd",
+    meaning: "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled.",
   },
 ] as const
 
@@ -379,6 +390,10 @@ describe("end-user main text", () => {
       "The network client isn't ready, so nothing was sent.",
       "Only the payer or payee on this claim can open a dispute. Switch to that wallet.",
       "This claim is no longer in a state where that action is allowed (it may already be released, refunded, or disputed). Refresh to see its current status.",
+      RULING_PENDING_TEXT,
+      POST_EXPIRY_REFUND_INTRO,
+      ...POST_EXPIRY_REFUND_ORDER.map((step) => step.state),
+      ...POST_EXPIRY_REFUND_ORDER.map((step) => step.outcome),
     ]
     const rejectsCode = (text: string) =>
       text.includes("()") ||

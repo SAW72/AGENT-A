@@ -29,7 +29,7 @@ export function deadlineAt(offsetSeconds, nowMs = NOW_MS) {
  * @param {import('viem/accounts').PrivateKeyAccount} opts.account
  */
 export async function signedLiveBody(opts) {
-  const action = opts.action || "release";
+  const action = opts.action || "refund";
   const index = actionIndex(action);
   if (index === null) throw new Error(`test cannot sign ${action}`);
   const escrowId = opts.escrowId;

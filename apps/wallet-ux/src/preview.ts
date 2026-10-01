@@ -1,5 +1,6 @@
-import { encodeFunctionData, type Address, type Hex } from "viem"
+import { encodeAbiParameters, encodeFunctionData, keccak256, type Address, type Hex } from "viem"
 import { disputePanelAbi, escrowAbi } from "./abi"
+import { BASE_SEPOLIA_CHAIN_ID } from "./addresses"
 
 export const MAX_DURATION_SECONDS = 30 * 24 * 60 * 60
 
@@ -15,6 +16,56 @@ export type ErrorGlossaryEntry = {
   meaning: string
 }
 
+/** Shown when a refund hits an unresolved dispute inside the 7-day ruling window. */
+export const RULING_PENDING_TEXT =
+  "A dispute ruling is pending. Refund opens 7 days after expiry if the panel has not ruled."
+
+/**
+ * `DisputePending` on the #56 escrow.
+ * Release: a party while the linked case is unresolved or was unwound.
+ * Refund: before the claim ends, until the panel unwinds the deal; also whenever the panel upheld it.
+ */
+export const DISPUTE_PENDING_TEXT =
+  "Release stays blocked while the dispute is unresolved or was unwound. A refund before the claim ends stays blocked until the panel unwinds the deal. A refund also stays blocked when the panel upheld the deal."
+
+/**
+ * Two votes on one side already decide a 3-member panel, so that case cannot be linked.
+ * One vote, or one vote on each side, still links. The next step is a new case.
+ */
+export const DISPUTE_VOTES_CAST_TEXT =
+  "Two votes on one side already decide this case, so it can't be linked or linked again. Open a new case and link that one."
+
+export const POST_EXPIRY_REFUND_INTRO = "After the claim ends, a refund is decided in this order."
+
+/** Post-expiry refund checks, in contract order. */
+export const POST_EXPIRY_REFUND_ORDER = [
+  { state: "Open", error: null, outcome: "The payer is refunded." },
+  { state: "Disputed and upheld", error: "DisputePending", outcome: "The payee releases." },
+  {
+    state: "Disputed, unresolved, within 7 days after the claim ends",
+    error: "RulingPending",
+    outcome: RULING_PENDING_TEXT,
+  },
+  { state: "Otherwise", error: null, outcome: "The payer is refunded." },
+] as const
+
+export const OPEN_AND_LINK_TEXT =
+  "Open the case, then link it to this claim right away, using this same identifier. The identifier is random, so it cannot be guessed from the claim."
+
+export const OPEN_AND_LINK_BUTTON = "Prepare opening and linking"
+export const NEW_CASE_ID_BUTTON = "Generate a new identifier"
+export const OPEN_CASE_HEADING = "Open the case"
+export const LINK_CASE_HEADING = "Link the case"
+export const CASE_ID_HINT = "A new random identifier for this case. It is not taken from the claim or the clock."
+
+/** Contract error ReleaseNotAuthorized. */
+export const RELEASE_NOT_AUTHORIZED_TEXT =
+  "Only the payer can release an open escrow; after an upheld dispute, the payer or the payee."
+
+export const RELEASE_NOT_RELAYABLE_TEXT = `${RELEASE_NOT_AUTHORIZED_TEXT} Send it from that wallet. Nothing was sent.`
+
+export const RELEASE_SENDER_NOTE = `${RELEASE_NOT_AUTHORIZED_TEXT} The connected wallet sends this payout on Base Sepolia.`
+
 /** Plain-English meanings for contract reverts. These builders do not submit. */
 export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "FundingBeforeGovernance", meaning: "New claims can't be created yet. The contract owner still needs to accept the governance handover." },
@@ -25,11 +76,14 @@ export const ERROR_GLOSSARY: readonly ErrorGlossaryEntry[] = [
   { name: "Replay", meaning: "This claim identifier was already used. Choose a new one." },
   { name: "InvalidDispute", meaning: "This dispute can't be linked. The dispute identifier is missing, the panel hasn't recorded an outcome, or the outcome is for a different claim." },
   { name: "DisputeAlreadyResolved", meaning: "This dispute is already resolved, so it can't be linked to this claim." },
-  { name: "DisputeVotesCast", meaning: "This dispute already has votes, so it can't be linked to this claim." },
+  { name: "DisputeVotesCast", meaning: DISPUTE_VOTES_CAST_TEXT },
   { name: "DisputePredatesEscrow", meaning: "This dispute was opened before this claim, so it can't be linked." },
   { name: "DisputeChallengerNotParty", meaning: "The person who opened this dispute is neither the payer nor the payee, so it can't be linked to this claim." },
+  { name: "ReleaseNotAuthorized", meaning: RELEASE_NOT_AUTHORIZED_TEXT },
+  { name: "NotParty", meaning: "This wallet is not a party to this escrow." },
   { name: "DisputeAfterExpiry", meaning: "The claim window has closed, so this dispute can't be linked." },
-  { name: "DisputePending", meaning: "This claim can't be refunded because the dispute panel upheld the deal." },
+  { name: "DisputePending", meaning: DISPUTE_PENDING_TEXT },
+  { name: "RulingPending", meaning: RULING_PENDING_TEXT },
   { name: "ZeroAddress", meaning: "A required wallet address was left blank." },
   { name: "InvalidGovernance", meaning: "This contract was set up with its deployer as the governor, which isn't allowed." },
   { name: "NotGovernance", meaning: "Only the governor can do that, and the contract owner must already be the governor." },
@@ -70,6 +124,24 @@ export function previewCreateEscrow(input: {
       args: [input.escrowId, input.payee, input.payerBotId, input.payeeBotId, input.durationSeconds],
     }),
   }
+}
+
+/**
+ * Subject a panel case must use for this escrow row.
+ * Matches `BotAttestationEscrow.panelSubject`: `keccak256(abi.encode(chainId, escrow, escrowId, createdAt))`.
+ */
+export function panelSubject(
+  escrow: Address,
+  escrowId: Hex,
+  createdAt: bigint,
+  chainId: number = BASE_SEPOLIA_CHAIN_ID,
+): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "address" }, { type: "bytes32" }, { type: "uint256" }],
+      [BigInt(chainId), escrow, escrowId, createdAt],
+    ),
+  )
 }
 
 export function previewRelease(escrow: Address, escrowId: Hex): CallPreview {

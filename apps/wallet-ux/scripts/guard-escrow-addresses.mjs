@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
+// Cutover: this pin, the wallet book, the relayer book, and the superseded entry
+// for 0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d change together at the redeploy.
 export const LIVE_ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d"
 export const RETIRED_ESCROW = "0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c"
 export const PHRASES = [

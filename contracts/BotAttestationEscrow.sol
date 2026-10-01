@@ -66,6 +66,8 @@ interface IDisputePanel {
 
 /// @title BotAttestationEscrow
 /// @notice Escrows value for a bot-to-bot transaction until both sides verify each other.
+/// @dev Who may `release`, and which panel cases `dispute` will link, is specified in
+///      `BotAttestationEscrow.spec.md` (same directory).
 /// @dev Denylist policy: `governance` is immutable and is CORE_TIMELOCK in production.
 ///      The deployer cannot be `governance`. `createEscrow` and dependency swaps
 ///      (`setDenylist`, `setVault`, `setDisputePanel`) run only while `owner() == governance`,
@@ -84,6 +86,21 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     /// @dev Production value is CORE_TIMELOCK. A later owner who is not this address
     ///      cannot retarget the denylist; they can transfer ownership back.
     address public immutable governance;
+
+    /// @dev `DisputePanel.PANEL_SIZE` is 3. Two votes on one side cannot be outvoted, and
+    ///      `resolved` stays false until the third vote. Linking that tally is how a
+    ///      pre-create ballot was attached (ESC-M-1). One vote is not a decision.
+    ///      This escrow is built for that panel. A swap to a different panel size is a
+    ///      governance action and would need this constant updated with it.
+    uint256 internal constant UNMOVABLE_PANEL_VOTES = 2;
+
+    /// @notice How long after `expiresAt` an unresolved linked case still blocks `refund`.
+    /// @dev The payee may `dispute` at `expiresAt`. The panel has this long to vote before
+    ///      an unresolved case refunds the payer. `refund` is allowed when
+    ///      `block.timestamp >= expiresAt + RULING_GRACE` and the case is still unresolved.
+    ///      A resolved ruling does not wait on this clock: upheld pays the payee, and
+    ///      an unwind refunds immediately. Not a storage variable.
+    uint256 public constant RULING_GRACE = 7 days;
 
     /// @notice ETH still held for Open or Disputed escrows. Not the raw contract balance.
     uint256 public lockedValue;
@@ -169,11 +186,28 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     error Replay();
     error InvalidDispute();
     error DisputeAlreadyResolved();
+    /// @notice The panel tally can no longer be outvoted, and the case is not resolved yet.
+    /// @dev Name kept from the zero-vote check. Now means `votesFor >= UNMOVABLE_PANEL_VOTES`
+    ///      or the same for `votesAgainst`. One vote, or one on each side, still links. Open a new dispute id.
     error DisputeVotesCast();
     error DisputePredatesEscrow();
     error DisputeChallengerNotParty();
     error DisputeAfterExpiry();
     error DisputePending();
+    /// @notice A linked dispute is still unresolved after `expiresAt`, and `RULING_GRACE` has not elapsed.
+    /// @dev `refund` only. `block.timestamp > expiresAt` and `block.timestamp < expiresAt + RULING_GRACE`.
+    ///      At `expiresAt` the in-window check still reverts `DisputePending`. At
+    ///      `expiresAt + RULING_GRACE` an unresolved case refunds. A resolved ruling does not use this error.
+    error RulingPending();
+    /// @notice This caller may not `release` in the current state.
+    /// @dev While `Open`, only the payer may release. The payee and every other caller revert
+    ///      here, before expiry and before the Vault or denylist are read. While `Disputed`,
+    ///      a caller other than the payer or the payee reverts here. A party on a case that
+    ///      is not a completed uphold reverts `DisputePending` instead, including during
+    ///      `RULING_GRACE`. An upheld case lets either party release.
+    error ReleaseNotAuthorized();
+    /// @notice `dispute` caller is neither the payer nor the payee.
+    error NotParty();
     error ZeroAddress();
     error InvalidGovernance();
     error NotGovernance();
@@ -349,7 +383,16 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Credit the payee recorded at create time. Does not transfer ETH.
-    /// @dev Open (non-disputed) release fails closed: both bots must still be active in
+    /// @dev Caller, by state. See `BotAttestationEscrow.spec.md`.
+    ///      - `Open`: the payer only. The payee and a stranger revert `ReleaseNotAuthorized`
+    ///        before expiry and before the Vault or denylist are read. The payee must not
+    ///        credit itself ahead of the payer's `dispute` link.
+    ///      - `Disputed`: payer or payee only, and only after the linked case is resolved
+    ///        and upheld. A stranger reverts `ReleaseNotAuthorized`. A party reverts
+    ///        `DisputePending` until that ruling. An unwind is not a release.
+    ///      - `Released` or `Refunded`: `EscrowNotOpen` for every caller.
+    ///      Governance is not a release caller. `refund` stays permissionless.
+    ///      Open (non-disputed) release fails closed: both bots must still be active in
     ///      the Vault, not denylisted, Financial+ tier, and bound to the operators stored
     ///      on the escrow (`_verifyBot` and `_requireBoundOperators`).
     ///      A disputed escrow can release only if the panel upheld the original deal.
@@ -366,10 +409,14 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         Escrow storage e = _requireEscrow(escrowId);
         bool panelUpheld = false;
         if (e.state == EscrowState.Disputed) {
+            // Party check before the panel read. A stranger does not get a view call.
+            if (msg.sender != e.payer && msg.sender != e.payee) revert ReleaseNotAuthorized();
             _requirePanelUpheld(e, escrowId);
             panelUpheld = true;
         } else if (e.state != EscrowState.Open) {
             revert EscrowNotOpen();
+        } else if (msg.sender != e.payer) {
+            revert ReleaseNotAuthorized();
         }
         // Open escrows expire. An upheld dispute does not: release remains the payee path.
         if (!panelUpheld && block.timestamp > e.expiresAt) revert EscrowExpired();
@@ -395,10 +442,20 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
 
     /// @notice Credit the payer if the escrow expires or the panel rules an unwind. Does not transfer ETH.
     /// @dev `Disputed` alone is not enough — that would let either party unwind unilaterally.
-    ///      An upheld panel ruling closes refund permanently, including after `expiresAt`.
-    ///      Expiry remains the backstop only when the panel has not upheld the deal
-    ///      (still pending, or resolved as an unwind). Credits `e.payer`. Does not call the payer.
-    ///      The payer collects with `withdraw` or `withdrawTo`. See `withdraw` for the recipient rule.
+    ///      An upheld panel ruling closes refund permanently, including after `expiresAt`
+    ///      and during `RULING_GRACE`. A resolved unwind refunds immediately, including
+    ///      inside the window and inside the grace. An unresolved case reverts
+    ///      `DisputePending` while `block.timestamp <= expiresAt`, and `RulingPending`
+    ///      while `expiresAt < block.timestamp < expiresAt + RULING_GRACE`. At
+    ///      `block.timestamp >= expiresAt + RULING_GRACE` an unresolved case refunds.
+    ///      That grace is why the payee must `dispute` before expiry: while `Open`, only
+    ///      the payer can `release`, so a silent payee is refunded at `expiresAt`.
+    ///      Credits `e.payer`. Does not call the payer. The payer collects with `withdraw`
+    ///      or `withdrawTo`. See `withdraw` for the recipient rule.
+    ///      After `expiresAt`, `Disputed` checks in this order: upheld → `DisputePending`;
+    ///      else unresolved and still inside `RULING_GRACE` → `RulingPending`; else refund.
+    ///      The in-window order is unchanged: upheld → `DisputePending`, then
+    ///      `InvalidDispute`, then `DisputePending` if the case is not a completed unwind.
     function refund(
         bytes32 escrowId
     ) external nonReentrant {
@@ -406,12 +463,14 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         if (e.state == EscrowState.Open) {
             require(block.timestamp > e.expiresAt, "not expired");
         } else if (e.state == EscrowState.Disputed) {
-            // Upheld means the original deal stands. Do not let expiry flip that into a payer refund.
+            // Upheld means the original deal stands. Do not let expiry or grace flip that into a payer refund.
             if (_panelUpheld(e, escrowId)) revert DisputePending();
             if (block.timestamp <= e.expiresAt) {
                 _requirePanelUnwind(e, escrowId);
+            } else if (_panelUnresolved(e, escrowId) && block.timestamp < e.expiresAt + RULING_GRACE) {
+                // Filed at expiresAt. The panel has RULING_GRACE before an unresolved case refunds.
+                revert RulingPending();
             }
-            // else: expiry is the timelock backstop when the panel has not upheld
         } else {
             revert EscrowNotOpen();
         }
@@ -472,17 +531,23 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Flag an escrow for dispute. Does not authorize a refund.
-    /// @dev Links a panel case only when it is a fresh challenge of this escrow.
+    /// @dev Links a panel case whose subject is `panelSubject(escrowId, createdAt)`, at any vote count that has
+    ///      not already decided a 3-seat panel. A vote cast after `openDispute` and before
+    ///      this call no longer reverts, so that race cannot leave the escrow `Open`.
+    ///      `votesFor >= UNMOVABLE_PANEL_VOTES` or `votesAgainst >= UNMOVABLE_PANEL_VOTES`
+    ///      reverts `DisputeVotesCast`: the third vote cannot outvote that side, and
+    ///      `resolved` is still false. That is the ESC-M-1 pre-cooked ballot. The party
+    ///      opens a new dispute id. This function does not call the panel.
     ///      `e.createdAt` is the timestamp stored by `createEscrow`. Same-block open
     ///      (`dispute.createdAt >= e.createdAt`) is allowed. A case opened earlier, already
-    ///      voted, already resolved, opened by a non-party, or linked after `expiresAt` is not.
+    ///      resolved, opened by a non-party, or linked after `expiresAt` is not.
     function dispute(
         bytes32 escrowId,
         bytes32 disputeId
     ) external {
         Escrow storage e = _requireEscrow(escrowId);
         if (e.state != EscrowState.Open) revert EscrowNotOpen();
-        require(msg.sender == e.payer || msg.sender == e.payee, "not a party");
+        if (msg.sender != e.payer && msg.sender != e.payee) revert NotParty();
         if (disputeId == bytes32(0)) revert InvalidDispute();
 
         (
@@ -494,12 +559,15 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
             uint256 disputeCreatedAt
         ) = disputePanel.disputes(disputeId);
 
-        // 1. Exists (createdAt != 0, same as outcome) and the subject is this escrow.
-        if (disputeCreatedAt == 0 || subject != escrowId) revert InvalidDispute();
+        // 1. Exists (createdAt != 0, same as outcome) and the subject is this deployment's row.
+        if (disputeCreatedAt == 0 || subject != panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
         // 2. Still open on the panel. A resolved ruling cannot be attached later.
         if (resolved) revert DisputeAlreadyResolved();
-        // 3. No votes yet. Two uphold votes before the third locks upheld without resolving.
-        if (votesFor + votesAgainst != 0) revert DisputeVotesCast();
+        // 3. A tally that already decides the 3-seat panel is not a live challenge.
+        //    One vote, or one on each side, still links. See `UNMOVABLE_PANEL_VOTES`.
+        if (votesFor >= UNMOVABLE_PANEL_VOTES || votesAgainst >= UNMOVABLE_PANEL_VOTES) {
+            revert DisputeVotesCast();
+        }
         // 4. The case must not predate this escrow. Equal timestamps (same block) pass.
         if (disputeCreatedAt < e.createdAt) revert DisputePredatesEscrow();
         // 5. The challenger recorded on the panel is the payer or the payee.
@@ -510,6 +578,20 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         e.state = EscrowState.Disputed;
         e.disputeId = disputeId;
         emit EscrowDisputed(escrowId, disputeId);
+    }
+
+    /// @notice Subject a panel case must use for this escrow row.
+    /// @dev `keccak256(abi.encode(block.chainid, address(this), escrowId, createdAt))`.
+    ///      `createdAt` is the timestamp `createEscrow` stored. Two deployments that share
+    ///      a panel, an `escrowId`, and a `createdAt` still hash apart, because the
+    ///      escrow address is inside the preimage. `dispute` and the ruling checks require
+    ///      this exact value. The formula is public, so a stranger can open a case with
+    ///      it; `dispute` still requires the panel challenger to be the payer or the payee.
+    function panelSubject(
+        bytes32 escrowId,
+        uint256 createdAt
+    ) public view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, address(this), escrowId, createdAt));
     }
 
     function _requireBoundOperators(
@@ -525,7 +607,18 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId
     ) internal view returns (bool) {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
-        return exists && subject == escrowId && resolved && upheld;
+        return exists && subject == panelSubject(escrowId, e.createdAt) && resolved && upheld;
+    }
+
+    /// @dev True when the linked case exists, the subject matches this row, and the panel has not resolved it.
+    ///      A missing id or a subject mismatch is not "unresolved": after `expiresAt` those still take the
+    ///      expiry backstop, the same as before `RULING_GRACE`.
+    function _panelUnresolved(
+        Escrow storage e,
+        bytes32 escrowId
+    ) internal view returns (bool) {
+        (bool exists, bool resolved,, bytes32 subject) = disputePanel.outcome(e.disputeId);
+        return exists && subject == panelSubject(escrowId, e.createdAt) && !resolved;
     }
 
     function _requirePanelUnwind(
@@ -533,7 +626,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId
     ) internal view {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
-        if (!exists || subject != escrowId) revert InvalidDispute();
+        if (!exists || subject != panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
         if (!resolved) revert DisputePending();
         if (upheld) revert DisputePending();
     }
@@ -543,7 +636,7 @@ contract BotAttestationEscrow is Ownable2Step, ReentrancyGuard {
         bytes32 escrowId
     ) internal view {
         (bool exists, bool resolved, bool upheld, bytes32 subject) = disputePanel.outcome(e.disputeId);
-        if (!exists || subject != escrowId) revert InvalidDispute();
+        if (!exists || subject != panelSubject(escrowId, e.createdAt)) revert InvalidDispute();
         if (!resolved || !upheld) revert DisputePending();
     }
 
