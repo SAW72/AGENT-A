@@ -1648,7 +1648,8 @@ contract DeployEscrowGuardTest is Test {
         deploy.requireTimelock(deployer, address(0));
         vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK must not be deployer"));
         deploy.requireTimelock(deployer, deployer);
-        deploy.requireTimelock(deployer, address(0x71C0));
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK has no code"));
+        deploy.requireGovernance(deployer, address(0xBEEF));
     }
 
     function test_depsMustBeSet() public {
@@ -1708,7 +1709,7 @@ contract DeployEscrowGuardTest is Test {
         Denylist denylist = new Denylist();
         Vault vault = new Vault(address(denylist));
         DisputePanel panel = new DisputePanel();
-        address timelock = address(0x71C0);
+        address timelock = deploy.LIVE_TIMELOCK();
 
         BotAttestationEscrow escrow = deploy.deploy(address(denylist), address(vault), address(panel), timelock);
         assertEq(address(escrow.denylist()), address(denylist));
