@@ -18,7 +18,8 @@ interface ISafe {
 ///      Chain ids 84532 (Base Sepolia) and 31337 (Anvil) are allowed. Every other chain reverts.
 ///      `TIMELOCK_MIN_DELAY` must be at least 300 seconds.
 ///      `SAFE_ADDRESS` must be a Safe: not `CORE_TIMELOCK`, not the deployer, code that does not start with
-///      `0xef0100`, `getThreshold() >= 2`, and `getOwners().length >= threshold`.
+///      `0xef0100`, `getThreshold() >= 2`, and `getOwners().length >= threshold`. No owner is the zero address,
+///      `CORE_TIMELOCK`, the deployer, or a duplicate.
 ///      Agents do not pass `--broadcast`. Spencer broadcasts from his keystore.
 contract DeployTimelock is Script {
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84532;
@@ -180,8 +181,23 @@ contract DeployTimelock is Script {
         if (_isDelegation(safe)) revert("DeployTimelock: SAFE_ADDRESS is an EIP-7702 delegation");
         uint256 threshold = ISafe(safe).getThreshold();
         if (threshold < 2) revert("DeployTimelock: SAFE threshold is below 2");
-        if (ISafe(safe).getOwners().length < threshold) {
-            revert("DeployTimelock: SAFE owners are below the threshold");
+        address[] memory owners = ISafe(safe).getOwners();
+        if (owners.length < threshold) revert("DeployTimelock: SAFE owners are below the threshold");
+        _requireDistinctOwners(owners);
+    }
+
+    function _requireDistinctOwners(
+        address[] memory owners
+    ) internal view {
+        uint256 n = owners.length;
+        for (uint256 i = 0; i < n; i++) {
+            address owner = owners[i];
+            if (owner == address(0)) revert("DeployTimelock: SAFE owner is the zero address");
+            if (owner == CORE_TIMELOCK) revert("DeployTimelock: SAFE owner is CORE_TIMELOCK");
+            if (owner == msg.sender) revert("DeployTimelock: SAFE owner is the deployer");
+            for (uint256 j = 0; j < i; j++) {
+                if (owner == owners[j]) revert("DeployTimelock: SAFE owners are not unique");
+            }
         }
     }
 

@@ -19,6 +19,8 @@ interface ISafe {
 ///      It reverts unless every in-scope Ownable2Step row already shows `owner() == NEW_TIMELOCK`.
 ///      Step `check` reverts unless the nine migration rows have the expected owner. It does not broadcast.
 ///      A contract whose `governance()` is `CORE_TIMELOCK` is skipped unless `MIGRATE_ESCROWS=1`.
+///      `MIGRATE_ESCROWS` must be exactly 0 or 1. `NEW_TIMELOCK` must be the `TimelockController` CREATE in the
+///      deploy record (`TIMELOCK_DEPLOY_JSON`, or `broadcast/DeployTimelock.s.sol/<chainid>/run-latest.json`).
 ///      Chain ids 84532 and 31337 are allowed. Every other chain reverts.
 ///      `getMinDelay()` must be at least 300 seconds.
 ///      This script never reads `PRIVATE_KEY`. Agents do not pass `--broadcast`. It does not create a Safe.
@@ -33,11 +35,15 @@ contract MigrateOwnershipToTimelock is Script {
 
     /// @dev Set by tests so parallel `forge test` runs do not share env vars. Operators use the env vars.
     bool public forceEscrowMigration;
+    bool internal escrowFlagPinned;
+    uint256 internal pinnedEscrowFlag;
     address internal pinnedSafe;
     address internal pinnedExpected;
     address internal pinnedNewTimelock;
     bool internal stepIsPinned;
     string internal pinnedStep;
+    bool internal deployJsonPinned;
+    string internal pinnedDeployJson;
 
     /// @dev Stable salt so a resumed print of the same remaining set matches the scheduled operation.
     bytes32 public constant ACCEPT_SALT = keccak256("CORE_TIMELOCK_MIGRATION_ACCEPT_V1");
@@ -87,6 +93,25 @@ contract MigrateOwnershipToTimelock is Script {
         stepIsPinned = true;
     }
 
+    /// @notice Test-only deploy-record path. Broadcast reads `TIMELOCK_DEPLOY_JSON` or the default broadcast file.
+    function useDeployJson(
+        string calldata path
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: set TIMELOCK_DEPLOY_JSON");
+        pinnedDeployJson = path;
+        deployJsonPinned = true;
+    }
+
+    /// @notice Test-only `MIGRATE_ESCROWS` pin. Must be 0 or 1. Broadcast reads the env var.
+    function pinMigrateEscrows(
+        uint256 flag
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: set MIGRATE_ESCROWS");
+        decodeMigrateEscrows(true, flag);
+        pinnedEscrowFlag = flag;
+        escrowFlagPinned = true;
+    }
+
     /// @notice 84532 and 31337 proceed. Every other chain reverts.
     function requireAllowedChain() public view {
         uint256 id = block.chainid;
@@ -123,13 +148,25 @@ contract MigrateOwnershipToTimelock is Script {
     }
 
     /// @notice Escrow rows are included only when `MIGRATE_ESCROWS=1`, or when a test called `optInEscrows`.
+    /// @dev The env var has no default. It must be exactly 0 or 1. Unset, or any other value, reverts.
     function migrateEscrows() public view returns (bool enabled) {
         if (forceEscrowMigration) return true;
+        if (!broadcasting() && escrowFlagPinned) return pinnedEscrowFlag == 1;
         try vm.envUint("MIGRATE_ESCROWS") returns (uint256 flag) {
-            enabled = flag == 1;
+            enabled = decodeMigrateEscrows(true, flag);
         } catch {
-            enabled = false;
+            return decodeMigrateEscrows(false, 0);
         }
+    }
+
+    /// @notice `present` is false when `MIGRATE_ESCROWS` is unset. `flag` must be 0 or 1.
+    function decodeMigrateEscrows(
+        bool present,
+        uint256 flag
+    ) public pure returns (bool enabled) {
+        if (!present) revert("MigrateOwnership: MIGRATE_ESCROWS unset");
+        if (flag > 1) revert("MigrateOwnership: MIGRATE_ESCROWS must be 0 or 1");
+        enabled = flag == 1;
     }
 
     /// @notice Opt the in-memory script instance into escrow migration. Broadcast still requires `MIGRATE_ESCROWS=1`.
@@ -140,18 +177,19 @@ contract MigrateOwnershipToTimelock is Script {
 
     /// @notice Reject a controller that is not the pinned Safe timelock, before any ownership call and before every
     /// step.
-    /// @dev `EXPECTED_TIMELOCK` is required and must equal `newTimelock`. The Safe must hold `PROPOSER_ROLE` and
-    ///      `CANCELLER_ROLE`, with threshold at least 2 and at least that many owners, and its code must not be an
-    ///      EIP-7702 designator. `DEFAULT_ADMIN_ROLE` sits on the timelock and not on `CORE_TIMELOCK`, `msg.sender`,
-    ///      or the Safe. `CORE_TIMELOCK` holds no proposer, executor, canceller, or admin role. `getMinDelay()` is at
-    ///      least 300 seconds.
+    /// @dev `EXPECTED_TIMELOCK` is required. The deploy record's `TimelockController` CREATE address must equal
+    ///      `newTimelock` and `EXPECTED_TIMELOCK`. The Safe must hold `PROPOSER_ROLE` and `CANCELLER_ROLE`, with
+    ///      threshold at least 2 and at least that many owners, no zero or duplicate owner, and no owner equal to
+    ///      `CORE_TIMELOCK` or `msg.sender`. Its code must not be an EIP-7702 designator. `DEFAULT_ADMIN_ROLE` sits
+    ///      on the timelock and not on `CORE_TIMELOCK`, `msg.sender`, or the Safe. `CORE_TIMELOCK` holds no proposer,
+    ///      executor, canceller, or admin role. `getMinDelay()` is at least 300 seconds.
     function requireValidTimelock(
         address newTimelock
     ) public view {
         requireAllowedChain();
         if (newTimelock.code.length == 0) revert("MigrateOwnership: NEW_TIMELOCK has no code");
         address expected = _expected();
-        if (newTimelock != expected) revert("MigrateOwnership: NEW_TIMELOCK is not EXPECTED_TIMELOCK");
+        _requireDeployRecord(newTimelock, expected);
         address safe = _safeAddress();
         _requireSafe(safe);
         TimelockController tl = TimelockController(payable(newTimelock));
@@ -681,8 +719,66 @@ contract MigrateOwnershipToTimelock is Script {
         if (_isDelegation(safe)) revert("MigrateOwnership: SAFE_ADDRESS is an EIP-7702 delegation");
         uint256 threshold = ISafe(safe).getThreshold();
         if (threshold < 2) revert("MigrateOwnership: SAFE threshold is below 2");
-        if (ISafe(safe).getOwners().length < threshold) {
-            revert("MigrateOwnership: SAFE owners are below the threshold");
+        address[] memory owners = ISafe(safe).getOwners();
+        if (owners.length < threshold) revert("MigrateOwnership: SAFE owners are below the threshold");
+        _requireDistinctOwners(owners);
+    }
+
+    /// @dev Owners: no zero address, no duplicates, and none equal to `CORE_TIMELOCK` or the broadcaster.
+    function _requireDistinctOwners(
+        address[] memory owners
+    ) internal view {
+        uint256 n = owners.length;
+        for (uint256 i = 0; i < n; i++) {
+            address owner = owners[i];
+            if (owner == address(0)) revert("MigrateOwnership: SAFE owner is the zero address");
+            if (owner == CORE_TIMELOCK) revert("MigrateOwnership: SAFE owner is CORE_TIMELOCK");
+            if (owner == msg.sender) revert("MigrateOwnership: SAFE owner is the deployer");
+            for (uint256 j = 0; j < i; j++) {
+                if (owner == owners[j]) revert("MigrateOwnership: SAFE owners are not unique");
+            }
+        }
+    }
+
+    /// @dev Provenance is the CREATE this script's deploy wrote. That constructor self-administers and grants the
+    ///      Safe proposer and canceller, plus executor to the configured executor (or `address(0)`).
+    function _requireDeployRecord(
+        address newTimelock,
+        address expected
+    ) internal view {
+        string memory path = _deployJsonPath();
+        if (!vm.exists(path)) revert("MigrateOwnership: deploy record missing");
+        address deployed = _timelockCreateAddress(vm.readFile(path));
+        if (deployed == address(0)) revert("MigrateOwnership: TimelockController CREATE not in deploy record");
+        if (deployed != newTimelock || deployed != expected) {
+            revert("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController");
+        }
+    }
+
+    function _deployJsonPath() internal view returns (string memory path) {
+        if (!broadcasting() && deployJsonPinned) return pinnedDeployJson;
+        try vm.envString("TIMELOCK_DEPLOY_JSON") returns (string memory set) {
+            if (bytes(set).length != 0) return set;
+        } catch { }
+        path = string.concat("broadcast/DeployTimelock.s.sol/", vm.toString(block.chainid), "/run-latest.json");
+    }
+
+    function _timelockCreateAddress(
+        string memory json
+    ) internal pure returns (address found) {
+        uint256 i = 0;
+        while (true) {
+            string memory prefix = string.concat(".transactions[", vm.toString(i), "]");
+            try vm.parseJsonString(json, string.concat(prefix, ".transactionType")) returns (string memory txType) {
+                try vm.parseJsonString(json, string.concat(prefix, ".contractName")) returns (string memory name) {
+                    if (_eq(txType, "CREATE") && _eq(name, "TimelockController")) {
+                        return vm.parseJsonAddress(json, string.concat(prefix, ".contractAddress"));
+                    }
+                } catch { }
+            } catch {
+                return address(0);
+            }
+            i += 1;
         }
     }
 

@@ -29,6 +29,7 @@ contract CoreTimelockTest is Test {
     function setUp() public {
         deploy = new DeployTimelock();
         mig = new MigrateOwnershipToTimelock();
+        mig.pinMigrateEscrows(0);
     }
 
     function test_delayIsEnforced() public {
@@ -427,6 +428,7 @@ contract CoreTimelockTest is Test {
         vm.expectRevert(bytes("MigrateOwnership: EXPECTED_TIMELOCK unset"));
         mig.requireValidTimelock(address(pinned));
         mig.useExpected(address(pinned));
+        _pinDeployRecord(address(pinned));
         vm.expectRevert(bytes("MigrateOwnership: SAFE_ADDRESS unset"));
         mig.requireValidTimelock(address(pinned));
 
@@ -483,7 +485,7 @@ contract CoreTimelockTest is Test {
 
         _arm(safe, address(pinned));
         mig.useExpected(address(wrongProposer));
-        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not EXPECTED_TIMELOCK"));
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
         mig.transferTwoStep(targets, address(pinned));
         _assertUnchanged(targets, core);
 
@@ -491,13 +493,14 @@ contract CoreTimelockTest is Test {
         mig.useExpected(address(wrongProposer));
         mig.pinNewTimelock(address(wrongProposer));
         mig.pinStep("accept");
+        _pinDeployRecord(address(wrongProposer));
         vm.expectRevert(bytes("MigrateOwnership: SAFE missing PROPOSER_ROLE"));
         mig.run();
         _assertUnchanged(targets, core);
 
         mig.pinNewTimelock(address(pinned));
         mig.pinStep("check");
-        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not EXPECTED_TIMELOCK"));
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
         mig.run();
         _assertUnchanged(targets, core);
     }
@@ -627,6 +630,91 @@ contract CoreTimelockTest is Test {
         _assertUnchanged(targets, core);
     }
 
+    function test_safeOwnerQualityReverts() public {
+        address core = mig.CORE_TIMELOCK();
+        address[] memory targets = _seed(core);
+        address good = _etchSafe();
+        (TimelockController tl,) = _controllerWith(good, 300, address(0));
+        _arm(good, address(tl));
+
+        address a = address(uint160(0xA010));
+        address b = address(uint160(0xA011));
+
+        address dupSafe = _ownersStub(_pair(a, a));
+        vm.expectRevert(bytes("DeployTimelock: SAFE owners are not unique"));
+        deploy.deployTimelock(dupSafe, 300, address(0));
+        mig.useSafe(dupSafe);
+        vm.expectRevert(bytes("MigrateOwnership: SAFE owners are not unique"));
+        mig.transferTwoStep(targets, address(tl));
+        _assertUnchanged(targets, core);
+
+        address zeroSafe = _ownersStub(_pair(address(0), b));
+        vm.expectRevert(bytes("DeployTimelock: SAFE owner is the zero address"));
+        deploy.deployTimelock(zeroSafe, 300, address(0));
+        mig.useSafe(zeroSafe);
+        vm.expectRevert(bytes("MigrateOwnership: SAFE owner is the zero address"));
+        mig.transferTwoStep(targets, address(tl));
+        _assertUnchanged(targets, core);
+
+        address coreSafe = _ownersStub(_pair(core, b));
+        vm.expectRevert(bytes("DeployTimelock: SAFE owner is CORE_TIMELOCK"));
+        deploy.deployTimelock(coreSafe, 300, address(0));
+        mig.useSafe(coreSafe);
+        vm.expectRevert(bytes("MigrateOwnership: SAFE owner is CORE_TIMELOCK"));
+        mig.transferTwoStep(targets, address(tl));
+        _assertUnchanged(targets, core);
+
+        address deployerSafe = _ownersStub(_pair(address(this), b));
+        vm.expectRevert(bytes("DeployTimelock: SAFE owner is the deployer"));
+        deploy.deployTimelock(deployerSafe, 300, address(0));
+        mig.useSafe(deployerSafe);
+        vm.expectRevert(bytes("MigrateOwnership: SAFE owner is the deployer"));
+        mig.transferTwoStep(targets, address(tl));
+        _assertUnchanged(targets, core);
+    }
+
+    function test_deployRecordMustMatch() public {
+        address safe = _etchSafe();
+        (TimelockController tl,) = _controllerWith(safe, 300, address(0));
+        _arm(safe, address(tl));
+        mig.requireValidTimelock(address(tl));
+
+        address other = makeAddr("otherRecord");
+        string memory mismatch = "test/fixtures/mismatch-timelock.json";
+        vm.writeFile(
+            mismatch,
+            string.concat(
+                '{"transactions":[{"transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
+                vm.toString(other),
+                '"}]}'
+            )
+        );
+        mig.useDeployJson(mismatch);
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
+        mig.requireValidTimelock(address(tl));
+
+        mig.useDeployJson("test/fixtures/missing-deploy-record.json");
+        vm.expectRevert(bytes("MigrateOwnership: deploy record missing"));
+        mig.requireValidTimelock(address(tl));
+    }
+
+    function test_migrateEscrowsUnsetReverts() public {
+        vm.expectRevert(bytes("MigrateOwnership: MIGRATE_ESCROWS unset"));
+        mig.decodeMigrateEscrows(false, 0);
+
+        try vm.envUint("MIGRATE_ESCROWS") returns (uint256) { }
+        catch {
+            MigrateOwnershipToTimelock fresh = new MigrateOwnershipToTimelock();
+            vm.expectRevert(bytes("MigrateOwnership: MIGRATE_ESCROWS unset"));
+            fresh.migrateEscrows();
+        }
+    }
+
+    function test_migrateEscrowsTwoReverts() public {
+        vm.expectRevert(bytes("MigrateOwnership: MIGRATE_ESCROWS must be 0 or 1"));
+        mig.decodeMigrateEscrows(true, 2);
+    }
+
     function test_postCheckRejectsUnexpectedRows() public {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
@@ -658,6 +746,39 @@ contract CoreTimelockTest is Test {
     ) internal {
         mig.useSafe(safe);
         mig.useExpected(timelock);
+        _pinDeployRecord(timelock);
+    }
+
+    function _pinDeployRecord(
+        address timelock
+    ) internal {
+        string memory path = string.concat("test/fixtures/", vm.toString(timelock), ".json");
+        vm.writeFile(
+            path,
+            string.concat(
+                '{"transactions":[{"transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
+                vm.toString(timelock),
+                '"}]}'
+            )
+        );
+        mig.useDeployJson(path);
+    }
+
+    function _pair(
+        address x,
+        address y
+    ) internal pure returns (address[] memory owners) {
+        owners = new address[](2);
+        owners[0] = x;
+        owners[1] = y;
+    }
+
+    function _ownersStub(
+        address[] memory owners
+    ) internal returns (address safe) {
+        SafeThresholdStub stub = new SafeThresholdStub(2, 2);
+        stub.setOwners(owners);
+        safe = address(stub);
     }
 
     function _acceptAll(
@@ -769,14 +890,27 @@ contract CoreTimelockTest is Test {
 /// @dev Stand-in for an existing Safe. The scripts call `getThreshold()` and `getOwners()`.
 contract SafeThresholdStub {
     uint256 internal immutable _threshold;
-    uint256 internal immutable _owners;
+    address[] internal _owners;
 
     constructor(
         uint256 threshold_,
         uint256 owners_
     ) {
         _threshold = threshold_;
-        _owners = owners_;
+        for (uint256 i; i < owners_; i++) {
+            _owners.push(address(uint160(0xA000 + i)));
+        }
+    }
+
+    function setOwners(
+        address[] calldata next
+    ) external {
+        while (_owners.length != 0) {
+            _owners.pop();
+        }
+        for (uint256 i; i < next.length; i++) {
+            _owners.push(next[i]);
+        }
     }
 
     function getThreshold() external view returns (uint256) {
@@ -784,10 +918,7 @@ contract SafeThresholdStub {
     }
 
     function getOwners() external view returns (address[] memory owners) {
-        owners = new address[](_owners);
-        for (uint256 i; i < _owners; i++) {
-            owners[i] = address(uint160(0xA000 + i));
-        }
+        owners = _owners;
     }
 }
 
@@ -814,17 +945,28 @@ contract CoreTimelockForkTest is Test {
             return;
         }
         mig = new MigrateOwnershipToTimelock();
+        mig.pinMigrateEscrows(0);
         deploy = new DeployTimelock();
     }
 
     function test_forkRejectsWrongTimelock() public {
         address safe = address(new SafeThresholdStub(2, 2));
         TimelockController tl = deploy.deployTimelock(safe, 300, address(0));
+        string memory path = string.concat("test/fixtures/fork-", vm.toString(address(tl)), ".json");
+        vm.writeFile(
+            path,
+            string.concat(
+                '{"transactions":[{"transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
+                vm.toString(address(tl)),
+                '"}]}'
+            )
+        );
+        mig.useDeployJson(path);
         mig.useSafe(safe);
         mig.useExpected(makeAddr("wrongTimelock"));
         mig.pinNewTimelock(address(tl));
         mig.pinStep("check");
-        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not EXPECTED_TIMELOCK"));
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
         mig.run();
     }
 

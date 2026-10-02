@@ -9,6 +9,7 @@ out/
 broadcast/
 lib/
 foundry.lock
+test/fixtures/*.json
 
 # Python
 __pycache__/
