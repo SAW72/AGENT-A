@@ -2,7 +2,7 @@
 
 `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9` is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by `TimelockController` (this runbook).
 
-Mainnet is not in scope. Do not set `ALLOW_MAINNET`. Chain ids `84532` (Base Sepolia) and `31337` (Anvil) are allowed. Chain ids `8453` and `1` revert unless `ALLOW_MAINNET=1`. Every other chain reverts even when that flag is set. `TIMELOCK_MIN_DELAY` must be at least 300 seconds on `84532` and `31337`, and at least 48 hours (`172800`) on `8453` and `1`. A shorter delay reverts.
+Chain ids `84532` (Base Sepolia) and `31337` (Anvil) are allowed. Every other chain reverts. `TIMELOCK_MIN_DELAY` must be at least 300 seconds. A shorter delay reverts.
 
 This runbook does not create a Safe. `SAFE_ADDRESS` is an existing Safe. The scripts never read `PRIVATE_KEY`. Broadcast uses a Foundry keystore (`--account` and `--sender`) and `vm.startBroadcast()` with no key. Agents do not pass `--broadcast`. The only broadcasts in this runbook are the three Spencer runs below: deploy, Ownable2Step `transfer`, and the later immediate `setOwner`.
 
@@ -53,13 +53,13 @@ Import the deployer keystore out of band. Do not put the key in the environment.
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 export SAFE_ADDRESS=<existing-safe>
 export TIMELOCK_MIN_DELAY=300
-# Testnet may leave TIMELOCK_EXECUTOR unset. address(0) is an open executor.
-# With an open executor, anyone, CORE included, can execute an op that is already scheduled and past its delay.
-# They still cannot schedule one. Mainnet should set the Safe as executor for that reason. Do not leave mainnet open.
+# Leave TIMELOCK_EXECUTOR unset for an open executor (address(0)).
+# Anyone, CORE included, can then execute an op that is already scheduled and past its delay.
+# They still cannot schedule one. Set TIMELOCK_EXECUTOR to the Safe when only the Safe should execute.
 # export TIMELOCK_EXECUTOR=$SAFE_ADDRESS
 ```
 
-`SAFE_ADDRESS` must already have code, and that code must not start with `0xef0100` (an EIP-7702 delegation designator; code length alone is not enough, because `CORE_TIMELOCK` itself passes a length check). `ISafe(SAFE_ADDRESS).getThreshold()` must be at least 2, and `getOwners().length` must be at least that threshold. The Safe must not be `CORE_TIMELOCK` and must not be the deployer (`msg.sender`). `TIMELOCK_MIN_DELAY` must be at least 300 on this chain. On Base Sepolia the open executor is acceptable. For mainnet, set `TIMELOCK_EXECUTOR` to `SAFE_ADDRESS` so only the Safe can execute. An open executor lets anyone, including `CORE_TIMELOCK`, call `execute` / `executeBatch` once an operation is scheduled and the delay has passed. That account still cannot `schedule`. That is another reason to prefer the Safe as executor on mainnet. Mainnet is not in scope for this runbook.
+`SAFE_ADDRESS` must already have code, and that code must not start with `0xef0100` (an EIP-7702 delegation designator; code length alone is not enough, because `CORE_TIMELOCK` itself passes a length check). `ISafe(SAFE_ADDRESS).getThreshold()` must be at least 2, and `getOwners().length` must be at least that threshold. The Safe must not be `CORE_TIMELOCK` and must not be the deployer (`msg.sender`). `TIMELOCK_MIN_DELAY` must be at least 300 seconds. Leaving `TIMELOCK_EXECUTOR` unset means `address(0)` holds `EXECUTOR_ROLE`: anyone, including `CORE_TIMELOCK`, can call `execute` / `executeBatch` once an operation is scheduled and the delay has passed. That account still cannot `schedule`. Set `TIMELOCK_EXECUTOR` to `SAFE_ADDRESS` when only the Safe should execute.
 
 Simulate. This command does not broadcast.
 
@@ -91,7 +91,7 @@ Proposers are `[SAFE_ADDRESS]`. OpenZeppelin v5.7.0 also grants that Safe `CANCE
 - The Safe holds `PROPOSER_ROLE` and `CANCELLER_ROLE`.
 - `DEFAULT_ADMIN_ROLE` is held by the timelock itself, and not by `CORE_TIMELOCK`, the sender, or the Safe.
 - `CORE_TIMELOCK` holds none of `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE`, or `DEFAULT_ADMIN_ROLE`.
-- `getMinDelay()` is at least 300 seconds on this chain (48 hours on chain ids `8453` and `1`).
+- `getMinDelay()` is at least 300 seconds.
 
 The script skips a two-step row whose `owner` is already `NEW_TIMELOCK` and whose `pendingOwner` is zero, and it skips a two-step row already pending `NEW_TIMELOCK`. It defers Liability, InsuranceFund, and DisputePanel. It also skips both escrows unless `MIGRATE_ESCROWS=1`. Re-running it is safe.
 
@@ -141,7 +141,7 @@ forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock 
 
 The log is the Safe proposal. Predecessor is `bytes32(0)`. Salt is `keccak256("CORE_TIMELOCK_MIGRATION_ACCEPT_V1")`. Delay is `getMinDelay()`. Each payload is `acceptOwnership()` (`0x79ba5097`). Values are `0`.
 
-The Safe calls `scheduleBatch(targets, values, payloads, predecessor, salt, delay)` on `NEW_TIMELOCK`. After the delay, `executeBatch(targets, values, payloads, predecessor, salt)` runs. On this testnet, an open executor (`TIMELOCK_EXECUTOR` unset or `address(0)`) means any account can execute an operation that is already scheduled and past its delay. That includes `CORE_TIMELOCK`. An open executor does not let that account schedule. For mainnet, deploy with `TIMELOCK_EXECUTOR` set to the Safe so only the Safe can execute.
+The Safe calls `scheduleBatch(targets, values, payloads, predecessor, salt, delay)` on `NEW_TIMELOCK`. After the delay, `executeBatch(targets, values, payloads, predecessor, salt)` runs. An open executor (`TIMELOCK_EXECUTOR` unset or `address(0)`) means any account can execute an operation that is already scheduled and past its delay. That includes `CORE_TIMELOCK`. An open executor does not let that account schedule. Set `TIMELOCK_EXECUTOR` to the Safe when only the Safe should execute.
 
 If the remaining set changes, the operation id changes. Cancel the previously scheduled operation from the Safe before scheduling a different batch. `acceptOwnership` on a row that already completed reverts, and that reverts the whole batch.
 
@@ -182,7 +182,7 @@ forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock 
 
 ## 4. Post-check
 
-This command does not broadcast. The same `NEW_TIMELOCK` checks run first. `postCheck` then requires exactly these nine addresses, in this order, on chain ids `84532`, `8453`, and `1`:
+This command does not broadcast. The same `NEW_TIMELOCK` checks run first. `postCheck` then requires exactly these nine addresses, in this order, on chain id `84532`:
 
 1. `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`
 2. `0x1463D664fA467FBCDA4B05443434494f05e565bc`
@@ -239,7 +239,7 @@ cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$CANCELLER_ROLE" "$C
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$DEFAULT_ADMIN_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-`cast code` on the Safe must not start with `0xef0100`. `getThreshold()` must be at least 2, and `getOwners()` must return at least that many addresses. `EXPECTED_TIMELOCK` must equal `NEW_TIMELOCK`. `getMinDelay()` must be at least 300 on Base Sepolia and at least 172800 on chain ids `8453` and `1`. The Safe's proposer and canceller results must be `true`. The timelock's own admin result must be `true`. The Safe's admin result must be `false`. Every `CORE_TIMELOCK` role result must be `false`.
+`cast code` on the Safe must not start with `0xef0100`. `getThreshold()` must be at least 2, and `getOwners()` must return at least that many addresses. `EXPECTED_TIMELOCK` must equal `NEW_TIMELOCK`. `getMinDelay()` must be at least 300. The Safe's proposer and canceller results must be `true`. The timelock's own admin result must be `true`. The Safe's admin result must be `false`. Every `CORE_TIMELOCK` role result must be `false`.
 
 Ownable2Step rows. `owner()` must be `NEW_TIMELOCK` and `pendingOwner()` must be `0`. The two escrows are in this list only when `MIGRATE_ESCROWS=1`. Otherwise their `owner()` is still `CORE_TIMELOCK`, and they stay under that single key.
 

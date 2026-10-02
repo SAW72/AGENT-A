@@ -15,19 +15,15 @@ interface ISafe {
 ///      `admin` is `address(0)`, so `DEFAULT_ADMIN_ROLE` stays on the timelock itself. No EOA is admin.
 ///      Broadcast is `vm.startBroadcast()` with no key. Foundry signs from `--account` / `--sender`.
 ///      This script never reads `PRIVATE_KEY`.
-///      Chain ids 84532 (Base Sepolia) and 31337 (Anvil) are allowed. Chain ids 8453 and 1 also require
-///      `ALLOW_MAINNET=1`. Every other chain reverts. Mainnet is not in scope.
-///      `TIMELOCK_MIN_DELAY` must be at least 300 seconds on 84532 and 31337, and at least 48 hours on 8453 and 1.
+///      Chain ids 84532 (Base Sepolia) and 31337 (Anvil) are allowed. Every other chain reverts.
+///      `TIMELOCK_MIN_DELAY` must be at least 300 seconds.
 ///      `SAFE_ADDRESS` must be a Safe: not `CORE_TIMELOCK`, not the deployer, code that does not start with
 ///      `0xef0100`, `getThreshold() >= 2`, and `getOwners().length >= threshold`.
 ///      Agents do not pass `--broadcast`. Spencer broadcasts from his keystore.
 contract DeployTimelock is Script {
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84532;
     uint256 public constant ANVIL_CHAIN_ID = 31337;
-    uint256 public constant BASE_MAINNET_CHAIN_ID = 8453;
-    uint256 public constant ETH_MAINNET_CHAIN_ID = 1;
-    uint256 public constant TESTNET_MIN_DELAY = 300;
-    uint256 public constant MAINNET_MIN_DELAY = 48 hours;
+    uint256 public constant MIN_DELAY = 300;
 
     /// @dev Dry-run sender used by the escrow deploy script. Broadcast must not use it.
     address public constant SIMULATE_SENDER = 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001;
@@ -38,45 +34,21 @@ contract DeployTimelock is Script {
     /// @dev The EOA this controller replaces. It must not be the Safe and must not hold a timelock role.
     address public constant CORE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
 
-    /// @dev Set by tests so parallel `forge test` runs do not share `ALLOW_MAINNET`. Operators use the env var.
-    bool public forceAllowMainnet;
-
     function broadcasting() public view returns (bool) {
         return vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
     }
 
-    function allowMainnet() public view returns (bool allowed) {
-        if (forceAllowMainnet) return true;
-        try vm.envUint("ALLOW_MAINNET") returns (uint256 flag) {
-            allowed = flag == 1;
-        } catch {
-            allowed = false;
-        }
-    }
-
-    /// @notice Test-only. Broadcast still requires `ALLOW_MAINNET=1`.
-    function allowMainnetForTest() external {
-        if (broadcasting()) revert("DeployTimelock: set ALLOW_MAINNET=1");
-        forceAllowMainnet = true;
-    }
-
-    /// @notice 84532 and 31337 proceed. 8453 and 1 proceed only when `ALLOW_MAINNET=1`. Every other chain reverts.
+    /// @notice 84532 and 31337 proceed. Every other chain reverts.
     function requireAllowedChain() public view {
         uint256 id = block.chainid;
         if (id == BASE_SEPOLIA_CHAIN_ID || id == ANVIL_CHAIN_ID) return;
-        if ((id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID) && allowMainnet()) {
-            console.log("WARNING: mainnet is not in scope");
-            return;
-        }
         revert("DeployTimelock: chain refused");
     }
 
-    /// @notice 300 seconds on 84532 and 31337. 48 hours on 8453 and 1. Every other chain reverts.
+    /// @notice 300 seconds on an allowed chain. Every other chain reverts.
     function minDelayFloor() public view returns (uint256) {
-        uint256 id = block.chainid;
-        if (id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID) return MAINNET_MIN_DELAY;
-        if (id == BASE_SEPOLIA_CHAIN_ID || id == ANVIL_CHAIN_ID) return TESTNET_MIN_DELAY;
-        revert("DeployTimelock: chain refused");
+        requireAllowedChain();
+        return MIN_DELAY;
     }
 
     /// @notice Broadcast must name a keystore account. The default Foundry sender and the dry-run burn address are
@@ -194,7 +166,6 @@ contract DeployTimelock is Script {
 
         console.log("TimelockController", address(timelock));
         console.log("DEFAULT_ADMIN_ROLE holder", address(timelock));
-        console.log("Mainnet is not in scope. Do not set ALLOW_MAINNET.");
         console.log("Agents must not --broadcast.");
     }
 

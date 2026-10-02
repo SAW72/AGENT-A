@@ -154,12 +154,18 @@ contract CoreTimelockTest is Test {
         deploy.requireAllowedChain();
         vm.expectRevert(bytes("MigrateOwnership: chain refused"));
         mig.requireAllowedChain();
+        vm.expectRevert(bytes("DeployTimelock: chain refused"));
+        deploy.deployTimelock(safe, 300, address(0));
+        vm.expectRevert(bytes("DeployTimelock: chain refused"));
+        deploy.minDelayFloor();
 
         vm.chainId(1);
         vm.expectRevert(bytes("DeployTimelock: chain refused"));
         deploy.requireAllowedChain();
         vm.expectRevert(bytes("MigrateOwnership: chain refused"));
         mig.requireAllowedChain();
+        vm.expectRevert(bytes("MigrateOwnership: chain refused"));
+        mig.minDelayFloor();
 
         vm.chainId(11155111);
         vm.expectRevert(bytes("DeployTimelock: chain refused"));
@@ -167,43 +173,19 @@ contract CoreTimelockTest is Test {
         vm.expectRevert(bytes("MigrateOwnership: chain refused"));
         mig.requireAllowedChain();
 
-        deploy.allowMainnetForTest();
-        mig.allowMainnetForTest();
-        vm.expectRevert(bytes("DeployTimelock: chain refused"));
-        deploy.requireAllowedChain();
-        vm.expectRevert(bytes("MigrateOwnership: chain refused"));
-        mig.requireAllowedChain();
-        vm.expectRevert(bytes("DeployTimelock: chain refused"));
-        deploy.minDelayFloor();
-        vm.expectRevert(bytes("MigrateOwnership: chain refused"));
-        mig.minDelayFloor();
-
-        vm.chainId(8453);
-        deploy.requireAllowedChain();
-        mig.requireAllowedChain();
-        assertEq(deploy.minDelayFloor(), 48 hours);
-        assertEq(mig.minDelayFloor(), 48 hours);
-        vm.expectRevert(bytes("DeployTimelock: minDelay below floor"));
-        deploy.deployTimelock(safe, 300, address(0));
-        TimelockController mainnetTl = deploy.deployTimelock(safe, 48 hours, address(0));
-        assertEq(mainnetTl.getMinDelay(), 48 hours);
-
-        vm.chainId(1);
-        deploy.requireAllowedChain();
-        assertEq(deploy.minDelayFloor(), 48 hours);
-
         vm.chainId(31337);
+        assertEq(deploy.minDelayFloor(), 300);
         vm.expectRevert(bytes("DeployTimelock: minDelay below floor"));
         deploy.deployTimelock(safe, 299, address(0));
         TimelockController tl = deploy.deployTimelock(safe, 300, address(0));
         assertEq(tl.getMinDelay(), 300);
 
         _arm(safe, address(tl));
-        vm.chainId(8453);
-        vm.expectRevert(bytes("MigrateOwnership: minDelay below floor"));
         mig.requireValidTimelock(address(tl));
-        _arm(safe, address(mainnetTl));
-        mig.requireValidTimelock(address(mainnetTl));
+        vm.chainId(8453);
+        vm.expectRevert(bytes("MigrateOwnership: chain refused"));
+        mig.requireValidTimelock(address(tl));
+        vm.chainId(31337);
 
         address foundryDefault = deploy.FOUNDRY_DEFAULT_SENDER();
         address simulateSender = deploy.SIMULATE_SENDER();

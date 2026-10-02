@@ -19,24 +19,20 @@ interface ISafe {
 ///      It reverts unless every in-scope Ownable2Step row already shows `owner() == NEW_TIMELOCK`.
 ///      Step `check` reverts unless the nine migration rows have the expected owner. It does not broadcast.
 ///      A contract whose `governance()` is `CORE_TIMELOCK` is skipped unless `MIGRATE_ESCROWS=1`.
-///      Chain ids 84532 and 31337 are allowed. Chain ids 8453 and 1 also require `ALLOW_MAINNET=1`.
-///      Every other chain reverts. `getMinDelay()` must meet the same floor as `DeployTimelock`.
+///      Chain ids 84532 and 31337 are allowed. Every other chain reverts.
+///      `getMinDelay()` must be at least 300 seconds.
 ///      This script never reads `PRIVATE_KEY`. Agents do not pass `--broadcast`. It does not create a Safe.
 contract MigrateOwnershipToTimelock is Script {
     address public constant CORE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84532;
     uint256 public constant ANVIL_CHAIN_ID = 31337;
-    uint256 public constant BASE_MAINNET_CHAIN_ID = 8453;
-    uint256 public constant ETH_MAINNET_CHAIN_ID = 1;
-    uint256 public constant TESTNET_MIN_DELAY = 300;
-    uint256 public constant MAINNET_MIN_DELAY = 48 hours;
+    uint256 public constant MIN_DELAY = 300;
 
     address public constant SIMULATE_SENDER = 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001;
     address public constant FOUNDRY_DEFAULT_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
     /// @dev Set by tests so parallel `forge test` runs do not share env vars. Operators use the env vars.
     bool public forceEscrowMigration;
-    bool public forceAllowMainnet;
     address internal pinnedSafe;
     address internal pinnedExpected;
     address internal pinnedNewTimelock;
@@ -59,21 +55,6 @@ contract MigrateOwnershipToTimelock is Script {
 
     function broadcasting() public view returns (bool) {
         return vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
-    }
-
-    function allowMainnet() public view returns (bool allowed) {
-        if (forceAllowMainnet) return true;
-        try vm.envUint("ALLOW_MAINNET") returns (uint256 flag) {
-            allowed = flag == 1;
-        } catch {
-            allowed = false;
-        }
-    }
-
-    /// @notice Test-only. Broadcast still requires `ALLOW_MAINNET=1`.
-    function allowMainnetForTest() external {
-        if (broadcasting()) revert("MigrateOwnership: set ALLOW_MAINNET=1");
-        forceAllowMainnet = true;
     }
 
     /// @notice Test-only pins. Broadcast still reads `SAFE_ADDRESS`, `EXPECTED_TIMELOCK`, and `NEW_TIMELOCK`.
@@ -106,23 +87,17 @@ contract MigrateOwnershipToTimelock is Script {
         stepIsPinned = true;
     }
 
-    /// @notice 84532 and 31337 proceed. 8453 and 1 proceed only when `ALLOW_MAINNET=1`. Every other chain reverts.
+    /// @notice 84532 and 31337 proceed. Every other chain reverts.
     function requireAllowedChain() public view {
         uint256 id = block.chainid;
         if (id == BASE_SEPOLIA_CHAIN_ID || id == ANVIL_CHAIN_ID) return;
-        if ((id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID) && allowMainnet()) {
-            console.log("WARNING: mainnet is not in scope");
-            return;
-        }
         revert("MigrateOwnership: chain refused");
     }
 
-    /// @notice 300 seconds on 84532 and 31337. 48 hours on 8453 and 1. Every other chain reverts.
+    /// @notice 300 seconds on an allowed chain. Every other chain reverts.
     function minDelayFloor() public view returns (uint256) {
-        uint256 id = block.chainid;
-        if (id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID) return MAINNET_MIN_DELAY;
-        if (id == BASE_SEPOLIA_CHAIN_ID || id == ANVIL_CHAIN_ID) return TESTNET_MIN_DELAY;
-        revert("MigrateOwnership: chain refused");
+        requireAllowedChain();
+        return MIN_DELAY;
     }
 
     /// @notice Step `transfer` and step `immediate` broadcasts must be the `CORE_TIMELOCK` keystore.
@@ -169,7 +144,7 @@ contract MigrateOwnershipToTimelock is Script {
     ///      `CANCELLER_ROLE`, with threshold at least 2 and at least that many owners, and its code must not be an
     ///      EIP-7702 designator. `DEFAULT_ADMIN_ROLE` sits on the timelock and not on `CORE_TIMELOCK`, `msg.sender`,
     ///      or the Safe. `CORE_TIMELOCK` holds no proposer, executor, canceller, or admin role. `getMinDelay()` is at
-    ///      least the chain floor.
+    ///      least 300 seconds.
     function requireValidTimelock(
         address newTimelock
     ) public view {
@@ -221,7 +196,7 @@ contract MigrateOwnershipToTimelock is Script {
     }
 
     /// @notice The eight `CORE_TIMELOCK`-owned contracts plus superseded Vault `0xa1a0…CB7`, in book order.
-    ///         On chain ids 84532, 8453, and 1 the addresses must match the pin.
+    ///         On chain id 84532 the addresses must match the pin.
     function migrationRows() public view returns (address[] memory rows) {
         (, address[] memory book) = bookEntries();
         rows = new address[](MIGRATION_ROWS);
@@ -668,7 +643,7 @@ contract MigrateOwnershipToTimelock is Script {
 
     function _pinRows() internal view returns (bool) {
         uint256 id = block.chainid;
-        return id == BASE_SEPOLIA_CHAIN_ID || id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID;
+        return id == BASE_SEPOLIA_CHAIN_ID;
     }
 
     function _requirePinned(
