@@ -7,38 +7,48 @@ import { TimelockController } from "@openzeppelin/contracts/governance/TimelockC
 
 interface ISafe {
     function getThreshold() external view returns (uint256);
+    function getOwners() external view returns (address[] memory);
 }
 
 /// @notice Move ownership off `CORE_TIMELOCK` `0x10CC…78D9` onto a deployed `TimelockController`.
-/// @dev `CORE_TIMELOCK` is an EOA with EIP-7702 delegation, not a timelock. Step `transfer` is the
-///      only broadcast, and only Spencer runs it (`--account` / `--sender` that EOA, `vm.startBroadcast()`
-///      with no key). This script never reads `PRIVATE_KEY`.
-///      Ownable2Step `acceptOwnership` is not broadcast. `accept` prints `scheduleBatch` / `executeBatch`
-///      calldata for the existing Safe. After `getMinDelay`, anyone executes when the executor is open.
-///      Contracts with immediate `setOwner` (no `pendingOwner`) move in step `transfer`. That handoff has
-///      no delay. The log says so.
+/// @dev `CORE_TIMELOCK` is an EOA with EIP-7702 delegation, not a timelock.
+///      `requireValidTimelock` runs before every step. `NEW_TIMELOCK` must equal `EXPECTED_TIMELOCK`.
+///      Step `transfer` (Spencer broadcast) moves Ownable2Step rows only.
+///      Step `accept` prints `scheduleBatch` / `executeBatch` calldata. It does not broadcast.
+///      Step `immediate` (Spencer broadcast) calls `setOwner` on Liability, InsuranceFund, and DisputePanel.
+///      It reverts unless every in-scope Ownable2Step row already shows `owner() == NEW_TIMELOCK`.
+///      Step `check` reverts unless the nine migration rows have the expected owner. It does not broadcast.
 ///      A contract whose `governance()` is `CORE_TIMELOCK` is skipped unless `MIGRATE_ESCROWS=1`.
-///      Moving that owner bricks `createEscrow` and the dependency setters, because `governance` is immutable.
-///      Steps `transfer` and `accept` both call `requireValidTimelock` before any handoff.
-///      Chain ids 8453 and 1 revert unless `ALLOW_MAINNET=1`. Mainnet is not in scope.
-///      Agents do not pass `--broadcast`. This script does not create a Safe.
+///      Chain ids 84532 and 31337 are allowed. Chain ids 8453 and 1 also require `ALLOW_MAINNET=1`.
+///      Every other chain reverts. `getMinDelay()` must meet the same floor as `DeployTimelock`.
+///      This script never reads `PRIVATE_KEY`. Agents do not pass `--broadcast`. It does not create a Safe.
 contract MigrateOwnershipToTimelock is Script {
     address public constant CORE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84532;
+    uint256 public constant ANVIL_CHAIN_ID = 31337;
     uint256 public constant BASE_MAINNET_CHAIN_ID = 8453;
     uint256 public constant ETH_MAINNET_CHAIN_ID = 1;
+    uint256 public constant TESTNET_MIN_DELAY = 300;
+    uint256 public constant MAINNET_MIN_DELAY = 48 hours;
 
     address public constant SIMULATE_SENDER = 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001;
     address public constant FOUNDRY_DEFAULT_SENDER = 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38;
 
-    /// @dev Set by tests so parallel `forge test` runs do not share `MIGRATE_ESCROWS`. Operators use the env var.
+    /// @dev Set by tests so parallel `forge test` runs do not share env vars. Operators use the env vars.
     bool public forceEscrowMigration;
+    bool public forceAllowMainnet;
+    address internal pinnedSafe;
+    address internal pinnedExpected;
+    address internal pinnedNewTimelock;
+    bool internal stepIsPinned;
+    string internal pinnedStep;
 
     /// @dev Stable salt so a resumed print of the same remaining set matches the scheduled operation.
     bytes32 public constant ACCEPT_SALT = keccak256("CORE_TIMELOCK_MIGRATION_ACCEPT_V1");
     bytes32 public constant PREDECESSOR = bytes32(0);
 
     uint256 internal constant BOOK_SLOTS = 14;
+    uint256 internal constant MIGRATION_ROWS = 9;
 
     struct TransferResult {
         uint256 immediate;
@@ -52,6 +62,7 @@ contract MigrateOwnershipToTimelock is Script {
     }
 
     function allowMainnet() public view returns (bool allowed) {
+        if (forceAllowMainnet) return true;
         try vm.envUint("ALLOW_MAINNET") returns (uint256 flag) {
             allowed = flag == 1;
         } catch {
@@ -59,14 +70,62 @@ contract MigrateOwnershipToTimelock is Script {
         }
     }
 
-    function requireAllowedChain() public view {
-        if (block.chainid == BASE_MAINNET_CHAIN_ID || block.chainid == ETH_MAINNET_CHAIN_ID) {
-            if (!allowMainnet()) revert("MigrateOwnership: mainnet refused; set ALLOW_MAINNET=1");
-            console.log("WARNING: mainnet is not in scope");
-        }
+    /// @notice Test-only. Broadcast still requires `ALLOW_MAINNET=1`.
+    function allowMainnetForTest() external {
+        if (broadcasting()) revert("MigrateOwnership: set ALLOW_MAINNET=1");
+        forceAllowMainnet = true;
     }
 
-    /// @notice Step `transfer` broadcast must be the `CORE_TIMELOCK` keystore, not the default sender.
+    /// @notice Test-only pins. Broadcast still reads `SAFE_ADDRESS`, `EXPECTED_TIMELOCK`, and `NEW_TIMELOCK`.
+    function useSafe(
+        address safe
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: set SAFE_ADDRESS");
+        pinnedSafe = safe;
+    }
+
+    function useExpected(
+        address expected
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: set EXPECTED_TIMELOCK");
+        pinnedExpected = expected;
+    }
+
+    function pinNewTimelock(
+        address newTimelock
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: set NEW_TIMELOCK");
+        pinnedNewTimelock = newTimelock;
+    }
+
+    function pinStep(
+        string calldata step
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: set MIGRATION_STEP");
+        pinnedStep = step;
+        stepIsPinned = true;
+    }
+
+    /// @notice 84532 and 31337 proceed. 8453 and 1 proceed only when `ALLOW_MAINNET=1`. Every other chain reverts.
+    function requireAllowedChain() public view {
+        uint256 id = block.chainid;
+        if (id == BASE_SEPOLIA_CHAIN_ID || id == ANVIL_CHAIN_ID) return;
+        if ((id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID) && allowMainnet()) {
+            console.log("WARNING: mainnet is not in scope");
+            return;
+        }
+        revert("MigrateOwnership: chain refused");
+    }
+
+    /// @notice 300 seconds on 84532 and 31337. 48 hours on 8453 and 1. Every other chain reverts.
+    function minDelayFloor() public view returns (uint256) {
+        uint256 id = block.chainid;
+        if (id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID) return MAINNET_MIN_DELAY;
+        if (id == BASE_SEPOLIA_CHAIN_ID || id == ANVIL_CHAIN_ID) return TESTNET_MIN_DELAY;
+        revert("MigrateOwnership: chain refused");
+    }
+
+    /// @notice Step `transfer` and step `immediate` broadcasts must be the `CORE_TIMELOCK` keystore.
     function requireBroadcastSender(
         address sender
     ) public pure {
@@ -104,21 +163,35 @@ contract MigrateOwnershipToTimelock is Script {
         forceEscrowMigration = true;
     }
 
-    /// @notice Reject a controller that is not the Safe's self-administered timelock, before any ownership call.
-    /// @dev `SAFE_ADDRESS` must be the proposer and `getThreshold()` must be at least 2. `DEFAULT_ADMIN_ROLE` must sit
-    ///      on the timelock only. `CORE_TIMELOCK` must not hold proposer, executor, canceller, or admin.
-    ///      `getMinDelay()` must be non-zero. The address must have code.
+    /// @notice Reject a controller that is not the pinned Safe timelock, before any ownership call and before every
+    /// step.
+    /// @dev `EXPECTED_TIMELOCK` is required and must equal `newTimelock`. The Safe must hold `PROPOSER_ROLE` and
+    ///      `CANCELLER_ROLE`, with threshold at least 2 and at least that many owners, and its code must not be an
+    ///      EIP-7702 designator. `DEFAULT_ADMIN_ROLE` sits on the timelock and not on `CORE_TIMELOCK`, `msg.sender`,
+    ///      or the Safe. `CORE_TIMELOCK` holds no proposer, executor, canceller, or admin role. `getMinDelay()` is at
+    ///      least the chain floor.
     function requireValidTimelock(
         address newTimelock
     ) public view {
+        requireAllowedChain();
         if (newTimelock.code.length == 0) revert("MigrateOwnership: NEW_TIMELOCK has no code");
-        address safe = readAddress("SAFE_ADDRESS", "MigrateOwnership: SAFE_ADDRESS unset");
-        if (ISafe(safe).getThreshold() < 2) revert("MigrateOwnership: SAFE threshold is below 2");
+        address expected = _expected();
+        if (newTimelock != expected) revert("MigrateOwnership: NEW_TIMELOCK is not EXPECTED_TIMELOCK");
+        address safe = _safeAddress();
+        _requireSafe(safe);
         TimelockController tl = TimelockController(payable(newTimelock));
         if (!tl.hasRole(tl.PROPOSER_ROLE(), safe)) revert("MigrateOwnership: SAFE missing PROPOSER_ROLE");
+        if (!tl.hasRole(tl.CANCELLER_ROLE(), safe)) revert("MigrateOwnership: SAFE missing CANCELLER_ROLE");
         if (!tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), newTimelock)) {
             revert("MigrateOwnership: timelock is not self-administered");
         }
+        if (tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), CORE_TIMELOCK)) {
+            revert("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE");
+        }
+        if (tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), msg.sender)) {
+            revert("MigrateOwnership: msg.sender holds DEFAULT_ADMIN_ROLE");
+        }
+        if (tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), safe)) revert("MigrateOwnership: SAFE holds DEFAULT_ADMIN_ROLE");
         if (tl.hasRole(tl.PROPOSER_ROLE(), CORE_TIMELOCK)) {
             revert("MigrateOwnership: CORE_TIMELOCK holds PROPOSER_ROLE");
         }
@@ -128,13 +201,13 @@ contract MigrateOwnershipToTimelock is Script {
         if (tl.hasRole(tl.CANCELLER_ROLE(), CORE_TIMELOCK)) {
             revert("MigrateOwnership: CORE_TIMELOCK holds CANCELLER_ROLE");
         }
-        if (tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), CORE_TIMELOCK)) {
-            revert("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE");
+        uint256 delay;
+        try tl.getMinDelay() returns (uint256 got) {
+            delay = got;
+        } catch {
+            revert("MigrateOwnership: NEW_TIMELOCK getMinDelay failed");
         }
-        if (tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), msg.sender)) {
-            revert("MigrateOwnership: msg.sender holds DEFAULT_ADMIN_ROLE");
-        }
-        if (tl.getMinDelay() == 0) revert("MigrateOwnership: minDelay is zero");
+        if (delay < minDelayFloor()) revert("MigrateOwnership: minDelay below floor");
     }
 
     function bookEntries() public view returns (string[] memory names, address[] memory targets) {
@@ -145,6 +218,23 @@ contract MigrateOwnershipToTimelock is Script {
             names[i] = _slotName(i);
             targets[i] = _readAddr(json, _slotPath(i));
         }
+    }
+
+    /// @notice The eight `CORE_TIMELOCK`-owned contracts plus superseded Vault `0xa1a0…CB7`, in book order.
+    ///         On chain ids 84532, 8453, and 1 the addresses must match the pin.
+    function migrationRows() public view returns (address[] memory rows) {
+        (, address[] memory book) = bookEntries();
+        rows = new address[](MIGRATION_ROWS);
+        rows[0] = book[0];
+        rows[1] = book[1];
+        rows[2] = book[2];
+        rows[3] = book[3];
+        rows[4] = book[4];
+        rows[5] = book[5];
+        rows[6] = book[11];
+        rows[7] = book[12];
+        rows[8] = book[13];
+        if (_pinRows()) _requirePinned(rows);
     }
 
     /// @notice `owner()` plus `pendingOwner()` when the call succeeds (Ownable2Step). A reverting `pendingOwner` is
@@ -181,20 +271,50 @@ contract MigrateOwnershipToTimelock is Script {
         if (ok && data.length >= 32) seated = abi.decode(data, (bool));
     }
 
-    /// @notice Resumable handoff. Skips contracts already on `newTimelock` and two-step rows already pending that
-    /// address. When `CORE_TIMELOCK` is only `pendingOwner`, it accepts, then `transferOwnership` to the timelock.
-    function transferAll(
+    /// @notice Ownable2Step handoff only. Immediate `setOwner` rows are deferred to `transferImmediate`.
+    function transferTwoStep(
         address[] memory targets,
         address newTimelock
     ) public returns (TransferResult memory result) {
         requireValidTimelock(newTimelock);
         uint256 n = targets.length;
         for (uint256 i = 0; i < n; i++) {
-            uint8 kind = _transferOne(targets[i], newTimelock);
-            if (kind == 1) result.immediate += 1;
-            else if (kind == 2) result.twoStepQueued += 1;
+            uint8 kind = _transferTwoStepOne(targets[i], newTimelock);
+            if (kind == 2) result.twoStepQueued += 1;
             else if (kind == 3) result.pendingThenQueued += 1;
             else result.skipped += 1;
+        }
+    }
+
+    /// @notice Immediate `setOwner` handoff. Reverts unless every in-scope Ownable2Step row is already on
+    /// `newTimelock` with `pendingOwner == 0`.
+    function transferImmediate(
+        address[] memory targets,
+        address newTimelock
+    ) public returns (TransferResult memory result) {
+        requireValidTimelock(newTimelock);
+        requireTwoStepSettled(targets, newTimelock);
+        uint256 n = targets.length;
+        for (uint256 i = 0; i < n; i++) {
+            uint8 kind = _transferImmediateOne(targets[i], newTimelock);
+            if (kind == 1) result.immediate += 1;
+            else result.skipped += 1;
+        }
+    }
+
+    /// @notice In-scope Ownable2Step rows must already show `owner() == newTimelock` and `pendingOwner == 0`.
+    function requireTwoStepSettled(
+        address[] memory targets,
+        address newTimelock
+    ) public view {
+        uint256 n = targets.length;
+        for (uint256 i = 0; i < n; i++) {
+            if (_escrowHeldByCore(targets[i]) && !migrateEscrows()) continue;
+            (bool hasOwner, address owner, bool twoStep, address pending) = inspect(targets[i]);
+            if (!twoStep) continue;
+            if (!hasOwner || owner != newTimelock || pending != address(0)) {
+                revert("MigrateOwnership: Ownable2Step accept has not executed");
+            }
         }
     }
 
@@ -234,45 +354,42 @@ contract MigrateOwnershipToTimelock is Script {
         salt = ACCEPT_SALT;
     }
 
-    /// @notice After the accept batch has executed, every in-scope row sits on `newTimelock` with `pendingOwner == 0`.
-    /// @dev When `MIGRATE_ESCROWS` is unset, a row whose `governance()` is `CORE_TIMELOCK` may stay owned by that EOA.
-    ///      When it is `1`, those rows must be on `newTimelock` with `pendingOwner == 0`.
+    /// @notice Exact nine-row check. Opted-out escrows must still be owned by `CORE_TIMELOCK`. Every other row must
+    /// be owned by `newTimelock` with `pendingOwner == 0`. An unexpected owner reverts.
     function postCheck(
         address[] memory targets,
         address newTimelock
     ) public view {
+        if (targets.length != MIGRATION_ROWS) revert("MigrateOwnership: expected 9 rows");
+        if (_pinRows()) _requirePinned(targets);
         bool includeEscrows = migrateEscrows();
         uint256 n = targets.length;
         for (uint256 i = 0; i < n; i++) {
-            bool escrowRow = _escrowHeldByCore(targets[i]);
-            if (escrowRow && !includeEscrows) continue;
             (bool hasOwner, address owner, bool twoStep, address pending) = inspect(targets[i]);
-            if (escrowRow) {
-                if (!hasOwner || owner != newTimelock) revert("MigrateOwnership: escrow owner is not the timelock");
-                if (!twoStep || pending != address(0)) revert("MigrateOwnership: pendingOwner not cleared");
+            if (!hasOwner) revert("MigrateOwnership: unexpected owner");
+            bool escrowRow = _escrowHeldByCore(targets[i]);
+            if (escrowRow && !includeEscrows) {
+                if (owner != CORE_TIMELOCK) revert("MigrateOwnership: unexpected owner");
+                if (pending != address(0)) revert("MigrateOwnership: pendingOwner not cleared");
                 continue;
             }
-            if (!hasOwner) continue;
-            if (owner == CORE_TIMELOCK) revert("MigrateOwnership: CORE_TIMELOCK still owns");
-            if (twoStep && pending == CORE_TIMELOCK) revert("MigrateOwnership: CORE_TIMELOCK is still pendingOwner");
-            bool inScope = owner == newTimelock || pending == newTimelock;
-            if (!inScope) continue;
-            if (owner != newTimelock) revert("MigrateOwnership: owner is not the timelock");
+            if (escrowRow && owner != newTimelock) revert("MigrateOwnership: escrow owner is not the timelock");
+            if (owner != newTimelock) revert("MigrateOwnership: unexpected owner");
             if (twoStep && pending != address(0)) revert("MigrateOwnership: pendingOwner not cleared");
         }
     }
 
     function run() external {
         requireAllowedChain();
-        address newTimelock = readAddress("NEW_TIMELOCK", "MigrateOwnership: NEW_TIMELOCK unset");
-        if (newTimelock.code.length == 0) revert("MigrateOwnership: NEW_TIMELOCK has no code");
+        address newTimelock = _newTimelock();
+        requireValidTimelock(newTimelock);
 
-        string memory step = vm.envOr("MIGRATION_STEP", string("transfer"));
-        (string[] memory names, address[] memory targets) = bookEntries();
-        _logBook(names, targets, newTimelock);
+        string memory step = _step();
+        (string[] memory names, address[] memory book) = bookEntries();
+        address[] memory rows = migrationRows();
+        _logBook(names, book, newTimelock);
 
         if (_eq(step, "transfer")) {
-            requireValidTimelock(newTimelock);
             bool send = broadcasting();
             if (send) {
                 requireBroadcastSender(msg.sender);
@@ -281,23 +398,33 @@ contract MigrateOwnershipToTimelock is Script {
             } else {
                 console.log("SIMULATE; no transaction will be sent");
             }
-            transferAll(targets, newTimelock);
+            transferTwoStep(rows, newTimelock);
             if (send) vm.stopBroadcast();
-            _printAccept(targets, newTimelock);
+            _printAccept(rows, newTimelock);
+        } else if (_eq(step, "immediate")) {
+            bool send = broadcasting();
+            if (send) {
+                requireBroadcastSender(msg.sender);
+                console.log("BROADCAST Spencer-only");
+                vm.startBroadcast();
+            } else {
+                console.log("SIMULATE; no transaction will be sent");
+            }
+            transferImmediate(rows, newTimelock);
+            if (send) vm.stopBroadcast();
         } else if (_eq(step, "accept")) {
-            requireValidTimelock(newTimelock);
             console.log("SIMULATE; no transaction will be sent");
-            _printAccept(targets, newTimelock);
+            _printAccept(rows, newTimelock);
         } else if (_eq(step, "check")) {
             console.log("SIMULATE; no transaction will be sent");
-            postCheck(targets, newTimelock);
+            postCheck(rows, newTimelock);
             console.log("post-check ok");
         } else {
-            revert("MigrateOwnership: MIGRATION_STEP must be transfer, accept, or check");
+            revert("MigrateOwnership: MIGRATION_STEP must be transfer, immediate, accept, or check");
         }
     }
 
-    function _transferOne(
+    function _transferTwoStepOne(
         address target,
         address newTimelock
     ) internal returns (uint8 kind) {
@@ -308,9 +435,17 @@ contract MigrateOwnershipToTimelock is Script {
         }
         (bool hasOwner, address owner, bool twoStep, address pending) = inspect(target);
         if (!hasOwner) return 0;
+        if (!twoStep) {
+            if (owner == newTimelock) {
+                console.log("skip already migrated", target);
+                return 0;
+            }
+            console.log("defer immediate setOwner until Ownable2Step accept has executed", target);
+            return 0;
+        }
         _logPrivileges(target);
 
-        if (owner == newTimelock && (!twoStep || pending == address(0))) {
+        if (owner == newTimelock && pending == address(0)) {
             console.log("skip already migrated", target);
             return 0;
         }
@@ -318,7 +453,7 @@ contract MigrateOwnershipToTimelock is Script {
             console.log("skip transfer; accept still pending", target);
             return 0;
         }
-        if (twoStep && pending == CORE_TIMELOCK && owner != CORE_TIMELOCK) {
+        if (pending == CORE_TIMELOCK && owner != CORE_TIMELOCK) {
             console.log("CORE_TIMELOCK is pendingOwner; accept then transferOwnership", target);
             _asCore();
             (bool accepted, bytes memory acceptRet) = target.call(abi.encodeWithSignature("acceptOwnership()"));
@@ -333,14 +468,32 @@ contract MigrateOwnershipToTimelock is Script {
             console.log("skip owner is not CORE_TIMELOCK", target);
             return 0;
         }
-        if (twoStep && pending != address(0)) revert("MigrateOwnership: unexpected pendingOwner");
-        if (twoStep) {
-            _asCore();
-            (bool ok, bytes memory ret) =
-                target.call(abi.encodeWithSignature("transferOwnership(address)", newTimelock));
-            if (!ok) _bubble(ret, "MigrateOwnership: transferOwnership failed");
-            console.log("transferOwnership; timelock must acceptOwnership", target);
-            return 2;
+        if (pending != address(0)) revert("MigrateOwnership: unexpected pendingOwner");
+        _asCore();
+        (bool ok, bytes memory ret) = target.call(abi.encodeWithSignature("transferOwnership(address)", newTimelock));
+        if (!ok) _bubble(ret, "MigrateOwnership: transferOwnership failed");
+        console.log("transferOwnership; timelock must acceptOwnership", target);
+        return 2;
+    }
+
+    function _transferImmediateOne(
+        address target,
+        address newTimelock
+    ) internal returns (uint8 kind) {
+        if (_escrowHeldByCore(target) && !migrateEscrows()) {
+            console.log("skip: immutable governance; migrating bricks createEscrow and the setters", target);
+            return 0;
+        }
+        (bool hasOwner, address owner, bool twoStep,) = inspect(target);
+        if (!hasOwner || twoStep) return 0;
+        _logPrivileges(target);
+        if (owner == newTimelock) {
+            console.log("skip already migrated", target);
+            return 0;
+        }
+        if (owner != CORE_TIMELOCK) {
+            console.log("skip owner is not CORE_TIMELOCK", target);
+            return 0;
         }
         console.log("WARNING: immediate setOwner; this handoff has no delay", target);
         _asCore();
@@ -491,6 +644,78 @@ contract MigrateOwnershipToTimelock is Script {
         string memory b
     ) internal pure returns (bool) {
         return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
+    function _safeAddress() internal view returns (address safe) {
+        if (pinnedSafe != address(0)) return pinnedSafe;
+        safe = readAddress("SAFE_ADDRESS", "MigrateOwnership: SAFE_ADDRESS unset");
+    }
+
+    function _expected() internal view returns (address expected) {
+        if (pinnedExpected != address(0)) return pinnedExpected;
+        expected = readAddress("EXPECTED_TIMELOCK", "MigrateOwnership: EXPECTED_TIMELOCK unset");
+    }
+
+    function _newTimelock() internal view returns (address newTimelock) {
+        if (pinnedNewTimelock != address(0)) return pinnedNewTimelock;
+        newTimelock = readAddress("NEW_TIMELOCK", "MigrateOwnership: NEW_TIMELOCK unset");
+    }
+
+    function _step() internal view returns (string memory step) {
+        if (stepIsPinned) return pinnedStep;
+        step = vm.envOr("MIGRATION_STEP", string("transfer"));
+    }
+
+    function _pinRows() internal view returns (bool) {
+        uint256 id = block.chainid;
+        return id == BASE_SEPOLIA_CHAIN_ID || id == BASE_MAINNET_CHAIN_ID || id == ETH_MAINNET_CHAIN_ID;
+    }
+
+    function _requirePinned(
+        address[] memory rows
+    ) internal pure {
+        address[9] memory pin = _pinnedNine();
+        uint256 n = rows.length;
+        for (uint256 i = 0; i < n; i++) {
+            if (rows[i] != pin[i]) revert("MigrateOwnership: unexpected row");
+        }
+    }
+
+    /// @dev Denylist, Vault, Liability, InsuranceFund, DisputePanel, live escrow, superseded Denylist,
+    ///      superseded Vault, retired escrow.
+    function _pinnedNine() internal pure returns (address[9] memory pin) {
+        pin[0] = 0xeE76876bECcFc1B58fC06fF4E654a517d784B224;
+        pin[1] = 0x1463D664fA467FBCDA4B05443434494f05e565bc;
+        pin[2] = 0x554Caf5a214B8d70D675C09186C5EAE24FEB7307;
+        pin[3] = 0x19fc26B36Cb2031062eD90C19db64b3b09753ab8;
+        pin[4] = 0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb;
+        pin[5] = 0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d;
+        pin[6] = 0xF0f260967D377E07Bdd7840862508ddB23C012b8;
+        pin[7] = 0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7;
+        pin[8] = 0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c;
+    }
+
+    /// @dev Code length is not enough: an EIP-7702 designator (`0xef0100` plus an address) has code.
+    function _requireSafe(
+        address safe
+    ) internal view {
+        if (safe == address(0)) revert("MigrateOwnership: SAFE_ADDRESS unset");
+        if (safe == CORE_TIMELOCK) revert("MigrateOwnership: SAFE_ADDRESS is CORE_TIMELOCK");
+        if (safe == msg.sender) revert("MigrateOwnership: SAFE_ADDRESS is the deployer");
+        if (safe.code.length == 0) revert("MigrateOwnership: SAFE_ADDRESS has no code");
+        if (_isDelegation(safe)) revert("MigrateOwnership: SAFE_ADDRESS is an EIP-7702 delegation");
+        uint256 threshold = ISafe(safe).getThreshold();
+        if (threshold < 2) revert("MigrateOwnership: SAFE threshold is below 2");
+        if (ISafe(safe).getOwners().length < threshold) {
+            revert("MigrateOwnership: SAFE owners are below the threshold");
+        }
+    }
+
+    function _isDelegation(
+        address account
+    ) internal view returns (bool) {
+        bytes memory code = account.code;
+        return code.length >= 3 && code[0] == bytes1(0xef) && code[1] == bytes1(0x01) && code[2] == bytes1(0x00);
     }
 
     function _slotName(

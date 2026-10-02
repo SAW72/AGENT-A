@@ -2,42 +2,46 @@
 
 `CORE_TIMELOCK` `0x10CC9474b45625ADfd05C209f2518023484878D9` is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by `TimelockController` (this runbook).
 
-Mainnet is not in scope. Do not set `ALLOW_MAINNET`. `DeployTimelock` runs only on chainid `84532` (Base Sepolia) or `31337` (Anvil). Every other chain reverts unless `ALLOW_MAINNET=1`. The migration script still reverts on chain ids `8453` and `1` unless that same flag is set. A testnet `TIMELOCK_MIN_DELAY` may be short, for example `300`. A delay under 48 hours logs a warning only when `chainid` is `8453`.
+Mainnet is not in scope. Do not set `ALLOW_MAINNET`. Chain ids `84532` (Base Sepolia) and `31337` (Anvil) are allowed. Chain ids `8453` and `1` revert unless `ALLOW_MAINNET=1`. Every other chain reverts even when that flag is set. `TIMELOCK_MIN_DELAY` must be at least 300 seconds on `84532` and `31337`, and at least 48 hours (`172800`) on `8453` and `1`. A shorter delay reverts.
 
-This runbook does not create a Safe. `SAFE_ADDRESS` is an existing Safe that already has code. The scripts never read `PRIVATE_KEY`. Broadcast uses a Foundry keystore (`--account` and `--sender`) and `vm.startBroadcast()` with no key. Agents do not pass `--broadcast`.
+This runbook does not create a Safe. `SAFE_ADDRESS` is an existing Safe. The scripts never read `PRIVATE_KEY`. Broadcast uses a Foundry keystore (`--account` and `--sender`) and `vm.startBroadcast()` with no key. Agents do not pass `--broadcast`. The only broadcasts in this runbook are the three Spencer runs below: deploy, Ownable2Step `transfer`, and the later immediate `setOwner`.
 
 ## What the book owns today
 
-`script/MigrateOwnershipToTimelock.s.sol` reads every address in `deployments/base-sepolia.json`, then `owner()` and `pendingOwner()` on chain. It acts only on rows whose live owner is `CORE_TIMELOCK`, plus the one non-owner privilege below. A row whose `governance()` is `CORE_TIMELOCK` is skipped unless `MIGRATE_ESCROWS=1`. Null BVT slots are skipped. This table is a Base Sepolia reading taken while writing the script. The script re-reads at run time.
+`script/MigrateOwnershipToTimelock.s.sol` reads `deployments/base-sepolia.json`, then `owner()` and `pendingOwner()` on chain. The handoff is the eight contracts whose live owner is `CORE_TIMELOCK`, plus superseded Vault `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7` (owner is the deployer, `pendingOwner` is `CORE_TIMELOCK`). A row whose `governance()` is `CORE_TIMELOCK` is skipped unless `MIGRATE_ESCROWS=1`. Null BVT slots are not in the nine-row set. This table is a Base Sepolia reading taken while writing the script. The script re-reads at run time.
 
 | Contract | Address | Ownership | In the handoff |
 | --- | --- | --- | --- |
-| Denylist | `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | yes, then timelock `acceptOwnership` |
-| Vault | `0x1463D664fA467FBCDA4B05443434494f05e565bc` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | yes, then timelock `acceptOwnership` |
-| Liability | `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` | immediate `setOwner`, owner `CORE_TIMELOCK` | yes, immediate, no delay on the handoff |
-| InsuranceFund | `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` | immediate `setOwner`, owner `CORE_TIMELOCK` | yes, immediate, no delay on the handoff |
-| DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` | immediate `setOwner`, owner `CORE_TIMELOCK` | yes, immediate, no delay on the handoff |
-| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | skipped unless `MIGRATE_ESCROWS=1` |
-| superseded Denylist | `0xF0f260967D377E07Bdd7840862508ddB23C012b8` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | yes, then timelock `acceptOwnership` |
-| superseded Vault | `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7` | Ownable2Step, owner `0x5D467FA00eC0E92044f779e495a17db66c5964aa`, pending `CORE_TIMELOCK` | yes: the EOA accepts, then queues the timelock |
-| retired BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | skipped unless `MIGRATE_ESCROWS=1` |
-| BVT, BVTStaking, BVTFeeRouter, BVTTimelock, BVTGovernor | null | not deployed | skipped |
+| Denylist | `0xeE76876bECcFc1B58fC06fF4E654a517d784B224` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | step `transfer`, then timelock `acceptOwnership` |
+| Vault | `0x1463D664fA467FBCDA4B05443434494f05e565bc` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | step `transfer`, then timelock `acceptOwnership` |
+| Liability | `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307` | immediate `setOwner`, owner `CORE_TIMELOCK` | later step `immediate`, only after the two-step accepts have executed |
+| InsuranceFund | `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8` | immediate `setOwner`, owner `CORE_TIMELOCK` | later step `immediate`, only after the two-step accepts have executed |
+| DisputePanel | `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb` | immediate `setOwner`, owner `CORE_TIMELOCK` | later step `immediate`, only after the two-step accepts have executed |
+| BotAttestationEscrow | `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | skipped unless `MIGRATE_ESCROWS=1`; if set, step `transfer` then timelock `acceptOwnership` |
+| superseded Denylist | `0xF0f260967D377E07Bdd7840862508ddB23C012b8` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | step `transfer`, then timelock `acceptOwnership` |
+| superseded Vault | `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7` | Ownable2Step, owner `0x5D467FA00eC0E92044f779e495a17db66c5964aa`, pending `CORE_TIMELOCK` | step `transfer`: the EOA accepts, then queues the timelock |
+| retired BotAttestationEscrow | `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c` | Ownable2Step, owner `CORE_TIMELOCK`, pending `0` | skipped unless `MIGRATE_ESCROWS=1`; if set, step `transfer` then timelock `acceptOwnership` |
+| BVT, BVTStaking, BVTFeeRouter, BVTTimelock, BVTGovernor | null | not deployed | not in the nine-row set |
 
 `DisputePanel.isArbitrator(CORE_TIMELOCK)` is false. No enumerated contract grants `CORE_TIMELOCK` an AccessControl role.
 
-### Escrows are opt-in
+### Escrows are opt-in, and turning the flag on is the recommendation
 
 Live escrow `0x1069…298d` and retired escrow `0x1412…284c` store `governance() == CORE_TIMELOCK`. That address is immutable. `createEscrow` reverts `FundingBeforeGovernance` unless `owner() == governance`. `setDenylist`, `setVault`, and `setDisputePanel` revert `NotGovernance` unless the caller is `governance` and `owner()` is `governance`.
 
-The default is to skip both. The log says why: immutable governance; migrating bricks `createEscrow` and the setters. `postCheck` accepts those rows still owned by `CORE_TIMELOCK` while `MIGRATE_ESCROWS` is unset.
+`MIGRATE_ESCROWS` defaults off. The log says why a row was skipped: immutable governance; migrating bricks `createEscrow` and the setters.
 
-Any escrow left on CORE (`MIGRATE_ESCROWS` unset) stays under single-key control by the CORE EOA until that escrow is retired or replaced by an escrow whose `governance` is the `TimelockController`.
+Turn the flag on when Spencer broadcasts. Once `owner` is the timelock, `createEscrow` and the setters are dead, so no new funds can enter these old escrows. That freezes them. Leaving the flag unset keeps both escrows under single-key control by the CORE EOA until each one is retired or replaced by an escrow whose `governance` is the `TimelockController`. Spencer decides at broadcast time. This script does not deploy a replacement escrow.
 
-Set `MIGRATE_ESCROWS=1` only when that brick is intentional. After `owner` moves to the `TimelockController`, neither the EOA nor the timelock can call those four functions. `release`, `refund`, `withdraw`, and `withdrawTo` are not owner-gated and keep working. A new escrow, constructed with `governance` set to the `TimelockController`, is required before anyone can create another escrow or retarget the denylist, vault, or panel. This script does not deploy that escrow. With the flag set, `postCheck` requires both escrows on the timelock with `pendingOwner == 0`.
+`release` and `refund` are not owner-gated and keep working either way. The deployed bytecode has no `withdraw` or `withdrawTo`. With the flag set, `postCheck` requires both escrows on the timelock with `pendingOwner == 0`. With the flag unset, `postCheck` requires both still owned by `CORE_TIMELOCK` with `pendingOwner == 0`.
 
-### Immediate `setOwner` risk
+### Immediate `setOwner` is a later transaction
 
-Liability, InsuranceFund, and DisputePanel have no `pendingOwner`. Step 1 calls `setOwner(newTimelock)` in the same transaction. There is no accept step and no timelock delay on that handoff. The risk is the handoff itself: the EOA can name any new owner in one transaction. Once the owner is the timelock, later owner calls wait for `TIMELOCK_MIN_DELAY`.
+Liability, InsuranceFund, and DisputePanel have no `pendingOwner`. Step `transfer` does not call `setOwner`. It only queues Ownable2Step rows.
+
+After the timelock's `acceptOwnership` batch has executed, every in-scope Ownable2Step row shows `owner() == NEW_TIMELOCK`. A later step, `MIGRATION_STEP=immediate`, then calls `setOwner(NEW_TIMELOCK)` on the three immediate rows. That step reverts if any in-scope two-step row is not already there. `setOwner` has no second accept, and the handoff itself has no timelock delay. It is its own transaction. It is not bundled with `transferOwnership`.
+
+The risk is that later handoff: once it runs, the EOA names the timelock in one transaction. Until it runs, those three stay with `CORE_TIMELOCK`. After it runs, later owner calls wait for `TIMELOCK_MIN_DELAY`.
 
 Ownable2Step rows stay owned by the current owner until the timelock's `acceptOwnership` executes. Until that accept, `CORE_TIMELOCK` can still replace `pendingOwner`.
 
@@ -47,7 +51,7 @@ Import the deployer keystore out of band. Do not put the key in the environment.
 
 ```bash
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
-export SAFE_ADDRESS=<existing-safe-with-code>
+export SAFE_ADDRESS=<existing-safe>
 export TIMELOCK_MIN_DELAY=300
 # Testnet may leave TIMELOCK_EXECUTOR unset. address(0) is an open executor.
 # With an open executor, anyone, CORE included, can execute an op that is already scheduled and past its delay.
@@ -55,7 +59,7 @@ export TIMELOCK_MIN_DELAY=300
 # export TIMELOCK_EXECUTOR=$SAFE_ADDRESS
 ```
 
-`SAFE_ADDRESS` must already have code and `getThreshold()` of at least 2. `TIMELOCK_MIN_DELAY` must be greater than 0. On Base Sepolia the open executor is acceptable. For mainnet, set `TIMELOCK_EXECUTOR` to `SAFE_ADDRESS` so only the Safe can execute. An open executor lets anyone, including `CORE_TIMELOCK`, call `execute` / `executeBatch` once an operation is scheduled and the delay has passed. That account still cannot `schedule`. That is another reason to prefer the Safe as executor on mainnet. Mainnet is not in scope for this runbook.
+`SAFE_ADDRESS` must already have code, and that code must not start with `0xef0100` (an EIP-7702 delegation designator; code length alone is not enough, because `CORE_TIMELOCK` itself passes a length check). `ISafe(SAFE_ADDRESS).getThreshold()` must be at least 2, and `getOwners().length` must be at least that threshold. The Safe must not be `CORE_TIMELOCK` and must not be the deployer (`msg.sender`). `TIMELOCK_MIN_DELAY` must be at least 300 on this chain. On Base Sepolia the open executor is acceptable. For mainnet, set `TIMELOCK_EXECUTOR` to `SAFE_ADDRESS` so only the Safe can execute. An open executor lets anyone, including `CORE_TIMELOCK`, call `execute` / `executeBatch` once an operation is scheduled and the delay has passed. That account still cannot `schedule`. That is another reason to prefer the Safe as executor on mainnet. Mainnet is not in scope for this runbook.
 
 Simulate. This command does not broadcast.
 
@@ -65,7 +69,7 @@ forge script script/DeployTimelock.s.sol:DeployTimelock \
   --sender 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001
 ```
 
-Spencer deploys. This is the one deploy broadcast.
+Spencer deploys. This is the deploy broadcast.
 
 ```bash
 forge script script/DeployTimelock.s.sol:DeployTimelock \
@@ -75,29 +79,43 @@ forge script script/DeployTimelock.s.sol:DeployTimelock \
   --broadcast
 ```
 
-Proposers are `[SAFE_ADDRESS]`. OpenZeppelin v5.7.0 also grants that Safe `CANCELLER_ROLE`. `admin` is `address(0)`. `DEFAULT_ADMIN_ROLE` is held by the timelock contract, not by an EOA. Record the logged address as `NEW_TIMELOCK`. Do not write it into `deployments/base-sepolia.json` in this change.
+Proposers are `[SAFE_ADDRESS]`. OpenZeppelin v5.7.0 also grants that Safe `CANCELLER_ROLE`. `admin` is `address(0)`. `DEFAULT_ADMIN_ROLE` is held by the timelock contract, not by an EOA. Record the logged address as both `NEW_TIMELOCK` and `EXPECTED_TIMELOCK`. Do not write it into `deployments/base-sepolia.json` in this change.
 
-## 1. Transfer, signed by the EOA
+## 1. Transfer Ownable2Step rows, signed by the EOA
 
-`MIGRATION_STEP=transfer` (the default). Before any ownership call, the script reads `SAFE_ADDRESS` and reverts unless `NEW_TIMELOCK` has code, `getMinDelay() > 0`, `ISafe(SAFE_ADDRESS).getThreshold()` is at least 2, the Safe holds `PROPOSER_ROLE`, the timelock holds `DEFAULT_ADMIN_ROLE`, the sender does not hold `DEFAULT_ADMIN_ROLE`, and `CORE_TIMELOCK` holds none of `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE`, or `DEFAULT_ADMIN_ROLE`. The script skips a row whose `owner` is already `NEW_TIMELOCK` and whose `pendingOwner` is zero, and it skips an Ownable2Step row already pending `NEW_TIMELOCK`. It also skips both escrows unless `MIGRATE_ESCROWS=1`. Re-running it is safe.
+`MIGRATION_STEP=transfer` (the default). Before this step, and before every other step, the script reverts unless all of the following hold:
+
+- `NEW_TIMELOCK` has code and equals `EXPECTED_TIMELOCK` (required).
+- `SAFE_ADDRESS` is not `CORE_TIMELOCK` and not the deployer, has code, and that code does not start with `0xef0100`.
+- `getThreshold()` is at least 2 and `getOwners().length` is at least the threshold.
+- The Safe holds `PROPOSER_ROLE` and `CANCELLER_ROLE`.
+- `DEFAULT_ADMIN_ROLE` is held by the timelock itself, and not by `CORE_TIMELOCK`, the sender, or the Safe.
+- `CORE_TIMELOCK` holds none of `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE`, or `DEFAULT_ADMIN_ROLE`.
+- `getMinDelay()` is at least 300 seconds on this chain (48 hours on chain ids `8453` and `1`).
+
+The script skips a two-step row whose `owner` is already `NEW_TIMELOCK` and whose `pendingOwner` is zero, and it skips a two-step row already pending `NEW_TIMELOCK`. It defers Liability, InsuranceFund, and DisputePanel. It also skips both escrows unless `MIGRATE_ESCROWS=1`. Re-running it is safe.
 
 Simulate. This command does not broadcast. On a fork it pranks `CORE_TIMELOCK` and prints the accept batch from the simulated state.
 
 ```bash
 export NEW_TIMELOCK=<timelock-from-step-0>
-export SAFE_ADDRESS=<existing-safe-with-code>
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
+export SAFE_ADDRESS=<existing-safe>
 export MIGRATION_STEP=transfer
+# Recommended. Spencer decides at broadcast time. Unset leaves both escrows on the single CORE key.
 # export MIGRATE_ESCROWS=1
 forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock \
   --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-Spencer sends step 1 from the `CORE_TIMELOCK` keystore. `--sender` is `0x10CC9474b45625ADfd05C209f2518023484878D9`.
+Spencer sends step `transfer` from the `CORE_TIMELOCK` keystore. `--sender` is `0x10CC9474b45625ADfd05C209f2518023484878D9`.
 
 ```bash
 export NEW_TIMELOCK=<timelock-from-step-0>
-export SAFE_ADDRESS=<existing-safe-with-code>
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
+export SAFE_ADDRESS=<existing-safe>
 export MIGRATION_STEP=transfer
+# export MIGRATE_ESCROWS=1
 forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" \
   --account <core-timelock-account> \
@@ -109,12 +127,14 @@ For the superseded Vault, this transaction calls `acceptOwnership` (the EOA is `
 
 ## 2. Timelock accepts Ownable2Step ownership
 
-Do not broadcast this step. The same `NEW_TIMELOCK` checks as step 1 run before any calldata is printed. After step 1, print the batch. The targets are only rows whose `pendingOwner` is already `NEW_TIMELOCK`. Escrow rows are omitted unless `MIGRATE_ESCROWS=1`.
+Do not broadcast this step. The same `NEW_TIMELOCK` checks run before any calldata is printed. After step `transfer`, print the batch. The targets are only rows whose `pendingOwner` is already `NEW_TIMELOCK`. Escrow rows are omitted unless `MIGRATE_ESCROWS=1`.
 
 ```bash
 export NEW_TIMELOCK=<timelock-from-step-0>
-export SAFE_ADDRESS=<existing-safe-with-code>
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
+export SAFE_ADDRESS=<existing-safe>
 export MIGRATION_STEP=accept
+# export MIGRATE_ESCROWS=1
 forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock \
   --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
@@ -125,34 +145,83 @@ The Safe calls `scheduleBatch(targets, values, payloads, predecessor, salt, dela
 
 If the remaining set changes, the operation id changes. Cancel the previously scheduled operation from the Safe before scheduling a different batch. `acceptOwnership` on a row that already completed reverts, and that reverts the whole batch.
 
-Immediate `setOwner` rows are not in this batch. Their owner is already the timelock after step 1.
+Liability, InsuranceFund, and DisputePanel are not in this batch. Their owner is still `CORE_TIMELOCK` until step `immediate`.
 
-## 3. Post-check
+## 3. Immediate `setOwner`, signed by the EOA
 
-This command does not broadcast.
+Run this only after `executeBatch` from step 2 has succeeded. The script reverts unless every in-scope Ownable2Step row already shows `owner() == NEW_TIMELOCK` and `pendingOwner == 0`. With `MIGRATE_ESCROWS=1`, both escrows are in scope, so their accepts must have executed too. With the flag unset, the escrows are not in that gate and stay on `CORE_TIMELOCK`.
+
+`setOwner` has no second accept. This transaction does not wait out `TIMELOCK_MIN_DELAY`. It is not the same transaction as step `transfer`.
+
+Simulate. This command does not broadcast.
 
 ```bash
 export NEW_TIMELOCK=<timelock-from-step-0>
-export MIGRATION_STEP=check
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
+export SAFE_ADDRESS=<existing-safe>
+export MIGRATION_STEP=immediate
+# export MIGRATE_ESCROWS=1
 forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock \
   --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-It reverts unless every in-scope row has `owner() == NEW_TIMELOCK` and `pendingOwner() == 0`, and no enumerated non-escrow contract still has `CORE_TIMELOCK` as `owner` or `pendingOwner`. With `MIGRATE_ESCROWS` unset, the two escrows may still be owned by `CORE_TIMELOCK`. With `MIGRATE_ESCROWS=1`, those two must be on the timelock and `pendingOwner` must be zero. Immutable `governance` is unchanged either way.
+Spencer sends this step from the `CORE_TIMELOCK` keystore.
+
+```bash
+export NEW_TIMELOCK=<timelock-from-step-0>
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
+export SAFE_ADDRESS=<existing-safe>
+export MIGRATION_STEP=immediate
+# export MIGRATE_ESCROWS=1
+forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --account <core-timelock-account> \
+  --sender 0x10CC9474b45625ADfd05C209f2518023484878D9 \
+  --broadcast
+```
+
+## 4. Post-check
+
+This command does not broadcast. The same `NEW_TIMELOCK` checks run first. `postCheck` then requires exactly these nine addresses, in this order, on chain ids `84532`, `8453`, and `1`:
+
+1. `0xeE76876bECcFc1B58fC06fF4E654a517d784B224`
+2. `0x1463D664fA467FBCDA4B05443434494f05e565bc`
+3. `0x554Caf5a214B8d70D675C09186C5EAE24FEB7307`
+4. `0x19fc26B36Cb2031062eD90C19db64b3b09753ab8`
+5. `0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb`
+6. `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`
+7. `0xF0f260967D377E07Bdd7840862508ddB23C012b8`
+8. `0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7`
+9. `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`
+
+Any other address in that set reverts. A row with an unexpected owner reverts. The script does not skip it. With `MIGRATE_ESCROWS` unset, rows 6 and 9 must still be owned by `CORE_TIMELOCK` with `pendingOwner == 0`, and the other seven must be owned by `NEW_TIMELOCK` with `pendingOwner == 0`. With `MIGRATE_ESCROWS=1`, all nine must be owned by `NEW_TIMELOCK` with `pendingOwner == 0`. Immutable `governance` is unchanged either way. Set the flag on this command to the same value used at broadcast.
+
+```bash
+export NEW_TIMELOCK=<timelock-from-step-0>
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
+export SAFE_ADDRESS=<existing-safe>
+export MIGRATION_STEP=check
+# export MIGRATE_ESCROWS=1
+forge script script/MigrateOwnershipToTimelock.s.sol:MigrateOwnershipToTimelock \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL"
+```
 
 ## Before funding any contract
 
 Do this again immediately before sending ETH or opening an escrow. These commands do not broadcast.
 
-An escrow left on `CORE_TIMELOCK` (`MIGRATE_ESCROWS` unset) is still a single key. Do not fund it. Fund only after that escrow is retired or replaced by one whose `governance` is `NEW_TIMELOCK`, and after the checks below match.
+An escrow left on `CORE_TIMELOCK` (`MIGRATE_ESCROWS` unset) is still a single key. Do not fund it. Fund only after that escrow is retired or replaced by one whose `governance` is `NEW_TIMELOCK`, and after the checks below match. The recommendation is to set `MIGRATE_ESCROWS=1` at broadcast so these old escrows cannot take new funds. Spencer decides at broadcast time.
 
 ```bash
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 export SAFE_ADDRESS=<existing-safe>
 export NEW_TIMELOCK=<timelock-from-step-0>
+export EXPECTED_TIMELOCK=$NEW_TIMELOCK
 
+cast code "$SAFE_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$SAFE_ADDRESS" "getThreshold()(uint256)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$SAFE_ADDRESS" "getOwners()(address[])" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$NEW_TIMELOCK" "getMinDelay()(uint256)" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 
 PROPOSER_ROLE=$(cast keccak "PROPOSER_ROLE")
@@ -161,14 +230,16 @@ CANCELLER_ROLE=$(cast keccak "CANCELLER_ROLE")
 DEFAULT_ADMIN_ROLE=0x0000000000000000000000000000000000000000000000000000000000000000
 
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$PROPOSER_ROLE" "$SAFE_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$CANCELLER_ROLE" "$SAFE_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$DEFAULT_ADMIN_ROLE" "$NEW_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
+cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$DEFAULT_ADMIN_ROLE" "$SAFE_ADDRESS" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$PROPOSER_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$EXECUTOR_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$CANCELLER_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 cast call "$NEW_TIMELOCK" "hasRole(bytes32,address)(bool)" "$DEFAULT_ADMIN_ROLE" "$CORE_TIMELOCK" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-`getThreshold()` must be at least 2. `getMinDelay()` must be greater than 0. The Safe's proposer result must be `true`. The timelock's own admin result must be `true`. Every `CORE_TIMELOCK` role result must be `false`.
+`cast code` on the Safe must not start with `0xef0100`. `getThreshold()` must be at least 2, and `getOwners()` must return at least that many addresses. `EXPECTED_TIMELOCK` must equal `NEW_TIMELOCK`. `getMinDelay()` must be at least 300 on Base Sepolia and at least 172800 on chain ids `8453` and `1`. The Safe's proposer and canceller results must be `true`. The timelock's own admin result must be `true`. The Safe's admin result must be `false`. Every `CORE_TIMELOCK` role result must be `false`.
 
 Ownable2Step rows. `owner()` must be `NEW_TIMELOCK` and `pendingOwner()` must be `0`. The two escrows are in this list only when `MIGRATE_ESCROWS=1`. Otherwise their `owner()` is still `CORE_TIMELOCK`, and they stay under that single key.
 
@@ -184,7 +255,7 @@ do
 done
 ```
 
-Immediate `setOwner` rows have no `pendingOwner()`. `owner()` must be `NEW_TIMELOCK`.
+Immediate `setOwner` rows have no `pendingOwner()`. After step `immediate`, `owner()` must be `NEW_TIMELOCK`. Before that step, `owner()` is still `CORE_TIMELOCK`.
 
 ```bash
 for addr in \
@@ -199,6 +270,8 @@ done
 ## Kill switch / rollback
 
 Nothing is instant once the timelock owns a contract. `transferOwnership`, `setOwner`, and every other owner call wait for `getMinDelay()` before they can execute. Cancelling a waiting operation does not undo one that has already executed.
+
+The immediate `setOwner` handoff is the exception on the way in: that one transaction does not wait. It cannot run until the Ownable2Step accepts have executed, and it is not bundled with those `transferOwnership` calls. After it lands, moving those three contracts again waits for the delay.
 
 ### Cancel a scheduled operation
 
@@ -220,31 +293,45 @@ The arguments are the same ones that were scheduled. The migration accept batch 
 
 ### Move ownership back
 
-The Safe proposes a new schedule on `NEW_TIMELOCK`, waits out `getMinDelay()`, then executes. There is no same-transaction return.
+The Safe proposes a new schedule on `NEW_TIMELOCK`, waits out `getMinDelay()`, then executes. There is no same-transaction return to the EOA.
 
 - Ownable2Step (`Denylist`, `Vault`, and the superseded pair, plus the escrows if they were opted in): the payload is `transferOwnership(address)` aimed at the return address. After execute, that address is only `pendingOwner`. It must call `acceptOwnership()` itself. Until that call, the timelock remains owner.
 - Immediate `setOwner` (Liability, InsuranceFund, DisputePanel): the payload is `setOwner(address)` aimed at the return address. Execute sets the owner in that transaction. The delay is the wait before execute. There is no second accept.
 
 ## Outflow paths
 
-Live ETH balances on the enumerated contracts were 0 at the reading above. `lockedValue()` on both escrows was 0. Live `totalOwed()` reverted on `0x1069…298d` (that getter is in the current source; the deployed bytecode did not answer it).
+Live ETH balances on the enumerated contracts were 0 at the reading used for this runbook. `lockedValue()` on both escrows was 0.
 
-Escrow ETH leaves only through the current source's pull path. No owner function sends the balance.
+The value-at-risk rows below are the deployed escrow bytecode, not the current repo source. Current source is a later pull-payment design (payer-only `release`, `RULING_GRACE`, `withdraw` / `withdrawTo`). That is not what is on chain.
+
+Source of truth for live escrow `0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d`:
+
+- `deployments/base-sepolia.json` records commit `444c427` (`444c42734b414390416853c32df0c0395a3da74c`), deploy tx `0x7ab17bac1f046ad50299e905f6f5fed47455fdebd3e3004094b899c7f801d8aa`, block `47345163`.
+- `git show 444c427:contracts/BotAttestationEscrow.sol` matches the Blockscout-verified source (`BotAttestationEscrow`, solc `v0.8.20+commit.a1b79de6`, optimizer 200, shanghai). `cast code` matches that deployed bytecode.
+- Selectors present include `release(bytes32)` `0x67d42a8b` and `refund(bytes32)` `0x7249fbb6`. Selectors absent include `withdraw()` `0x3ccfd60b`, `withdrawTo(address)` `0x72b0d90c`, `totalOwed()` `0xe7fa9f7d`, and `RULING_GRACE()` `0x3cfbadae`.
+
+Source of truth for retired escrow `0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c`:
+
+- The book records deploy tx `0x700d9bac95e8833bd7e93721a88d689a0fb839c9e6108858c52560eae111948e`, block `47299930`, no commit hash, retired `2026-09-26`. Blockscout has no verified source for this address.
+- The runtime selector scan is the source of truth: the same `release(bytes32)` and `refund(bytes32)` selectors are present, and `withdraw`, `withdrawTo`, `totalOwed`, and `RULING_GRACE` are absent. The parent revision of the live escrow file (`e311044`) has the same anyone-can-`release`, ETH `call{value}` push, and expiry refund with no grace. This runbook does not treat the retired contract as verified source.
+
+Deployed behavior, from that verified live source (and the same shape on the retired bytecode):
 
 | Function | Who can trigger it today | Who after migration | Limit |
 | --- | --- | --- | --- |
-| `release` | While `Open`, the payer only, before `expiresAt`, if both bots still verify. While `Disputed`, the payer or the payee, and only after the panel upholds. Not the owner. | Same. Not the timelock. | Credits `payee` the escrow `amount`. Does not push ETH. |
-| `refund` | Anyone, if the escrow is expired while `Open`, the panel ruled an unwind, or an unresolved dispute is past `expiresAt + RULING_GRACE` (7 days). An upheld ruling cannot refund. | Same. | Credits `payer` the escrow `amount`. Does not push ETH. |
-| `withdraw` | The credited account, for its whole `pendingWithdrawals` balance. | Same. | That account's credit, sent to itself. |
-| `withdrawTo` | The credited account. | Same. | That account's credit, sent to `to`. |
-| `createEscrow` | Inflow, and only while `owner() == governance` (`CORE_TIMELOCK`). | Unchanged while the escrows are skipped. With `MIGRATE_ESCROWS=1`, reverts `FundingBeforeGovernance` until a new escrow is deployed with `governance` set to the timelock. | Not an outflow. |
+| `release(bytes32)` | Anyone. There is no `msg.sender` check. While `Open`, the escrow must be unexpired and both bots must still verify. While `Disputed`, only after the panel upholds, and that path skips re-attestation. Not the owner. | Same. Not the timelock. | Pushes `amount` to the create-time payee with `payee.call{value}`. |
+| `refund(bytes32)` | Anyone. While `Open`, only after `block.timestamp > expiresAt`, with no grace. While `Disputed`, an upheld ruling cannot refund; before expiry an unwind ruling is required; after expiry the refund is the backstop, with no `RULING_GRACE`. | Same. | Pushes `amount` to the payer with `payer.call{value}`. |
+| `withdraw` / `withdrawTo` | Not present on the deployed bytecode. | Not present. | No such outflow. |
+| `createEscrow` | Inflow, and only while `owner() == governance` (`CORE_TIMELOCK`). | Unchanged while the escrows are skipped, so the single CORE key can still open escrows. With `MIGRATE_ESCROWS=1`, reverts `FundingBeforeGovernance`. No new funds can enter. | Not an outflow. |
 
-The Vault holds no ETH and has no token balance and no withdrawal function. Owner calls are `register`, `setOperator`, and `burn`. After migration those wait on the Safe plus the delay. `burn` stays irreversible.
+The Vault holds no ETH and has no token balance and no withdrawal function. Owner calls are `register`, `setOperator`, and `burn`. Today `CORE_TIMELOCK` calls them. After the Vault's Ownable2Step accept, those calls wait on the Safe plus the delay. `burn` stays irreversible.
 
-Liability can hold ETH (`receive`). `settle` when the liable party is `Owner` sends `claim.amount` to the claimant. Today `CORE_TIMELOCK` files the claim and settles it, up to the contract's ETH balance. After migration only the timelock can, via the Safe, after the delay. The auditor branch reverts. The insurance branch calls `InsuranceFund.payout`.
+Denylist listing writes are `addExact`, `addSignature`, `addPrompt`, and `remove`, all `onlyOwner`. Today that owner is `CORE_TIMELOCK`. After the Denylist's accept, the timelock calls them via the Safe, after the delay.
 
-InsuranceFund can hold ETH (`fund`). `payout` is `onlyLiability`, not the owner. The owner cannot withdraw. ETH leaves only when Liability `settle` calls `payout`, capped by the fund's accounted `balance` and the claim amount. Today that caller path is `CORE_TIMELOCK` as Liability owner. After migration it is the timelock, via the Safe, after the delay.
+DisputePanel `setArbitrator` is `onlyOwner`. `CORE_TIMELOCK` is not a seated arbitrator. Today the owner is `CORE_TIMELOCK`. The owner change itself is the later `setOwner` transaction, which has no delay and runs only after the two-step accepts have executed. After that, `setArbitrator` waits on the Safe plus the delay. The seat list is not cleared by this migration.
 
-Denylist and DisputePanel hold no ETH. DisputePanel `setArbitrator` and `setOwner` move with the owner. `CORE_TIMELOCK` is not a seated arbitrator.
+Liability can hold ETH (`receive`). `settle` when the liable party is `Owner` sends `claim.amount` to the claimant. Today `CORE_TIMELOCK` files the claim and settles it, up to the contract's ETH balance. After step `immediate`, only the timelock can, via the Safe, after the delay. The auditor branch reverts. The insurance branch calls `InsuranceFund.payout`.
 
-After the default accept batch, `CORE_TIMELOCK` is not `owner` or `pendingOwner` of the non-escrow contracts. It still owns both escrows, and it remains their immutable `governance`, so `createEscrow` and the setters keep working for that EOA. With `MIGRATE_ESCROWS=1`, it is not `owner` or `pendingOwner` of those escrows either, and the gated functions revert because `governance` is still the EOA while `owner` is the timelock.
+InsuranceFund can hold ETH (`fund`). `payout` is `onlyLiability`, not the owner. The owner cannot withdraw. ETH leaves only when Liability `settle` calls `payout`, capped by the fund's accounted `balance` and the claim amount. Today that caller path is `CORE_TIMELOCK` as Liability owner. After step `immediate` it is the timelock, via the Safe, after the delay.
+
+After the default path (escrows left in place), `CORE_TIMELOCK` is not `owner` or `pendingOwner` of the seven non-escrow rows. It still owns both escrows, and it remains their immutable `governance`, so `createEscrow` and the setters keep working for that EOA. That is single-key control. With `MIGRATE_ESCROWS=1`, it is not `owner` or `pendingOwner` of those escrows either, `createEscrow` and the setters revert, and no new funds can enter. `release` and `refund` still work, and `governance` is still the EOA.
