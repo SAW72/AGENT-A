@@ -32,6 +32,8 @@ abstract contract OpsLive is Script {
     address public constant LIVE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
 
     bytes32 public constant SALT_TAG = keccak256("OPS_OWNER_CALL_V1");
+    /// @dev The default salt repeats for an identical call, so a second `schedule` hits the same operation id.
+    string public constant SALT_REPEAT_HINT = "set TIMELOCK_SALT to a fresh value to repeat an identical call";
 
     struct TimelockCall {
         address target;
@@ -234,6 +236,7 @@ abstract contract OpsLive is Script {
         console.logBytes(call.executeCalldata);
         console.log("operationId");
         console.logBytes32(call.operationId);
+        console.log(SALT_REPEAT_HINT);
     }
 
     function _bubble(
