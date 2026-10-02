@@ -30,8 +30,9 @@ interface ILegacyDenylistView {
 /// State-changing calls are `addExact` / `addSignature` / `addPrompt` on the new contract.
 /// When the signer is not `CORE_TIMELOCK`, `run` logs the plan and broadcasts nothing.
 /// Chainid guard: Base Sepolia (84532) only. Mainnet is always refused.
-/// Agents do not --broadcast. Spencer runs any broadcast locally, or schedules the
-/// same adds through the timelock. See script/DEPLOY_DENYLIST.md.
+/// Agents do not --broadcast. Spencer runs any broadcast locally. CORE_TIMELOCK is an EOA (with EIP-7702 delegation),
+/// not a timelock; to be replaced by TimelockController (docs/runbooks/CORE_TIMELOCK_MIGRATION.md). See
+/// script/DEPLOY_DENYLIST.md.
 contract MigrateDenylistListings is Script {
     using stdJson for string;
 

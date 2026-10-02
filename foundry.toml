@@ -12,6 +12,8 @@ ffi = false
 fs_permissions = [
     { access = "read", path = "./script" },
     { access = "read", path = "./deployments" },
+    { access = "read", path = "./broadcast" },
+    { access = "read-write", path = "./test/fixtures" },
     { access = "read-write", path = "./out" },
 ]
 

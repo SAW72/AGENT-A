@@ -45,6 +45,8 @@ jobs:
             exit 1
           fi
       - name: Test
+        env:
+          MIGRATE_ESCROWS: "0"
         run: forge test
 
   claim-relayer:
@@ -75,6 +77,8 @@ jobs:
       - name: Install forge-std
         run: forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts --no-commit
       - name: Live Denylist and Vault fork test (public Base Sepolia)
+        env:
+          MIGRATE_ESCROWS: "0"
         run: forge test --fork-url https://sepolia.base.org --match-contract LiveDenylistVaultTest -vv
 
   wallet-ux:

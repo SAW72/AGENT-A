@@ -25,7 +25,7 @@ The previous pair is still on chain and is **not** a target:
 
 The scripts revert if `DENYLIST`, `VAULT`, or `CORE_TIMELOCK` is anything except the live row above, including the superseded pair. The old Vault still points at the old Denylist.
 
-`CORE_TIMELOCK` is the Ownable2Step owner. On chain that account's code is an EIP-7702 delegation (`EIP7702StatelessDeleGator` 1.3.0). It is not an OpenZeppelin `TimelockController`: there is no `schedule` / `getMinDelay` on it. `onlyOwner` checks `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call.
+`CORE_TIMELOCK` is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController ([runbook](../docs/runbooks/CORE_TIMELOCK_MIGRATION.md)). It is the Ownable2Step owner. On chain that account's code is an EIP-7702 delegation (`EIP7702StatelessDeleGator` 1.3.0). There is no `schedule` / `getMinDelay` on it. `onlyOwner` checks `msg.sender == owner()`. A transaction whose sender is `CORE_TIMELOCK` is the owner call.
 
 ## Env
 
@@ -42,7 +42,7 @@ export CORE_TIMELOCK=0x10CC9474b45625ADfd05C209f2518023484878D9
 | --- | --- | --- |
 | `DENYLIST` | every op | Live Denylist. Vault ops also require it, and revert if `Vault.denylist()` differs. |
 | `VAULT` | Vault ops | Live Vault. |
-| `CORE_TIMELOCK` | every op | Must equal `owner()` and the live timelock above. |
+| `CORE_TIMELOCK` | every op | Must equal `owner()` and the address above. |
 | `LISTING_ID` | Denylist ops | `bytes32` weight hash, behavior signature, or prompt hash. `bytes32(0)` reverts `ZeroId`. |
 | `BUCKET` | `OpsDenylistRemove` | `Exact`, `Signature`, or `Prompt`. |
 | `BOT_ID` | Vault ops | `bytes32` bot id. |
@@ -149,7 +149,7 @@ cast call "$VAULT" "bots(bytes32)(bytes32,bytes32,bytes32,uint8,bool,uint256)" \
 cast call "$VAULT" "operator(bytes32)(address)" "$BOT_ID" --rpc-url "$BASE_SEPOLIA_RPC_URL"
 ```
 
-Calldata for a timelock-owned send. Prefer the forge scripts above. Use `cast calldata` when a wallet needs the payload. There is no `schedule` on `CORE_TIMELOCK`.
+Calldata for an owner send. There is no `schedule` on `CORE_TIMELOCK`. Prefer the forge scripts above. Use `cast calldata` when a wallet needs the payload.
 
 ```bash
 cast calldata "addExact(bytes32)" "$LISTING_ID"
@@ -184,7 +184,7 @@ A key that is not the owner reverts `OwnableUnauthorizedAccount`. Sending to the
 | `OpsLive: superseded Denylist` / `superseded Vault` | env points at the previous pair |
 | `OpsLive: DENYLIST is not the live Base Sepolia Denylist` | env is some other denylist |
 | `OpsLive: VAULT is not the live Base Sepolia Vault` | env is some other vault |
-| `OpsLive: CORE_TIMELOCK is not the live owner` | env timelock is not the book address |
+| `OpsLive: CORE_TIMELOCK is not the live owner` | `CORE_TIMELOCK` env is not the book address |
 | `OpsLive: Denylist.owner is not CORE_TIMELOCK` | on-chain owner moved |
 | `OpsLive: Vault.owner is not CORE_TIMELOCK` | on-chain owner moved |
 | `OpsLive: Vault.denylist is not DENYLIST` | vault points at a different denylist |

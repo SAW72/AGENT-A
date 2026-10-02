@@ -91,12 +91,12 @@ forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts
 forge build && forge test
 export BASE_SEPOLIA_RPC_URL="${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}"
 # PRIVATE_KEY from env only — never commit
-# CORE_TIMELOCK = timelock/multisig that will own Denylist/Vault/Liability (≠ deployer)
+# CORE_TIMELOCK is an EOA (with EIP-7702 delegation), not a timelock; to be replaced by TimelockController (docs/runbooks/CORE_TIMELOCK_MIGRATION.md). Must not be the deployer.
 # (1) forge script script/Deploy.s.sol:Deploy --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
 #     then CORE_TIMELOCK acceptOwnership() on Denylist and Vault, and setArbitrator x3
 # Escrow is live and Gate B is seated. Record: script/DEPLOY_ESCROW_BASE_SEPOLIA.md
 # SIMULATE is not live. Agents do not --broadcast. Do not replace the live escrow address.
-# (2) escrow — env DENYLIST, VAULT, DISPUTE_PANEL, CORE_TIMELOCK (timelock must acceptOwnership):
+# (2) escrow — env DENYLIST, VAULT, DISPUTE_PANEL, CORE_TIMELOCK (CORE_TIMELOCK must acceptOwnership):
 # forge script script/DeployBotAttestationEscrow.s.sol:DeployBotAttestationEscrow --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
 # (3) optional BVT stack (hardened roles; sinks default to timelock). BVT_GUARDIAN required (≠ deployer):
 # forge script script/DeployBVT.s.sol:DeployBVT --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast
