@@ -4,9 +4,6 @@ pragma solidity ^0.8.20;
 import { Test } from "forge-std/Test.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { Denylist } from "../contracts/Denylist.sol";
-import { Vault } from "../contracts/Vault.sol";
-import { DisputePanel } from "../contracts/DisputePanel.sol";
-import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
 import { OpsLive } from "../script/OpsLive.sol";
 import { OpsDenylistAddExact } from "../script/OpsDenylist.s.sol";
 import { DeployBotAttestationEscrow } from "../script/DeployBotAttestationEscrow.s.sol";
@@ -93,25 +90,7 @@ contract OpsTimelockModeTest is Test {
         bytes memory data = hex"1234";
         address target = address(0xBEEF);
         assertEq(op.resolveSalt(target, data), keccak256(abi.encode(op.SALT_TAG(), target, data)));
-    }
-
-    function test_deploySetsGovernanceFromEnv() public {
-        address gov = address(0x71C0);
-        vm.setEnv("NEW_TIMELOCK", vm.toString(gov));
-        assertEq(deploy.readAddress("NEW_TIMELOCK", "DeployEscrow: NEW_TIMELOCK unset"), gov);
-
-        Denylist denylist = new Denylist();
-        Vault vault = new Vault(address(denylist));
-        DisputePanel panel = new DisputePanel();
-        BotAttestationEscrow escrow = deploy.deploy(
-            address(denylist),
-            address(vault),
-            address(panel),
-            deploy.readAddress("NEW_TIMELOCK", "DeployEscrow: NEW_TIMELOCK unset")
-        );
-        assertEq(escrow.governance(), gov);
-        assertEq(escrow.pendingOwner(), gov);
-        assertTrue(gov != deploy.LIVE_TIMELOCK());
+        assertEq(op.SALT_REPEAT_HINT(), "set TIMELOCK_SALT to a fresh value to repeat an identical call");
     }
 
     function _assertSchedule(

@@ -57,7 +57,7 @@ function normalizeAddress(value) {
 /**
  * Expected owner is `NEW_TIMELOCK` from the environment when that is a real address,
  * otherwise `governanceTimelock` from the address book. Blank, zero, and missing are unset.
- * There is no silent fallback to the pre-migration CORE owner.
+ * The field is not filled in with CORE. CORE is a separate owner check in `assessOwner`.
  * @param {string | undefined | null} envValue
  * @param {string | undefined | null} bookValue
  * @returns {string | null}
@@ -67,34 +67,37 @@ export function readExpectedOwner(envValue, bookValue) {
 }
 
 /**
- * Fail closed when the expected owner is unset.
- * Pass when the on-chain owner equals that configured address.
- * Until migration, also pass when the on-chain owner is the labeled pre-migration CORE owner.
+ * Escrow migration is opt-in, so CORE may stay the owner permanently.
+ * Pass first when the on-chain owner is the labeled pre-migration CORE owner, even if the
+ * expected-owner field is unset. That result is labeled pre-migration/legacy.
+ * Otherwise pass when the owner equals the configured `governanceTimelock` / `NEW_TIMELOCK`.
+ * If the field is unset and the owner is not CORE, fail closed.
  * Any other owner fails closed.
  * @param {string | null | undefined} owner
  * @param {string | null | undefined} expectedOwner
  * @param {string | null | undefined} preMigrationOwner
  */
 export function assessOwner(owner, expectedOwner, preMigrationOwner) {
-  if (!expectedOwner) {
+  if (preMigrationOwner && sameAddress(owner, preMigrationOwner)) {
     return {
-      ok: false,
-      code: "expected_owner_unset",
-      message: "expected owner is unset; set NEW_TIMELOCK or governanceTimelock before trusting owner()",
+      ok: true,
+      code: "pre_migration_core",
+      message: "pre-migration/legacy: on-chain owner is CORE",
     };
   }
-  if (sameAddress(owner, expectedOwner)) {
+  if (expectedOwner && sameAddress(owner, expectedOwner)) {
     return {
       ok: true,
       code: "configured_owner",
       message: "on-chain owner matches the configured timelock",
     };
   }
-  if (preMigrationOwner && sameAddress(owner, preMigrationOwner)) {
+  if (!expectedOwner) {
     return {
-      ok: true,
-      code: "pre_migration_core",
-      message: "on-chain owner is the pre-migration CORE owner",
+      ok: false,
+      code: "expected_owner_unset",
+      message:
+        "expected owner is unset and the on-chain owner is not the pre-migration CORE owner; set NEW_TIMELOCK or governanceTimelock",
     };
   }
   return {
