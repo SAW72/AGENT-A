@@ -958,6 +958,30 @@ contract CoreTimelockTest is FixtureFiles {
         assertEq(address(created.denylist()), address(swapped));
     }
 
+    function test_runBroadcastCreatesFromDeployer() public dropFixtures {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        escrowDeploy.useTimelockCheck(mig);
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        _arm(safe, address(tl));
+
+        address deployer = makeAddr("escrowBroadcaster");
+        vm.deal(deployer, 1 ether);
+        uint256 nonce = vm.getNonce(deployer);
+        escrowDeploy.useRunInputs(
+            address(tl), escrowDeploy.LIVE_DENYLIST(), escrowDeploy.LIVE_VAULT(), escrowDeploy.LIVE_DISPUTE_PANEL()
+        );
+        escrowDeploy.runBroadcast(deployer);
+
+        address createdAddr = _acceptTarget(escrowDeploy);
+        assertEq(createdAddr, vm.computeCreateAddress(deployer, nonce));
+        BotAttestationEscrow created = BotAttestationEscrow(createdAddr);
+        assertEq(created.owner(), deployer);
+        assertTrue(created.owner() != address(escrowDeploy));
+        assertEq(created.governance(), address(tl));
+        assertEq(created.pendingOwner(), address(tl));
+        _assertAcceptCall(escrowDeploy, createdAddr, tl);
+    }
+
     function test_escrowDeployRejectsCodelessGovernance() public {
         DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
         (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
@@ -1015,6 +1039,12 @@ contract CoreTimelockTest is FixtureFiles {
         (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
         vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK is not governanceTimelock"));
         escrowDeploy.deploy(address(deny), address(v), address(dispute), address(tl));
+    }
+
+    function _acceptTarget(
+        DeployBotAttestationEscrow escrowDeploy
+    ) internal view returns (address target) {
+        (target,,,,,,,,) = escrowDeploy.lastAcceptCall();
     }
 
     function _assertAcceptCall(

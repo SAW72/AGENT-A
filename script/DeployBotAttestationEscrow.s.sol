@@ -16,8 +16,9 @@ import { OpsLive, OpsTimelockCall } from "./OpsLive.sol";
 /// `EXPECTED_TIMELOCK`, the deploy-record role grants, the Safe checks, and no CORE roles).
 /// When `governanceTimelock` in the book is set, that address must equal `NEW_TIMELOCK`.
 /// CORE is refused: a new escrow must not hand single-key governance back to that EOA.
-/// After deploy: `transferOwnership` to that timelock (Ownable2Step), and the script prints
-/// Safe-ready `schedule` / `execute` calldata for `acceptOwnership`. The timelock must call
+/// After deploy: `transferOwnership` to that timelock (Ownable2Step). The script then prints
+/// Safe-ready `schedule` / `execute` calldata for `acceptOwnership` on the address `new` returned.
+/// Under `startBroadcast` that creator is the deployer EOA, not this script. The timelock must call
 /// `acceptOwnership`. `createEscrow` and dependency swaps revert until it has accepted, and
 /// swaps also revert while ETH is locked (`lockedValue != 0`).
 /// Do not fund before accept. There is no production hot key for `setDenylist`.
@@ -46,6 +47,11 @@ contract DeployBotAttestationEscrow is Script {
     MigrateOwnershipToTimelock internal pinnedChecker;
     bool internal bookPinned;
     string internal pinnedBookPath;
+    bool internal runInputsPinned;
+    address internal pinnedRunTimelock;
+    address internal pinnedRunDenylist;
+    address internal pinnedRunVault;
+    address internal pinnedRunPanel;
     OpsTimelockCall internal printer;
     OpsLive.TimelockCall public lastAcceptCall;
 
@@ -91,6 +97,21 @@ contract DeployBotAttestationEscrow is Script {
         if (broadcasting()) revert("DeployEscrow: book is deployments/base-sepolia.json");
         pinnedBookPath = path;
         bookPinned = true;
+    }
+
+    /// @notice Test-only inputs for `runBroadcast`. Broadcast reads the env vars. No defaults.
+    function useRunInputs(
+        address timelock,
+        address denylist,
+        address vault,
+        address panel
+    ) external {
+        if (broadcasting()) revert("DeployEscrow: set NEW_TIMELOCK");
+        runInputsPinned = true;
+        pinnedRunTimelock = timelock;
+        pinnedRunDenylist = denylist;
+        pinnedRunVault = vault;
+        pinnedRunPanel = panel;
     }
 
     /// @notice `governance` must be a controller that passes `requireValidTimelock`. CORE reverts.
@@ -203,10 +224,8 @@ contract DeployBotAttestationEscrow is Script {
     ) public returns (BotAttestationEscrow escrow) {
         requireDeps(denylist, vault, panel);
         requireGovernance(msg.sender, timelock);
-        lastAcceptCall = _prepareAccept(timelock);
         escrow = _create(denylist, vault, panel, timelock);
-        if (address(escrow) != lastAcceptCall.target) revert("DeployEscrow: accept target mismatch");
-        _printer().logTimelockCall(lastAcceptCall);
+        _recordAccept(timelock, address(escrow));
     }
 
     function _create(
@@ -220,30 +239,44 @@ contract DeployBotAttestationEscrow is Script {
     }
 
     function run() external {
+        _run(msg.sender);
+    }
+
+    /// @notice Test-only. Same steps as `run`, with `startBroadcast(deployer)` so the EOA is the creator.
+    /// @dev Pins must already be set. A real script broadcast calls `run` and reads the env.
+    function runBroadcast(
+        address deployer
+    ) external {
+        if (broadcasting()) revert("DeployEscrow: runBroadcast is not a broadcast");
+        _run(deployer);
+    }
+
+    /// @dev `requireGovernance` runs before `new`. Accept calldata is built from the address `new` returned.
+    function _run(
+        address deployer
+    ) internal {
         requireAllowedChain();
 
-        address timelock = readAddress("NEW_TIMELOCK", "DeployEscrow: NEW_TIMELOCK unset");
-        address denylist = readAddress("DENYLIST", "DeployEscrow: DENYLIST unset");
-        address vault = readAddress("VAULT", "DeployEscrow: VAULT unset");
-        address panel = readAddress("DISPUTE_PANEL", "DeployEscrow: DISPUTE_PANEL unset");
+        address timelock = _runTimelock();
+        address denylist = _runDenylist();
+        address vault = _runVault();
+        address panel = _runPanel();
         requireDeps(denylist, vault, panel);
         requireLiveStack(denylist, vault, panel);
 
-        address deployer = msg.sender;
         requireGovernance(deployer, timelock);
-        lastAcceptCall = _prepareAccept(timelock);
+        _printer();
         if (broadcasting()) {
             requireBroadcastSender(deployer);
             console.log("BROADCAST Spencer-only");
         } else {
             console.log("SIMULATE; no transaction will be sent");
         }
-        vm.startBroadcast();
+        vm.startBroadcast(deployer);
 
         BotAttestationEscrow escrow = _create(denylist, vault, panel, timelock);
         vm.stopBroadcast();
-        if (address(escrow) != lastAcceptCall.target) revert("DeployEscrow: accept target mismatch");
-        _printer().logTimelockCall(lastAcceptCall);
+        _recordAccept(timelock, address(escrow));
 
         console.log("chainid", block.chainid);
         console.log("deployer", deployer);
@@ -259,14 +292,47 @@ contract DeployBotAttestationEscrow is Script {
         console.log("Agents must not --broadcast.");
     }
 
-    /// @dev Predict the escrow address, then build `acceptOwnership` calldata before `new`.
-    function _prepareAccept(
-        address timelock
-    ) internal returns (OpsLive.TimelockCall memory call) {
+    /// @dev Safe-ready `acceptOwnership` calldata for the escrow that was just created.
+    function _recordAccept(
+        address timelock,
+        address escrow
+    ) internal {
         OpsTimelockCall printer_ = _printer();
-        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         bytes memory data = abi.encodeWithSelector(bytes4(keccak256("acceptOwnership()")));
-        call = printer_.timelockCalldata(timelock, predicted, data, printer_.resolveSalt(predicted, data));
+        lastAcceptCall = printer_.timelockCalldata(timelock, escrow, data, printer_.resolveSalt(escrow, data));
+        printer_.logTimelockCall(lastAcceptCall);
+    }
+
+    function _runTimelock() internal view returns (address timelock) {
+        if (!broadcasting() && runInputsPinned) {
+            if (pinnedRunTimelock == address(0)) revert("DeployEscrow: NEW_TIMELOCK unset");
+            return pinnedRunTimelock;
+        }
+        timelock = readAddress("NEW_TIMELOCK", "DeployEscrow: NEW_TIMELOCK unset");
+    }
+
+    function _runDenylist() internal view returns (address denylist) {
+        if (!broadcasting() && runInputsPinned) {
+            if (pinnedRunDenylist == address(0)) revert("DeployEscrow: DENYLIST unset");
+            return pinnedRunDenylist;
+        }
+        denylist = readAddress("DENYLIST", "DeployEscrow: DENYLIST unset");
+    }
+
+    function _runVault() internal view returns (address vault) {
+        if (!broadcasting() && runInputsPinned) {
+            if (pinnedRunVault == address(0)) revert("DeployEscrow: VAULT unset");
+            return pinnedRunVault;
+        }
+        vault = readAddress("VAULT", "DeployEscrow: VAULT unset");
+    }
+
+    function _runPanel() internal view returns (address panel) {
+        if (!broadcasting() && runInputsPinned) {
+            if (pinnedRunPanel == address(0)) revert("DeployEscrow: DISPUTE_PANEL unset");
+            return pinnedRunPanel;
+        }
+        panel = readAddress("DISPUTE_PANEL", "DeployEscrow: DISPUTE_PANEL unset");
     }
 
     function _printer() internal returns (OpsTimelockCall printer_) {
