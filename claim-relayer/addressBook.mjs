@@ -184,6 +184,7 @@ export function loadAddressBook(filePath = DEFAULT_ADDRESS_BOOK) {
     denylistAddress: optionalAddress(raw.Denylist?.address),
     vaultAddress: optionalAddress(raw.Vault?.address),
     coreTimelock: optionalAddress(raw.coreTimelock),
+    governanceTimelock: optionalAddress(raw.governanceTimelock),
     bvtAddress: bvtRaw === null || bvtRaw === undefined || String(bvtRaw).trim() === "" ? null : optionalAddress(bvtRaw),
     forbidden,
     replacements,

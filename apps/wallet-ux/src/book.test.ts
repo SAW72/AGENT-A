@@ -36,6 +36,8 @@ describe("deployment book", () => {
     expect(ADDRESSES.denylist).toBe(CANONICAL.denylist)
     expect(ADDRESSES.vault).toBe(CANONICAL.vault)
     expect(ADDRESSES.coreTimelock).toBe(CANONICAL.coreTimelock)
+    expect(ADDRESSES.governanceTimelock).toBeNull()
+    expect(deploymentBook.governanceTimelock).toBeNull()
     expect(ADDRESSES.disputePanel).toBe(CANONICAL.disputePanel)
     expect(ADDRESSES.liability).toBe(CANONICAL.liability)
     expect(ADDRESSES.insuranceFund).toBe(CANONICAL.insuranceFund)

@@ -7,15 +7,13 @@ import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
 
 /// @notice Escrow-only deploy of BotAttestationEscrow against the live Base Sepolia stack.
 /// Does not deploy Denylist, Vault, or DisputePanel. `run` accepts only the live addresses.
-/// After deploy: `transferOwnership(CORE_TIMELOCK)` (Ownable2Step). CORE_TIMELOCK is an
-/// EOA with EIP-7702 delegation, not a timelock contract. That account must call
-/// `acceptOwnership`. `governance` is that same address, passed into the constructor.
-/// `createEscrow` and dependency swaps revert until it has accepted, and swaps also
-/// revert while ETH is locked (`lockedValue != 0`).
+/// `governance` is `NEW_TIMELOCK` from the environment. There is no default.
+/// After deploy: `transferOwnership(NEW_TIMELOCK)` (Ownable2Step). That account must call
+/// `acceptOwnership`. `createEscrow` and dependency swaps revert until it has accepted, and
+/// swaps also revert while ETH is locked (`lockedValue != 0`).
 /// Do not fund before accept. There is no production hot key for `setDenylist`.
-/// Chainid guard: Base Sepolia (84532) only. Any other chain reverts. Mainnet is always refused.
-/// ETH Sepolia (11155111) is documented as a one-line switch — do not enable it
-/// here unless you intentionally change ALLOWED_CHAIN_ID.
+/// Chain ids 84532 (Base Sepolia) and 31337 (Anvil) proceed. Every other chain reverts.
+/// Mainnet is always refused.
 /// Dry-run keeps working with `--sender` set to `SIMULATE_SENDER` and no account.
 /// Broadcast uses a Foundry keystore: `forge` sets `msg.sender` from `--account`
 /// and `--sender`, and `run` calls `vm.startBroadcast()` with no key argument.
@@ -24,6 +22,7 @@ import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
 /// the Auditor re-audit passes and the Verifier approves.
 contract DeployBotAttestationEscrow is Script {
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84532;
+    uint256 public constant ANVIL_CHAIN_ID = 31337;
     uint256 public constant ETH_SEPOLIA_CHAIN_ID = 11155111;
     uint256 public constant ETH_MAINNET_CHAIN_ID = 1;
     uint256 public constant ALLOWED_CHAIN_ID = BASE_SEPOLIA_CHAIN_ID;
@@ -31,6 +30,7 @@ contract DeployBotAttestationEscrow is Script {
     address public constant LIVE_DENYLIST = 0xeE76876bECcFc1B58fC06fF4E654a517d784B224;
     address public constant LIVE_VAULT = 0x1463D664fA467FBCDA4B05443434494f05e565bc;
     address public constant LIVE_DISPUTE_PANEL = 0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb;
+    /// @dev Pre-migration owner. Not the constructor `governance` value. That comes from `NEW_TIMELOCK`.
     address public constant LIVE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
 
     /// @dev Dry-run sender only. Not a key and not CORE_TIMELOCK.
@@ -47,8 +47,8 @@ contract DeployBotAttestationEscrow is Script {
         if (block.chainid == ETH_MAINNET_CHAIN_ID) {
             revert("DeployEscrow: mainnet forbidden");
         }
-        if (block.chainid != ALLOWED_CHAIN_ID) {
-            revert("DeployEscrow: Base Sepolia (84532) only; see README to switch to ETH Sepolia (11155111)");
+        if (block.chainid != ALLOWED_CHAIN_ID && block.chainid != ANVIL_CHAIN_ID) {
+            revert("DeployEscrow: Base Sepolia (84532) or Anvil (31337) only");
         }
     }
 
@@ -56,8 +56,8 @@ contract DeployBotAttestationEscrow is Script {
         address deployer,
         address timelock
     ) public pure {
-        if (timelock == address(0)) revert("DeployEscrow: CORE_TIMELOCK unset");
-        if (timelock == deployer) revert("DeployEscrow: CORE_TIMELOCK must not be deployer");
+        if (timelock == address(0)) revert("DeployEscrow: NEW_TIMELOCK unset");
+        if (timelock == deployer) revert("DeployEscrow: NEW_TIMELOCK must not be deployer");
     }
 
     function requireDeps(
@@ -74,15 +74,13 @@ contract DeployBotAttestationEscrow is Script {
     function requireLiveStack(
         address denylist,
         address vault,
-        address panel,
-        address timelock
+        address panel
     ) public pure {
         if (denylist != LIVE_DENYLIST) revert("DeployEscrow: DENYLIST is not the live Base Sepolia Denylist");
         if (vault != LIVE_VAULT) revert("DeployEscrow: VAULT is not the live Base Sepolia Vault");
         if (panel != LIVE_DISPUTE_PANEL) {
             revert("DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel");
         }
-        if (timelock != LIVE_TIMELOCK) revert("DeployEscrow: CORE_TIMELOCK is not the live owner");
     }
 
     function broadcasting() public view returns (bool) {
@@ -128,12 +126,12 @@ contract DeployBotAttestationEscrow is Script {
     function run() external {
         requireAllowedChain();
 
-        address timelock = readAddress("CORE_TIMELOCK", "DeployEscrow: CORE_TIMELOCK unset");
+        address timelock = readAddress("NEW_TIMELOCK", "DeployEscrow: NEW_TIMELOCK unset");
         address denylist = readAddress("DENYLIST", "DeployEscrow: DENYLIST unset");
         address vault = readAddress("VAULT", "DeployEscrow: VAULT unset");
         address panel = readAddress("DISPUTE_PANEL", "DeployEscrow: DISPUTE_PANEL unset");
         requireDeps(denylist, vault, panel);
-        requireLiveStack(denylist, vault, panel, timelock);
+        requireLiveStack(denylist, vault, panel);
 
         address deployer = msg.sender;
         requireTimelock(deployer, timelock);

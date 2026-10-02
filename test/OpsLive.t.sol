@@ -58,10 +58,10 @@ contract OpsLiveGuardTest is Test {
 
     function test_refusesOtherChains() public {
         vm.chainId(11155111);
-        vm.expectRevert(bytes("OpsLive: Base Sepolia (84532) only"));
+        vm.expectRevert(bytes("OpsLive: Base Sepolia (84532) or Anvil (31337) only"));
         denylistOp.requireAllowedChain();
         vm.chainId(31337);
-        vm.expectRevert(bytes("OpsLive: Base Sepolia (84532) only"));
+        denylistOp.requireAllowedChain();
         vaultOp.requireAllowedChain();
     }
 

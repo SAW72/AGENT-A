@@ -7,8 +7,11 @@ import { OpsLive } from "./OpsLive.sol";
 
 /// @notice Shared Gate B helpers for the live Base Sepolia DisputePanel.
 /// @dev Does not deploy the panel and does not redeploy Denylist or Vault.
-///      Dry-run impersonates `CORE_TIMELOCK` via `OpsLive.asOwner` and sends nothing.
-///      `--broadcast` / `--resume` revert unless `PRIVATE_KEY` is that owner.
+///      `NEW_TIMELOCK` is required and has no default. While `owner()` is still the
+///      pre-migration CORE EOA, dry-run impersonates that EOA via `OpsLive.asOwner`
+///      and sends nothing. Once `owner()` is `NEW_TIMELOCK`, `setArbitrator` is not
+///      sent: the script prints Safe-ready `schedule` / `execute` calldata.
+///      `--broadcast` / `--resume` on the legacy path revert unless `PRIVATE_KEY` is that EOA.
 ///      `openDispute` reverts `panel not seated` until `arbitratorCount >= 3`.
 ///      Prefer `OpsDisputePanelSeat` before `DeployBotAttestationEscrow` broadcast.
 abstract contract OpsDisputePanel is OpsLive {
@@ -52,13 +55,36 @@ abstract contract OpsDisputePanel is OpsLive {
         if (signer != timelock) revert("OpsLive: PRIVATE_KEY is not the live owner; Spencer only");
     }
 
-    /// @notice Load the live panel after env addresses match the book and `owner()` matches.
-    function loadPanel() public view returns (DisputePanel panel, address timelock) {
+    /// @notice Load the live panel. `NEW_TIMELOCK` is required and is not defaulted to CORE.
+    function loadPanel() public view returns (DisputePanel panel, address newTimelock) {
         address panelAddr = readAddress("DISPUTE_PANEL", "OpsPanel: DISPUTE_PANEL unset");
-        timelock = readAddress("CORE_TIMELOCK", "OpsLive: CORE_TIMELOCK unset");
-        assertCanonicalPanel(panelAddr, timelock);
+        newTimelock = readAddress("NEW_TIMELOCK", "OpsLive: NEW_TIMELOCK unset");
+        if (panelAddr != LIVE_DISPUTE_PANEL) {
+            revert("OpsPanel: DISPUTE_PANEL is not the live Base Sepolia DisputePanel");
+        }
         panel = DisputePanel(panelAddr);
-        assertPanelOwner(panel.owner(), timelock);
+    }
+
+    /// @dev Calldata mode prints `setArbitrator` and does not send. Legacy mode calls `applyOne` as CORE.
+    function queueOrApply(
+        DisputePanel panel,
+        address newTimelock,
+        address account,
+        bool allowed
+    ) public {
+        if (account == address(0)) revert("OpsPanel: zero arbitrator");
+        if (timelockMode(panel.owner(), newTimelock)) {
+            if (panel.isArbitrator(account) == allowed) {
+                console.log("unchanged");
+                console.log(account);
+                return;
+            }
+            bytes memory data = abi.encodeWithSelector(DisputePanel.setArbitrator.selector, account, allowed);
+            _logTimelockCall(timelockCalldata(newTimelock, address(panel), data, resolveSalt(address(panel), data)));
+            return;
+        }
+        console.log("pre-migration/legacy: owner is CORE_TIMELOCK");
+        applyOne(panel, LIVE_TIMELOCK, account, allowed);
     }
 
     /// @notice One `setArbitrator`. No-ops when the allowlist bit is already `allowed`.
@@ -125,8 +151,9 @@ contract OpsDisputePanelAdd is OpsDisputePanel {
         console.log("op add");
         console.log("chainid", block.chainid);
         console.log("DisputePanel", address(panel));
-        console.log("CORE_TIMELOCK", timelock);
-        applyOne(panel, timelock, account, true);
+        console.log("NEW_TIMELOCK", timelock);
+        console.log("pre-migration CORE_TIMELOCK", LIVE_TIMELOCK);
+        queueOrApply(panel, timelock, account, true);
         logSeat(panel);
     }
 }
@@ -140,8 +167,9 @@ contract OpsDisputePanelRemove is OpsDisputePanel {
         console.log("op remove");
         console.log("chainid", block.chainid);
         console.log("DisputePanel", address(panel));
-        console.log("CORE_TIMELOCK", timelock);
-        applyOne(panel, timelock, account, false);
+        console.log("NEW_TIMELOCK", timelock);
+        console.log("pre-migration CORE_TIMELOCK", LIVE_TIMELOCK);
+        queueOrApply(panel, timelock, account, false);
         logSeat(panel);
     }
 }
@@ -160,10 +188,13 @@ contract OpsDisputePanelSeat is OpsDisputePanel {
         console.log("op seat");
         console.log("chainid", block.chainid);
         console.log("DisputePanel", address(panel));
-        console.log("CORE_TIMELOCK", timelock);
+        console.log("NEW_TIMELOCK", timelock);
+        console.log("pre-migration CORE_TIMELOCK", LIVE_TIMELOCK);
         console.log("arbitratorCount before", panel.arbitratorCount());
         console.log("openDispute needs arbitratorCount >= 3. Prefer seating before Escrow broadcast.");
-        seat(panel, timelock, a, b, c);
+        queueOrApply(panel, timelock, a, true);
+        queueOrApply(panel, timelock, b, true);
+        queueOrApply(panel, timelock, c, true);
         logSeat(panel);
     }
 }

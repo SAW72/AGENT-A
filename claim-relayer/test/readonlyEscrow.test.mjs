@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { ESCROW_VIEW_SIGNATURES, PANEL_VIEW_SIGNATURES, selectorFor } from "../escrowCalldata.mjs";
-import { ALLOWED_RPC_METHODS, readEscrowState } from "../readonlyEscrow.mjs";
+import { ALLOWED_RPC_METHODS, assessOwner, readEscrowState, readExpectedOwner } from "../readonlyEscrow.mjs";
 
 const ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
 const PANEL = "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb";
@@ -48,6 +48,45 @@ describe("read-only escrow checks", () => {
     assert.equal(state.arbitratorCount, "3");
     assert.deepEqual(state.bookMatch, { owner: true, governance: true, disputePanel: true });
     assert.deepEqual(seen, ["eth_chainId", "eth_getCode", "eth_call", "eth_call", "eth_call", "eth_call"]);
+  });
+
+  it("passes when the on-chain owner matches the configured owner", () => {
+    const verdict = assessOwner(TIMELOCK, TIMELOCK, TIMELOCK);
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, "configured_owner");
+  });
+
+  it("fails closed when the expected owner is unset", () => {
+    const verdict = assessOwner(TIMELOCK, null, TIMELOCK);
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, "expected_owner_unset");
+    assert.match(verdict.message, /unset/);
+    assert.equal(readExpectedOwner(undefined, null), null);
+    assert.equal(readExpectedOwner("", "0x0000000000000000000000000000000000000000"), null);
+  });
+
+  it("fails closed when the owner matches neither configured timelock nor pre-migration CORE", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const other = "0x2222222222222222222222222222222222222222";
+    const verdict = assessOwner(other, configured, TIMELOCK);
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, "owner_mismatch");
+    assert.match(verdict.message, /neither/);
+  });
+
+  it("passes after migration when the owner is the configured timelock", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const verdict = assessOwner(configured, configured, TIMELOCK);
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, "configured_owner");
+    assert.equal(readExpectedOwner(configured, null), configured);
+  });
+
+  it("passes before migration when the owner is still the labeled CORE owner", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const verdict = assessOwner(TIMELOCK, configured, TIMELOCK);
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, "pre_migration_core");
   });
 });
 

@@ -1627,17 +1627,12 @@ contract DeployEscrowGuardTest is Test {
 
     function test_refusesEthSepoliaByDefault() public {
         vm.chainId(11155111);
-        vm.expectRevert(
-            bytes("DeployEscrow: Base Sepolia (84532) only; see README to switch to ETH Sepolia (11155111)")
-        );
+        vm.expectRevert(bytes("DeployEscrow: Base Sepolia (84532) or Anvil (31337) only"));
         deploy.requireAllowedChain();
     }
 
-    function test_refusesAnvil() public {
+    function test_allowsAnvil() public {
         vm.chainId(31337);
-        vm.expectRevert(
-            bytes("DeployEscrow: Base Sepolia (84532) only; see README to switch to ETH Sepolia (11155111)")
-        );
         deploy.requireAllowedChain();
     }
 
@@ -1649,9 +1644,9 @@ contract DeployEscrowGuardTest is Test {
 
     function test_timelockMustBeSetAndNotDeployer() public {
         address deployer = address(this);
-        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK unset"));
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK unset"));
         deploy.requireTimelock(deployer, address(0));
-        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK must not be deployer"));
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK must not be deployer"));
         deploy.requireTimelock(deployer, deployer);
         deploy.requireTimelock(deployer, address(0x71C0));
     }
@@ -1684,15 +1679,13 @@ contract DeployEscrowGuardTest is Test {
         address panel = deploy.LIVE_DISPUTE_PANEL();
         address timelock = deploy.LIVE_TIMELOCK();
         address other = address(0x1234);
-        deploy.requireLiveStack(denylist, vault, panel, timelock);
+        deploy.requireLiveStack(denylist, vault, panel);
         vm.expectRevert(bytes("DeployEscrow: DENYLIST is not the live Base Sepolia Denylist"));
-        deploy.requireLiveStack(other, vault, panel, timelock);
+        deploy.requireLiveStack(other, vault, panel);
         vm.expectRevert(bytes("DeployEscrow: VAULT is not the live Base Sepolia Vault"));
-        deploy.requireLiveStack(denylist, other, panel, timelock);
+        deploy.requireLiveStack(denylist, other, panel);
         vm.expectRevert(bytes("DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel"));
-        deploy.requireLiveStack(denylist, vault, other, timelock);
-        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK is not the live owner"));
-        deploy.requireLiveStack(denylist, vault, panel, other);
+        deploy.requireLiveStack(denylist, vault, other);
         assertEq(deploy.SIMULATE_SENDER(), 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001);
         assertTrue(deploy.SIMULATE_SENDER() != timelock);
         assertEq(deploy.FOUNDRY_DEFAULT_SENDER(), 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);

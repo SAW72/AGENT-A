@@ -39,7 +39,8 @@ abstract contract OpsVaultLog is OpsLive {
         console.log("chainid", block.chainid);
         console.log("Vault", address(vault));
         console.log("denylist", address(vault.denylist()));
-        console.log("CORE_TIMELOCK", timelock);
+        console.log("NEW_TIMELOCK", timelock);
+        console.log("pre-migration CORE_TIMELOCK", LIVE_TIMELOCK);
         console.log("tier", uint256(tier));
         console.log("operator", operator_);
         console.logBytes32(botId);
@@ -65,10 +66,16 @@ contract OpsVaultRegister is OpsVaultLog {
         (Vault vault, address timelock, bytes32 botId, bytes32 weight, bytes32 sig, bytes32 prompt, Vault.Tier tier) =
             _loadRegistration();
         _logVault("register", vault, timelock, botId, tier, address(0));
-        bool send = asOwner(timelock);
-        vault.register(botId, weight, sig, prompt, tier);
-        finishOwner(send);
-        _logBot(vault, botId);
+        if (
+            performOwnerCall(
+                address(vault),
+                abi.encodeWithSignature(
+                    "register(bytes32,bytes32,bytes32,bytes32,uint8)", botId, weight, sig, prompt, tier
+                )
+            )
+        ) {
+            _logBot(vault, botId);
+        }
     }
 }
 
@@ -81,10 +88,16 @@ contract OpsVaultRegisterWithOperator is OpsVaultLog {
             _loadRegistration();
         address operator_ = readAddress("OPERATOR", "OpsLive: OPERATOR unset");
         _logVault("registerWithOperator", vault, timelock, botId, tier, operator_);
-        bool send = asOwner(timelock);
-        vault.register(botId, weight, sig, prompt, tier, operator_);
-        finishOwner(send);
-        _logBot(vault, botId);
+        if (
+            performOwnerCall(
+                address(vault),
+                abi.encodeWithSignature(
+                    "register(bytes32,bytes32,bytes32,bytes32,uint8,address)", botId, weight, sig, prompt, tier, operator_
+                )
+            )
+        ) {
+            _logBot(vault, botId);
+        }
     }
 }
 
@@ -97,11 +110,11 @@ contract OpsVaultBurn is OpsVaultLog {
         console.log("op burn");
         console.log("chainid", block.chainid);
         console.log("Vault", address(vault));
-        console.log("CORE_TIMELOCK", timelock);
+        console.log("NEW_TIMELOCK", timelock);
+        console.log("pre-migration CORE_TIMELOCK", LIVE_TIMELOCK);
         console.logBytes32(botId);
-        bool send = asOwner(timelock);
-        vault.burn(botId);
-        finishOwner(send);
-        _logBot(vault, botId);
+        if (performOwnerCall(address(vault), abi.encodeWithSelector(Vault.burn.selector, botId))) {
+            _logBot(vault, botId);
+        }
     }
 }

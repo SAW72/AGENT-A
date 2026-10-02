@@ -140,6 +140,7 @@ function resolveEscrow(env) {
   return {
     disputePanelAddress: book.disputePanelAddress,
     coreTimelock: book.coreTimelock,
+    governanceTimelock: book.governanceTimelock,
     escrowOwner: book.escrowOwner,
     bvtAddress: book.bvtAddress,
     escrowAddress,
@@ -228,6 +229,7 @@ export function loadConfig(env = process.env) {
     escrowSource: escrow.escrowSource,
     disputePanelAddress: escrow.disputePanelAddress,
     coreTimelock: escrow.coreTimelock,
+    governanceTimelock: escrow.governanceTimelock,
     escrowOwner: escrow.escrowOwner,
     bvtAddress: escrow.bvtAddress,
     adminSecret: String(env.ADMIN_SECRET || "").trim(),

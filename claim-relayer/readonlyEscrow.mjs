@@ -44,6 +44,66 @@ function sameAddress(a, b) {
   return String(a).toLowerCase() === String(b).toLowerCase();
 }
 
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+function normalizeAddress(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!ADDRESS_RE.test(trimmed) || trimmed.toLowerCase() === ZERO_ADDRESS) return null;
+  return trimmed;
+}
+
+/**
+ * Expected owner is `NEW_TIMELOCK` from the environment when that is a real address,
+ * otherwise `governanceTimelock` from the address book. Blank, zero, and missing are unset.
+ * There is no silent fallback to the pre-migration CORE owner.
+ * @param {string | undefined | null} envValue
+ * @param {string | undefined | null} bookValue
+ * @returns {string | null}
+ */
+export function readExpectedOwner(envValue, bookValue) {
+  return normalizeAddress(envValue) || normalizeAddress(bookValue);
+}
+
+/**
+ * Fail closed when the expected owner is unset.
+ * Pass when the on-chain owner equals that configured address.
+ * Until migration, also pass when the on-chain owner is the labeled pre-migration CORE owner.
+ * Any other owner fails closed.
+ * @param {string | null | undefined} owner
+ * @param {string | null | undefined} expectedOwner
+ * @param {string | null | undefined} preMigrationOwner
+ */
+export function assessOwner(owner, expectedOwner, preMigrationOwner) {
+  if (!expectedOwner) {
+    return {
+      ok: false,
+      code: "expected_owner_unset",
+      message: "expected owner is unset; set NEW_TIMELOCK or governanceTimelock before trusting owner()",
+    };
+  }
+  if (sameAddress(owner, expectedOwner)) {
+    return {
+      ok: true,
+      code: "configured_owner",
+      message: "on-chain owner matches the configured timelock",
+    };
+  }
+  if (preMigrationOwner && sameAddress(owner, preMigrationOwner)) {
+    return {
+      ok: true,
+      code: "pre_migration_core",
+      message: "on-chain owner is the pre-migration CORE owner",
+    };
+  }
+  return {
+    ok: false,
+    code: "owner_mismatch",
+    message: "on-chain owner matches neither the configured timelock nor the pre-migration CORE owner",
+  };
+}
+
 /**
  * Read Escrow owner, governance, disputePanel, and panel arbitratorCount.
  * Refuses any chain other than Base Sepolia before further calls.
@@ -113,17 +173,22 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
   const config = loadConfig(process.env);
   const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  const expectedOwner = readExpectedOwner(process.env.NEW_TIMELOCK, config.governanceTimelock);
   try {
     const state = await readEscrowState({
       rpcUrl,
       escrowAddress: config.escrowAddress,
       disputePanelAddress: config.disputePanelAddress,
-      expectedOwner: config.escrowOwner,
+      expectedOwner,
       expectedGovernance: config.coreTimelock,
       expectedDisputePanel: config.disputePanelAddress,
     });
-    console.log(JSON.stringify(state));
-    if (!state.hasCode || state.bookMatch.owner === false || state.bookMatch.governance === false || state.bookMatch.disputePanel === false) {
+    const ownerCheck = assessOwner(state.owner, expectedOwner, config.coreTimelock);
+    console.log(JSON.stringify({ ...state, ownerCheck: ownerCheck.code }));
+    if (!ownerCheck.ok) {
+      console.error(ownerCheck.message);
+      process.exitCode = 2;
+    } else if (!state.hasCode || state.bookMatch.governance === false || state.bookMatch.disputePanel === false) {
       process.exitCode = 2;
     }
   } catch (err) {
