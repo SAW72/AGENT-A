@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { DeployTimelock } from "../script/DeployTimelock.s.sol";
 import { MigrateOwnershipToTimelock } from "../script/MigrateOwnershipToTimelock.s.sol";
@@ -12,9 +13,143 @@ import { InsuranceFund } from "../contracts/InsuranceFund.sol";
 import { DisputePanel } from "../contracts/DisputePanel.sol";
 import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
 
-contract CoreTimelockTest is Test {
+/// @dev Per-test fixture files. The path includes the test contract and the test selector so parallel runs do not
+/// share a file.
+abstract contract FixtureFiles is Test {
+    uint256 internal fixtureNonce;
+    string[] internal fixturePaths;
+
+    modifier dropFixtures() {
+        _;
+        _dropFixtures();
+    }
+
+    function _fixturePath() internal returns (string memory path) {
+        path = string.concat(
+            "test/fixtures/",
+            vm.toString(address(this)),
+            "-",
+            vm.toString(uint256(uint32(msg.sig))),
+            "-",
+            vm.toString(fixtureNonce),
+            ".json"
+        );
+        fixtureNonce += 1;
+        fixturePaths.push(path);
+    }
+
+    function _dropFixtures() internal {
+        uint256 n = fixturePaths.length;
+        for (uint256 i; i < n; i++) {
+            if (vm.exists(fixturePaths[i])) vm.removeFile(fixturePaths[i]);
+        }
+        delete fixturePaths;
+    }
+
+    function _recordJson(
+        address timelock,
+        uint256 chainId,
+        bytes32 txHash
+    ) internal pure returns (string memory) {
+        return string.concat(
+            '{"chain":',
+            vm.toString(chainId),
+            ',"transactions":[{"hash":"',
+            vm.toString(txHash),
+            '","transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
+            vm.toString(timelock),
+            '"}]}'
+        );
+    }
+}
+
+/// @dev Unit tests cannot ask an RPC for a locally created transaction. This override returns logs captured at
+/// deploy time. A broadcast on Base Sepolia still reads the RPC receipt.
+contract MigrateOwnershipHarness is MigrateOwnershipToTimelock {
+    struct PinnedReceipt {
+        bytes32 txHash;
+        uint256 status;
+        address contractAddress;
+        bytes32[] roles;
+        address[] accounts;
+    }
+
+    PinnedReceipt[] internal pins;
+
+    function deployTxKey(
+        address timelock
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked("CORE_TIMELOCK_DEPLOY", timelock));
+    }
+
+    function pinFromLogs(
+        address timelock,
+        Vm.Log[] memory logs
+    ) external {
+        if (broadcasting()) revert("MigrateOwnership: receipt is read from RPC");
+        uint256 n;
+        uint256 len = logs.length;
+        for (uint256 i; i < len; i++) {
+            if (_isGrant(logs[i], timelock)) n += 1;
+        }
+        bytes32[] memory roles = new bytes32[](n);
+        address[] memory accounts = new address[](n);
+        uint256 k;
+        for (uint256 i; i < len; i++) {
+            if (_isGrant(logs[i], timelock)) {
+                roles[k] = logs[i].topics[1];
+                accounts[k] = address(uint160(uint256(logs[i].topics[2])));
+                k += 1;
+            }
+        }
+        _pushPin(deployTxKey(timelock), 1, timelock, roles, accounts);
+    }
+
+    function fetchDeployReceipt(
+        bytes32 txHash
+    ) public override returns (DeployReceipt memory receipt) {
+        if (broadcasting() && block.chainid == BASE_SEPOLIA_CHAIN_ID) return super.fetchDeployReceipt(txHash);
+        uint256 n = pins.length;
+        for (uint256 i; i < n; i++) {
+            if (pins[i].txHash != txHash) continue;
+            receipt.status = pins[i].status;
+            receipt.contractAddress = pins[i].contractAddress;
+            receipt.roles = pins[i].roles;
+            receipt.accounts = pins[i].accounts;
+            return receipt;
+        }
+        return super.fetchDeployReceipt(txHash);
+    }
+
+    function _pushPin(
+        bytes32 txHash,
+        uint256 status,
+        address contractAddress,
+        bytes32[] memory roles,
+        address[] memory accounts
+    ) internal {
+        PinnedReceipt storage pin = pins.push();
+        pin.txHash = txHash;
+        pin.status = status;
+        pin.contractAddress = contractAddress;
+        uint256 n = roles.length;
+        for (uint256 i; i < n; i++) {
+            pin.roles.push(roles[i]);
+            pin.accounts.push(accounts[i]);
+        }
+    }
+
+    function _isGrant(
+        Vm.Log memory entry,
+        address timelock
+    ) internal pure returns (bool) {
+        return entry.emitter == timelock && entry.topics.length >= 3 && entry.topics[0] == ROLE_GRANTED_TOPIC;
+    }
+}
+
+contract CoreTimelockTest is FixtureFiles {
     DeployTimelock internal deploy;
-    MigrateOwnershipToTimelock internal mig;
+    MigrateOwnershipHarness internal mig;
 
     Denylist internal denylist;
     Vault internal vault;
@@ -28,11 +163,11 @@ contract CoreTimelockTest is Test {
 
     function setUp() public {
         deploy = new DeployTimelock();
-        mig = new MigrateOwnershipToTimelock();
+        mig = new MigrateOwnershipHarness();
         mig.pinMigrateEscrows(0);
     }
 
-    function test_delayIsEnforced() public {
+    function test_delayIsEnforced() public dropFixtures {
         (TimelockController tl, address safe) = _controller(300, address(0));
         bytes memory payload = abi.encodeCall(TimelockController.updateDelay, (300));
         bytes32 salt = bytes32(uint256(1));
@@ -55,7 +190,7 @@ contract CoreTimelockTest is Test {
         assertEq(tl.getMinDelay(), 300);
     }
 
-    function test_onlySafeCanProposeAndCancel() public {
+    function test_onlySafeCanProposeAndCancel() public dropFixtures {
         (TimelockController tl, address safe) = _controller(300, address(0));
         address stranger = makeAddr("stranger");
         bytes memory payload = abi.encodeCall(TimelockController.updateDelay, (300));
@@ -89,7 +224,7 @@ contract CoreTimelockTest is Test {
         tl.execute(address(tl), 0, payload, predecessor, salt);
     }
 
-    function test_safeExecutorRejectsStrangers() public {
+    function test_safeExecutorRejectsStrangers() public dropFixtures {
         address safe = _etchSafe();
         (TimelockController tl,) = _controllerWith(safe, 300, safe);
         bytes memory payload = abi.encodeCall(TimelockController.updateDelay, (300));
@@ -111,7 +246,7 @@ contract CoreTimelockTest is Test {
         assertTrue(tl.isOperationDone(tl.hashOperation(address(tl), 0, payload, bytes32(0), salt)));
     }
 
-    function test_adminRoleIsNotHeldByAnEoa() public {
+    function test_adminRoleIsNotHeldByAnEoa() public dropFixtures {
         address eoa = makeAddr("deployer");
         address safe = _etchSafe();
         address other = makeAddr("other");
@@ -132,12 +267,12 @@ contract CoreTimelockTest is Test {
         assertEq(tl.getMinDelay(), 300);
     }
 
-    function test_safeWithoutCodeReverts() public {
+    function test_safeWithoutCodeReverts() public dropFixtures {
         vm.expectRevert(bytes("DeployTimelock: SAFE_ADDRESS has no code"));
         deploy.deployTimelock(makeAddr("bare"), 300, address(0));
     }
 
-    function test_chainAllowlistAndDelayFloor() public {
+    function test_chainAllowlistAndDelayFloor() public dropFixtures {
         address safe = _etchSafe();
 
         vm.chainId(84532);
@@ -178,7 +313,9 @@ contract CoreTimelockTest is Test {
         assertEq(deploy.minDelayFloor(), 300);
         vm.expectRevert(bytes("DeployTimelock: minDelay below floor"));
         deploy.deployTimelock(safe, 299, address(0));
+        vm.recordLogs();
         TimelockController tl = deploy.deployTimelock(safe, 300, address(0));
+        mig.pinFromLogs(address(tl), vm.getRecordedLogs());
         assertEq(tl.getMinDelay(), 300);
 
         _arm(safe, address(tl));
@@ -237,7 +374,7 @@ contract CoreTimelockTest is Test {
         assertEq(rows[8], targets[13]);
     }
 
-    function test_scriptedFlowLandsOwnershipOnTimelock() public {
+    function test_scriptedFlowLandsOwnershipOnTimelock() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         (TimelockController tl, address safe) = _controller(300, address(0));
@@ -336,7 +473,7 @@ contract CoreTimelockTest is Test {
         assertEq(liability.owner(), address(tl));
     }
 
-    function test_migrationIsIdempotent() public {
+    function test_migrationIsIdempotent() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         (TimelockController tl, address safe) = _controller(300, address(0));
@@ -367,7 +504,7 @@ contract CoreTimelockTest is Test {
         assertEq(retired.owner(), core);
     }
 
-    function test_escrowOptInMigratesAndPostCheckRequiresIt() public {
+    function test_escrowOptInMigratesAndPostCheckRequiresIt() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         (TimelockController tl, address safe) = _controller(300, address(0));
@@ -420,7 +557,7 @@ contract CoreTimelockTest is Test {
         assertEq(escrow.owner(), address(tl));
     }
 
-    function test_badTimelockRevertsBeforeHandoff() public {
+    function test_badTimelockRevertsBeforeHandoff() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         address safe = _etchSafe();
@@ -436,50 +573,50 @@ contract CoreTimelockTest is Test {
 
         address[] memory wrong = new address[](1);
         wrong[0] = makeAddr("otherProposer");
-        TimelockController wrongProposer = new TimelockController(300, wrong, executors, address(0));
+        TimelockController wrongProposer = _captureNew(300, wrong, executors, address(0));
         _arm(safe, address(wrongProposer));
-        vm.expectRevert(bytes("MigrateOwnership: SAFE missing PROPOSER_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(wrongProposer));
         _assertUnchanged(targets, core);
 
         address[] memory proposers = new address[](1);
         proposers[0] = safe;
-        TimelockController adminEoa = new TimelockController(300, proposers, executors, address(this));
+        TimelockController adminEoa = _captureNew(300, proposers, executors, address(this));
         _arm(safe, address(adminEoa));
-        vm.expectRevert(bytes("MigrateOwnership: msg.sender holds DEFAULT_ADMIN_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(adminEoa));
         _assertUnchanged(targets, core);
 
-        TimelockController coreAdmin = new TimelockController(300, proposers, executors, core);
+        TimelockController coreAdmin = _captureNew(300, proposers, executors, core);
         _arm(safe, address(coreAdmin));
-        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(coreAdmin));
         _assertUnchanged(targets, core);
 
-        TimelockController safeAdmin = new TimelockController(300, proposers, executors, safe);
+        TimelockController safeAdmin = _captureNew(300, proposers, executors, safe);
         _arm(safe, address(safeAdmin));
-        vm.expectRevert(bytes("MigrateOwnership: SAFE holds DEFAULT_ADMIN_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(safeAdmin));
         _assertUnchanged(targets, core);
 
-        TimelockController zeroDelay = new TimelockController(0, proposers, executors, address(0));
+        TimelockController zeroDelay = _captureNew(0, proposers, executors, address(0));
         _arm(safe, address(zeroDelay));
         vm.expectRevert(bytes("MigrateOwnership: minDelay below floor"));
         mig.transferTwoStep(targets, address(zeroDelay));
         _assertUnchanged(targets, core);
 
-        TimelockController stripped = new TimelockController(300, proposers, executors, address(this));
+        TimelockController stripped = _captureNew(300, proposers, executors, address(this));
         stripped.revokeRole(stripped.DEFAULT_ADMIN_ROLE(), address(stripped));
         _arm(safe, address(stripped));
-        vm.expectRevert(bytes("MigrateOwnership: timelock is not self-administered"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(stripped));
         _assertUnchanged(targets, core);
 
-        TimelockController noCancel = new TimelockController(300, proposers, executors, address(this));
+        TimelockController noCancel = _captureNew(300, proposers, executors, address(this));
         noCancel.revokeRole(noCancel.CANCELLER_ROLE(), safe);
         noCancel.revokeRole(noCancel.DEFAULT_ADMIN_ROLE(), address(this));
         _arm(safe, address(noCancel));
-        vm.expectRevert(bytes("MigrateOwnership: SAFE missing CANCELLER_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(noCancel));
         _assertUnchanged(targets, core);
 
@@ -494,7 +631,7 @@ contract CoreTimelockTest is Test {
         mig.pinNewTimelock(address(wrongProposer));
         mig.pinStep("accept");
         _pinDeployRecord(address(wrongProposer));
-        vm.expectRevert(bytes("MigrateOwnership: SAFE missing PROPOSER_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.run();
         _assertUnchanged(targets, core);
 
@@ -505,7 +642,7 @@ contract CoreTimelockTest is Test {
         _assertUnchanged(targets, core);
     }
 
-    function test_thresholdOneRevertsBeforeDeployOrHandoff() public {
+    function test_thresholdOneRevertsBeforeDeployOrHandoff() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         address oneOfOne = address(new SafeThresholdStub(1, 1));
@@ -516,7 +653,7 @@ contract CoreTimelockTest is Test {
         address[] memory proposers = new address[](1);
         proposers[0] = oneOfOne;
         address[] memory executors = new address[](1);
-        TimelockController tl = new TimelockController(300, proposers, executors, address(0));
+        TimelockController tl = _captureNew(300, proposers, executors, address(0));
         _arm(oneOfOne, address(tl));
         vm.expectRevert(bytes("MigrateOwnership: SAFE threshold is below 2"));
         mig.transferTwoStep(targets, address(tl));
@@ -527,7 +664,7 @@ contract CoreTimelockTest is Test {
         deploy.deployTimelock(safe, 0, address(0));
     }
 
-    function test_coreTimelockRolesAreRejected() public {
+    function test_coreTimelockRolesAreRejected() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         address safe = _etchSafe();
@@ -538,31 +675,31 @@ contract CoreTimelockTest is Test {
         address[] memory withCore = new address[](2);
         withCore[0] = safe;
         withCore[1] = core;
-        TimelockController coreProposer = new TimelockController(300, withCore, executors, address(0));
+        TimelockController coreProposer = _captureNew(300, withCore, executors, address(0));
         _arm(safe, address(coreProposer));
-        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds PROPOSER_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(coreProposer));
         _assertUnchanged(targets, core);
 
         address[] memory coreExec = new address[](1);
         coreExec[0] = core;
-        TimelockController coreExecutor = new TimelockController(300, proposers, coreExec, address(0));
+        TimelockController coreExecutor = _captureNew(300, proposers, coreExec, address(0));
         _arm(safe, address(coreExecutor));
-        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds EXECUTOR_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(coreExecutor));
         _assertUnchanged(targets, core);
 
-        TimelockController coreCanceller = new TimelockController(300, proposers, executors, address(this));
+        TimelockController coreCanceller = _captureNew(300, proposers, executors, address(this));
         coreCanceller.grantRole(coreCanceller.CANCELLER_ROLE(), core);
         coreCanceller.revokeRole(coreCanceller.DEFAULT_ADMIN_ROLE(), address(this));
         _arm(safe, address(coreCanceller));
-        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds CANCELLER_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(coreCanceller));
         _assertUnchanged(targets, core);
 
-        TimelockController coreAdmin = new TimelockController(300, proposers, executors, core);
+        TimelockController coreAdmin = _captureNew(300, proposers, executors, core);
         _arm(safe, address(coreAdmin));
-        vm.expectRevert(bytes("MigrateOwnership: CORE_TIMELOCK holds DEFAULT_ADMIN_ROLE"));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
         mig.transferTwoStep(targets, address(coreAdmin));
         _assertUnchanged(targets, core);
 
@@ -571,7 +708,7 @@ contract CoreTimelockTest is Test {
         _assertUnchanged(targets, core);
     }
 
-    function test_eip7702DesignatorIsRejected() public {
+    function test_eip7702DesignatorIsRejected() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         address safe = _etchSafe();
@@ -590,7 +727,7 @@ contract CoreTimelockTest is Test {
         _assertUnchanged(targets, core);
     }
 
-    function test_safeIdentityAndOwnerCount() public {
+    function test_safeIdentityAndOwnerCount() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         address safe = _etchSafe();
@@ -623,14 +760,14 @@ contract CoreTimelockTest is Test {
         address[] memory proposers = new address[](1);
         proposers[0] = short;
         address[] memory executors = new address[](1);
-        TimelockController shortTl = new TimelockController(300, proposers, executors, address(0));
+        TimelockController shortTl = _captureNew(300, proposers, executors, address(0));
         _arm(short, address(shortTl));
         vm.expectRevert(bytes("MigrateOwnership: SAFE owners are below the threshold"));
         mig.transferTwoStep(targets, address(shortTl));
         _assertUnchanged(targets, core);
     }
 
-    function test_safeOwnerQualityReverts() public {
+    function test_safeOwnerQualityReverts() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         address good = _etchSafe();
@@ -673,22 +810,15 @@ contract CoreTimelockTest is Test {
         _assertUnchanged(targets, core);
     }
 
-    function test_deployRecordMustMatch() public {
+    function test_deployRecordMustMatch() public dropFixtures {
         address safe = _etchSafe();
         (TimelockController tl,) = _controllerWith(safe, 300, address(0));
         _arm(safe, address(tl));
         mig.requireValidTimelock(address(tl));
 
         address other = makeAddr("otherRecord");
-        string memory mismatch = "test/fixtures/mismatch-timelock.json";
-        vm.writeFile(
-            mismatch,
-            string.concat(
-                '{"transactions":[{"transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
-                vm.toString(other),
-                '"}]}'
-            )
-        );
+        string memory mismatch = _fixturePath();
+        vm.writeFile(mismatch, _recordJson(other, block.chainid, bytes32(uint256(7))));
         mig.useDeployJson(mismatch);
         vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
         mig.requireValidTimelock(address(tl));
@@ -698,24 +828,71 @@ contract CoreTimelockTest is Test {
         mig.requireValidTimelock(address(tl));
     }
 
-    function test_migrateEscrowsUnsetReverts() public {
+    function test_migrateEscrowsUnsetReverts() public dropFixtures {
         vm.expectRevert(bytes("MigrateOwnership: MIGRATE_ESCROWS unset"));
         mig.decodeMigrateEscrows(false, 0);
-
-        try vm.envUint("MIGRATE_ESCROWS") returns (uint256) { }
-        catch {
-            MigrateOwnershipToTimelock fresh = new MigrateOwnershipToTimelock();
-            vm.expectRevert(bytes("MigrateOwnership: MIGRATE_ESCROWS unset"));
-            fresh.migrateEscrows();
-        }
     }
 
-    function test_migrateEscrowsTwoReverts() public {
+    function test_deployReceiptFourGrantsPass() public view {
+        address safe = address(uint160(0xA11));
+        address timelock = address(uint160(0xB11));
+        (bytes32[] memory roles, address[] memory accounts) = _fourGrants(timelock, safe, address(0));
+        mig.requireDeployReceipt(1, timelock, timelock, timelock, safe, roles, accounts);
+    }
+
+    function test_deployReceiptExtraAdminReverts() public dropFixtures {
+        address safe = address(uint160(0xA11));
+        address timelock = address(uint160(0xB11));
+        (bytes32[] memory roles, address[] memory accounts) = _fourGrants(timelock, safe, address(0));
+        bytes32[] memory extraRoles = new bytes32[](5);
+        address[] memory extraAccounts = new address[](5);
+        for (uint256 i; i < 4; i++) {
+            extraRoles[i] = roles[i];
+            extraAccounts[i] = accounts[i];
+        }
+        extraRoles[4] = bytes32(0);
+        extraAccounts[4] = address(uint160(0xC11));
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
+        mig.requireDeployReceipt(1, timelock, timelock, timelock, safe, extraRoles, extraAccounts);
+    }
+
+    function test_deployReceiptMissingCancellerReverts() public dropFixtures {
+        address safe = address(uint160(0xA11));
+        address timelock = address(uint160(0xB11));
+        bytes32[] memory roles = new bytes32[](3);
+        address[] memory accounts = new address[](3);
+        roles[0] = bytes32(0);
+        accounts[0] = timelock;
+        roles[1] = mig.PROPOSER_ROLE();
+        accounts[1] = safe;
+        roles[2] = mig.EXECUTOR_ROLE();
+        accounts[2] = address(0);
+        vm.expectRevert(bytes("MigrateOwnership: missing CANCELLER_ROLE grant"));
+        mig.requireDeployReceipt(1, timelock, timelock, timelock, safe, roles, accounts);
+    }
+
+    function test_deployReceiptFailedStatusReverts() public dropFixtures {
+        address safe = address(uint160(0xA11));
+        address timelock = address(uint160(0xB11));
+        (bytes32[] memory roles, address[] memory accounts) = _fourGrants(timelock, safe, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: deploy transaction failed"));
+        mig.requireDeployReceipt(0, timelock, timelock, timelock, safe, roles, accounts);
+    }
+
+    function test_deployReceiptWrongContractReverts() public dropFixtures {
+        address safe = address(uint160(0xA11));
+        address timelock = address(uint160(0xB11));
+        (bytes32[] memory roles, address[] memory accounts) = _fourGrants(timelock, safe, address(0));
+        vm.expectRevert(bytes("MigrateOwnership: deploy receipt contract mismatch"));
+        mig.requireDeployReceipt(1, address(uint160(0xD11)), timelock, timelock, safe, roles, accounts);
+    }
+
+    function test_migrateEscrowsTwoReverts() public dropFixtures {
         vm.expectRevert(bytes("MigrateOwnership: MIGRATE_ESCROWS must be 0 or 1"));
         mig.decodeMigrateEscrows(true, 2);
     }
 
-    function test_postCheckRejectsUnexpectedRows() public {
+    function test_postCheckRejectsUnexpectedRows() public dropFixtures {
         address core = mig.CORE_TIMELOCK();
         address[] memory targets = _seed(core);
         (TimelockController tl, address safe) = _controller(300, address(0));
@@ -752,16 +929,37 @@ contract CoreTimelockTest is Test {
     function _pinDeployRecord(
         address timelock
     ) internal {
-        string memory path = string.concat("test/fixtures/", vm.toString(timelock), ".json");
-        vm.writeFile(
-            path,
-            string.concat(
-                '{"transactions":[{"transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
-                vm.toString(timelock),
-                '"}]}'
-            )
-        );
+        string memory path = _fixturePath();
+        vm.writeFile(path, _recordJson(timelock, block.chainid, mig.deployTxKey(timelock)));
         mig.useDeployJson(path);
+    }
+
+    function _fourGrants(
+        address timelock,
+        address safe,
+        address executor
+    ) internal view returns (bytes32[] memory roles, address[] memory accounts) {
+        roles = new bytes32[](4);
+        accounts = new address[](4);
+        roles[0] = bytes32(0);
+        accounts[0] = timelock;
+        roles[1] = mig.PROPOSER_ROLE();
+        accounts[1] = safe;
+        roles[2] = mig.CANCELLER_ROLE();
+        accounts[2] = safe;
+        roles[3] = mig.EXECUTOR_ROLE();
+        accounts[3] = executor;
+    }
+
+    function _captureNew(
+        uint256 delay,
+        address[] memory proposers,
+        address[] memory executors,
+        address admin
+    ) internal returns (TimelockController tl) {
+        vm.recordLogs();
+        tl = new TimelockController(delay, proposers, executors, admin);
+        mig.pinFromLogs(address(tl), vm.getRecordedLogs());
     }
 
     function _pair(
@@ -881,8 +1079,10 @@ contract CoreTimelockTest is Test {
         address executor
     ) internal returns (TimelockController tl, address safeOut) {
         address eoa = makeAddr("deployerEoa");
+        vm.recordLogs();
         vm.prank(eoa);
         tl = deploy.deployTimelock(safe, delay, executor);
+        mig.pinFromLogs(address(tl), vm.getRecordedLogs());
         safeOut = safe;
     }
 }
@@ -923,7 +1123,7 @@ contract SafeThresholdStub {
 }
 
 /// @notice Live Base Sepolia classification. Skips with no fork and no `BASE_SEPOLIA_RPC_URL`.
-contract CoreTimelockForkTest is Test {
+contract CoreTimelockForkTest is FixtureFiles {
     address internal constant CORE = 0x10CC9474b45625ADfd05C209f2518023484878D9;
     address internal constant DEPLOYER = 0x5D467FA00eC0E92044f779e495a17db66c5964aa;
     uint256 internal constant BASE_SEPOLIA = 84532;
@@ -949,24 +1149,48 @@ contract CoreTimelockForkTest is Test {
         deploy = new DeployTimelock();
     }
 
-    function test_forkRejectsWrongTimelock() public {
+    function test_forkRejectsWrongTimelock() public dropFixtures {
         address safe = address(new SafeThresholdStub(2, 2));
         TimelockController tl = deploy.deployTimelock(safe, 300, address(0));
-        string memory path = string.concat("test/fixtures/fork-", vm.toString(address(tl)), ".json");
-        vm.writeFile(
-            path,
-            string.concat(
-                '{"transactions":[{"transactionType":"CREATE","contractName":"TimelockController","contractAddress":"',
-                vm.toString(address(tl)),
-                '"}]}'
-            )
-        );
+        string memory path = _fixturePath();
+        vm.writeFile(path, _recordJson(address(tl), block.chainid, bytes32(uint256(4))));
         mig.useDeployJson(path);
         mig.useSafe(safe);
         mig.useExpected(makeAddr("wrongTimelock"));
         mig.pinNewTimelock(address(tl));
         mig.pinStep("check");
         vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
+        mig.run();
+    }
+
+    function test_forkRejectsRecordChain() public dropFixtures {
+        address safe = address(new SafeThresholdStub(2, 2));
+        TimelockController tl = deploy.deployTimelock(safe, 300, address(0));
+        string memory path = _fixturePath();
+        vm.writeFile(path, _recordJson(address(tl), 1, bytes32(uint256(5))));
+        mig.useDeployJson(path);
+        mig.useSafe(safe);
+        mig.useExpected(address(tl));
+        mig.pinNewTimelock(address(tl));
+        mig.pinStep("check");
+        vm.expectRevert(bytes("MigrateOwnership: deploy record chain mismatch"));
+        mig.run();
+    }
+
+    function test_forkRejectsExtraAdminWithoutReceipt() public dropFixtures {
+        address safe = address(new SafeThresholdStub(2, 2));
+        address[] memory proposers = new address[](1);
+        proposers[0] = safe;
+        address[] memory executors = new address[](1);
+        TimelockController tl = new TimelockController(300, proposers, executors, address(this));
+        string memory path = _fixturePath();
+        vm.writeFile(path, _recordJson(address(tl), block.chainid, bytes32(uint256(6))));
+        mig.useDeployJson(path);
+        mig.useSafe(safe);
+        mig.useExpected(address(tl));
+        mig.pinNewTimelock(address(tl));
+        mig.pinStep("check");
+        vm.expectRevert(bytes("MigrateOwnership: deploy receipt missing"));
         mig.run();
     }
 

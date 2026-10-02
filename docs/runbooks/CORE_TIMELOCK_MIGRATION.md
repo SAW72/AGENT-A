@@ -95,6 +95,7 @@ cast logs --from-block <DEPLOY_BLOCK> --to-block <DEPLOY_BLOCK> \
 `MIGRATION_STEP=transfer` (the default). Before this step, and before every other step, the script reverts unless all of the following hold:
 
 - `NEW_TIMELOCK` has code. The `TimelockController` CREATE in `TIMELOCK_DEPLOY_JSON` (default `broadcast/DeployTimelock.s.sol/<chainid>/run-latest.json`) equals `NEW_TIMELOCK` and `EXPECTED_TIMELOCK`. A missing file, or no matching CREATE, reverts.
+- `TIMELOCK_DEPLOY_JSON` must be inside a path `fs_permissions` in `foundry.toml` lets forge read (`./broadcast` by default).
 - `SAFE_ADDRESS` is not `CORE_TIMELOCK` and not the deployer, has code, and that code does not start with `0xef0100`.
 - `getThreshold()` is at least 2 and `getOwners().length` is at least the threshold. No owner is the zero address, a duplicate, `CORE_TIMELOCK`, or the deployer.
 - The Safe holds `PROPOSER_ROLE` and `CANCELLER_ROLE`.

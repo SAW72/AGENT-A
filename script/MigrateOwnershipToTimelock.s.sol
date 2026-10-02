@@ -48,6 +48,19 @@ contract MigrateOwnershipToTimelock is Script {
     /// @dev Stable salt so a resumed print of the same remaining set matches the scheduled operation.
     bytes32 public constant ACCEPT_SALT = keccak256("CORE_TIMELOCK_MIGRATION_ACCEPT_V1");
     bytes32 public constant PREDECESSOR = bytes32(0);
+    bytes32 public constant ROLE_GRANTED_TOPIC = keccak256("RoleGranted(bytes32,address,address)");
+    bytes32 public constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
+    bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
+    bytes32 public constant CANCELLER_ROLE = keccak256("CANCELLER_ROLE");
+
+    /// @dev Receipt fields the deploy-provenance check needs. `roles` and `accounts` are RoleGranted pairs
+    /// emitted by the created timelock.
+    struct DeployReceipt {
+        uint256 status;
+        address contractAddress;
+        bytes32[] roles;
+        address[] accounts;
+    }
 
     uint256 internal constant BOOK_SLOTS = 14;
     uint256 internal constant MIGRATION_ROWS = 9;
@@ -177,21 +190,23 @@ contract MigrateOwnershipToTimelock is Script {
 
     /// @notice Reject a controller that is not the pinned Safe timelock, before any ownership call and before every
     /// step.
-    /// @dev `EXPECTED_TIMELOCK` is required. The deploy record's `TimelockController` CREATE address must equal
-    ///      `newTimelock` and `EXPECTED_TIMELOCK`. The Safe must hold `PROPOSER_ROLE` and `CANCELLER_ROLE`, with
-    ///      threshold at least 2 and at least that many owners, no zero or duplicate owner, and no owner equal to
+    /// @dev `EXPECTED_TIMELOCK` is required. The deploy record's chain and `TimelockController` CREATE address must
+    ///      match, and that create transaction's receipt must show status 1, the same contract, and exactly the four
+    ///      role grants from `DeployTimelock`. The Safe must hold `PROPOSER_ROLE` and `CANCELLER_ROLE`, with threshold
+    ///      at least 2 and at least that many owners, no zero or duplicate owner, and no owner equal to
     ///      `CORE_TIMELOCK` or `msg.sender`. Its code must not be an EIP-7702 designator. `DEFAULT_ADMIN_ROLE` sits
     ///      on the timelock and not on `CORE_TIMELOCK`, `msg.sender`, or the Safe. `CORE_TIMELOCK` holds no proposer,
     ///      executor, canceller, or admin role. `getMinDelay()` is at least 300 seconds.
     function requireValidTimelock(
         address newTimelock
-    ) public view {
+    ) public {
         requireAllowedChain();
         if (newTimelock.code.length == 0) revert("MigrateOwnership: NEW_TIMELOCK has no code");
         address expected = _expected();
-        _requireDeployRecord(newTimelock, expected);
+        bytes32 txHash = _requireCreateRecord(newTimelock, expected);
         address safe = _safeAddress();
         _requireSafe(safe);
+        _requireDeployReceipt(txHash, newTimelock, expected, safe);
         TimelockController tl = TimelockController(payable(newTimelock));
         if (!tl.hasRole(tl.PROPOSER_ROLE(), safe)) revert("MigrateOwnership: SAFE missing PROPOSER_ROLE");
         if (!tl.hasRole(tl.CANCELLER_ROLE(), safe)) revert("MigrateOwnership: SAFE missing CANCELLER_ROLE");
@@ -740,18 +755,173 @@ contract MigrateOwnershipToTimelock is Script {
         }
     }
 
-    /// @dev Provenance is the CREATE this script's deploy wrote. That constructor self-administers and grants the
-    ///      Safe proposer and canceller, plus executor to the configured executor (or `address(0)`).
-    function _requireDeployRecord(
+    /// @dev File, chain id, and CREATE address. The receipt check is separate so a missing Safe still reverts first.
+    function _requireCreateRecord(
         address newTimelock,
         address expected
-    ) internal view {
+    ) internal view returns (bytes32 txHash) {
         string memory path = _deployJsonPath();
         if (!vm.exists(path)) revert("MigrateOwnership: deploy record missing");
-        address deployed = _timelockCreateAddress(vm.readFile(path));
-        if (deployed == address(0)) revert("MigrateOwnership: TimelockController CREATE not in deploy record");
+        string memory json = vm.readFile(path);
+        uint256 chainId;
+        try vm.parseJsonUint(json, ".chain") returns (uint256 got) {
+            chainId = got;
+        } catch {
+            revert("MigrateOwnership: deploy record chain mismatch");
+        }
+        if (chainId != block.chainid) revert("MigrateOwnership: deploy record chain mismatch");
+        (address deployed, bytes32 hash, bool found) = _timelockCreate(json);
+        if (!found || deployed == address(0)) {
+            revert("MigrateOwnership: TimelockController CREATE not in deploy record");
+        }
         if (deployed != newTimelock || deployed != expected) {
             revert("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController");
+        }
+        if (hash == bytes32(0)) revert("MigrateOwnership: deploy record missing tx hash");
+        txHash = hash;
+    }
+
+    /// @dev Real script runs call the RPC. Tests override `fetchDeployReceipt`. There is no env bypass.
+    function _requireDeployReceipt(
+        bytes32 txHash,
+        address newTimelock,
+        address expected,
+        address safe
+    ) internal {
+        DeployReceipt memory receipt = fetchDeployReceipt(txHash);
+        requireDeployReceipt(
+            receipt.status, receipt.contractAddress, newTimelock, expected, safe, receipt.roles, receipt.accounts
+        );
+    }
+
+    /// @notice Status 1, contract address, and exactly four RoleGranted logs from `DeployTimelock`.
+    function requireDeployReceipt(
+        uint256 status,
+        address receiptContract,
+        address newTimelock,
+        address expected,
+        address safe,
+        bytes32[] memory roles,
+        address[] memory accounts
+    ) public pure {
+        if (status != 1) revert("MigrateOwnership: deploy transaction failed");
+        if (receiptContract != newTimelock || receiptContract != expected) {
+            revert("MigrateOwnership: deploy receipt contract mismatch");
+        }
+        _requireRoleGrants(newTimelock, safe, roles, accounts);
+    }
+
+    /// @notice Fetch the create receipt from the active RPC. A null receipt reverts. No env bypass.
+    function fetchDeployReceipt(
+        bytes32 txHash
+    ) public virtual returns (DeployReceipt memory receipt) {
+        string memory params = string.concat("[\"", vm.toString(txHash), "\"]");
+        string memory json;
+        try vm.rpcJson("eth_getTransactionReceipt", params) returns (string memory got) {
+            json = got;
+        } catch {
+            revert("MigrateOwnership: deploy receipt missing");
+        }
+        if (bytes(json).length == 0 || _eq(json, "null")) revert("MigrateOwnership: deploy receipt missing");
+        try vm.parseJsonUint(json, ".status") returns (uint256 status) {
+            receipt.status = status;
+        } catch {
+            revert("MigrateOwnership: deploy transaction failed");
+        }
+        try vm.parseJsonAddress(json, ".contractAddress") returns (address created) {
+            receipt.contractAddress = created;
+        } catch {
+            receipt.contractAddress = address(0);
+        }
+        (receipt.roles, receipt.accounts) = _grantsFromReceipt(json, receipt.contractAddress);
+    }
+
+    function _requireRoleGrants(
+        address timelock,
+        address safe,
+        bytes32[] memory roles,
+        address[] memory accounts
+    ) internal pure {
+        if (roles.length != accounts.length) revert("MigrateOwnership: unexpected RoleGranted");
+        bool admin;
+        bool proposer;
+        bool canceller;
+        bool executor;
+        uint256 n = roles.length;
+        for (uint256 i; i < n; i++) {
+            bytes32 role = roles[i];
+            address account = accounts[i];
+            if (role == bytes32(0) && account == timelock) {
+                if (admin) revert("MigrateOwnership: unexpected RoleGranted");
+                admin = true;
+            } else if (role == PROPOSER_ROLE && account == safe) {
+                if (proposer) revert("MigrateOwnership: unexpected RoleGranted");
+                proposer = true;
+            } else if (role == CANCELLER_ROLE && account == safe) {
+                if (canceller) revert("MigrateOwnership: unexpected RoleGranted");
+                canceller = true;
+            } else if (role == EXECUTOR_ROLE && (account == address(0) || account == safe)) {
+                if (executor) revert("MigrateOwnership: unexpected RoleGranted");
+                executor = true;
+            } else {
+                revert("MigrateOwnership: unexpected RoleGranted");
+            }
+        }
+        if (!admin) revert("MigrateOwnership: missing DEFAULT_ADMIN_ROLE grant");
+        if (!proposer) revert("MigrateOwnership: missing PROPOSER_ROLE grant");
+        if (!canceller) revert("MigrateOwnership: missing CANCELLER_ROLE grant");
+        if (!executor) revert("MigrateOwnership: missing EXECUTOR_ROLE grant");
+    }
+
+    function _grantsFromReceipt(
+        string memory json,
+        address timelock
+    ) internal pure returns (bytes32[] memory roles, address[] memory accounts) {
+        uint256 n = _countRoleGrants(json, timelock);
+        roles = new bytes32[](n);
+        accounts = new address[](n);
+        uint256 i = 0;
+        uint256 k = 0;
+        while (k < n) {
+            string memory base = string.concat(".logs[", vm.toString(i), "]");
+            try vm.parseJsonAddress(json, string.concat(base, ".address")) returns (address emitter) {
+                if (emitter == timelock) {
+                    try vm.parseJsonBytes32Array(json, string.concat(base, ".topics")) returns (
+                        bytes32[] memory topics
+                    ) {
+                        if (topics.length >= 3 && topics[0] == ROLE_GRANTED_TOPIC) {
+                            roles[k] = topics[1];
+                            accounts[k] = address(uint160(uint256(topics[2])));
+                            k += 1;
+                        }
+                    } catch { }
+                }
+            } catch {
+                break;
+            }
+            i += 1;
+        }
+    }
+
+    function _countRoleGrants(
+        string memory json,
+        address timelock
+    ) internal pure returns (uint256 n) {
+        uint256 i = 0;
+        while (true) {
+            string memory base = string.concat(".logs[", vm.toString(i), "]");
+            try vm.parseJsonAddress(json, string.concat(base, ".address")) returns (address emitter) {
+                if (emitter == timelock) {
+                    try vm.parseJsonBytes32Array(json, string.concat(base, ".topics")) returns (
+                        bytes32[] memory topics
+                    ) {
+                        if (topics.length >= 3 && topics[0] == ROLE_GRANTED_TOPIC) n += 1;
+                    } catch { }
+                }
+            } catch {
+                return n;
+            }
+            i += 1;
         }
     }
 
@@ -763,20 +933,26 @@ contract MigrateOwnershipToTimelock is Script {
         path = string.concat("broadcast/DeployTimelock.s.sol/", vm.toString(block.chainid), "/run-latest.json");
     }
 
-    function _timelockCreateAddress(
+    function _timelockCreate(
         string memory json
-    ) internal pure returns (address found) {
+    ) internal pure returns (address deployed, bytes32 txHash, bool found) {
         uint256 i = 0;
         while (true) {
             string memory prefix = string.concat(".transactions[", vm.toString(i), "]");
             try vm.parseJsonString(json, string.concat(prefix, ".transactionType")) returns (string memory txType) {
                 try vm.parseJsonString(json, string.concat(prefix, ".contractName")) returns (string memory name) {
                     if (_eq(txType, "CREATE") && _eq(name, "TimelockController")) {
-                        return vm.parseJsonAddress(json, string.concat(prefix, ".contractAddress"));
+                        deployed = vm.parseJsonAddress(json, string.concat(prefix, ".contractAddress"));
+                        try vm.parseJsonBytes32(json, string.concat(prefix, ".hash")) returns (bytes32 hash) {
+                            txHash = hash;
+                        } catch {
+                            revert("MigrateOwnership: deploy record missing tx hash");
+                        }
+                        return (deployed, txHash, true);
                     }
                 } catch { }
             } catch {
-                return address(0);
+                return (address(0), bytes32(0), false);
             }
             i += 1;
         }
