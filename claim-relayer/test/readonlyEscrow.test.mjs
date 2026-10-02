@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { ESCROW_VIEW_SIGNATURES, PANEL_VIEW_SIGNATURES, selectorFor } from "../escrowCalldata.mjs";
-import { ALLOWED_RPC_METHODS, readEscrowState } from "../readonlyEscrow.mjs";
+import { ALLOWED_RPC_METHODS, assessGovernance, assessOwner, readEscrowState, readExpectedOwner } from "../readonlyEscrow.mjs";
 
 const ESCROW = "0x1069aA6597f08F1E8B8ad39AA40EDE1D0c77298d";
 const PANEL = "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb";
@@ -48,6 +48,78 @@ describe("read-only escrow checks", () => {
     assert.equal(state.arbitratorCount, "3");
     assert.deepEqual(state.bookMatch, { owner: true, governance: true, disputePanel: true });
     assert.deepEqual(seen, ["eth_chainId", "eth_getCode", "eth_call", "eth_call", "eth_call", "eth_call"]);
+  });
+
+  it("passes when the owner is CORE and the expected owner is unset", () => {
+    const verdict = assessOwner(TIMELOCK, null, TIMELOCK);
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, "pre_migration_core");
+    assert.match(verdict.message, /pre-migration\/legacy/);
+    assert.equal(readExpectedOwner(undefined, null), null);
+    assert.equal(readExpectedOwner("", "0x0000000000000000000000000000000000000000"), null);
+  });
+
+  it("passes when the owner is the configured timelock", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const verdict = assessOwner(configured, configured, TIMELOCK);
+    assert.equal(verdict.ok, true);
+    assert.equal(verdict.code, "configured_owner");
+    assert.equal(readExpectedOwner(configured, null), configured);
+  });
+
+  it("fails closed when the owner is a timelock and the field is unset", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const verdict = assessOwner(configured, null, TIMELOCK);
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, "expected_owner_unset");
+    assert.match(verdict.message, /unset/);
+  });
+
+  it("fails closed when the owner is a random address", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const other = "0x2222222222222222222222222222222222222222";
+    const verdict = assessOwner(other, configured, TIMELOCK);
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.code, "owner_mismatch");
+    const unset = assessOwner(other, null, TIMELOCK);
+    assert.equal(unset.ok, false);
+    assert.equal(unset.code, "expected_owner_unset");
+  });
+
+  it("accepts CORE governance and configured timelock governance", () => {
+    const configured = "0x1111111111111111111111111111111111111111";
+    const core = assessGovernance(TIMELOCK, TIMELOCK, null);
+    assert.equal(core.ok, true);
+    assert.equal(core.code, "pre_migration_core");
+    assert.match(core.message, /pre-migration\/legacy/);
+    const timelock = assessGovernance(configured, TIMELOCK, configured);
+    assert.equal(timelock.ok, true);
+    assert.equal(timelock.code, "configured_governance");
+    const other = assessGovernance("0x2222222222222222222222222222222222222222", TIMELOCK, configured);
+    assert.equal(other.ok, false);
+    assert.equal(other.code, "governance_mismatch");
+  });
+
+  it("rejects NEW_TIMELOCK equal to CORE", () => {
+    const book = "0x1111111111111111111111111111111111111111";
+    assert.throws(
+      () => readExpectedOwner(TIMELOCK, book, TIMELOCK),
+      (err) => err.error === "new_timelock_is_core" && !String(err.message).includes(book),
+    );
+  });
+
+  it("fails closed on a malformed NEW_TIMELOCK instead of using the book", () => {
+    const book = "0x1111111111111111111111111111111111111111";
+    assert.throws(
+      () => readExpectedOwner("not-an-address", book),
+      (err) => err.error === "invalid_new_timelock",
+    );
+    assert.throws(
+      () => readExpectedOwner("0x1234", book),
+      (err) => err.error === "invalid_new_timelock",
+    );
+    assert.equal(readExpectedOwner("  ", book), book);
+    assert.equal(readExpectedOwner("0x0000000000000000000000000000000000000000", book), book);
   });
 });
 

@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { DeployTimelock } from "../script/DeployTimelock.s.sol";
+import { DeployBotAttestationEscrow } from "../script/DeployBotAttestationEscrow.s.sol";
 import { MigrateOwnershipToTimelock } from "../script/MigrateOwnershipToTimelock.s.sol";
 import { Denylist } from "../contracts/Denylist.sol";
 import { Vault } from "../contracts/Vault.sol";
@@ -915,6 +916,168 @@ contract CoreTimelockTest is FixtureFiles {
         address[] memory rows = mig.migrationRows();
         assertEq(rows.length, 9);
         assertEq(rows[7], 0xa1a067D2F58Ae54d4bb5Ec06d893B29E23A45CB7);
+    }
+
+    function test_escrowDeployRejectsCoreGovernance() public {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        address core = escrowDeploy.LIVE_TIMELOCK();
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK is pre-migration CORE"));
+        escrowDeploy.deploy(address(deny), address(v), address(dispute), core);
+    }
+
+    function test_escrowDeployAcceptsValidTimelock() public dropFixtures {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        escrowDeploy.useTimelockCheck(mig);
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        _arm(safe, address(tl));
+        (address booked, bool set) = escrowDeploy.readBookGovernance();
+        assertFalse(set);
+        assertEq(booked, address(0));
+
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        BotAttestationEscrow created = escrowDeploy.deploy(address(deny), address(v), address(dispute), address(tl));
+        assertEq(created.governance(), address(tl));
+        assertEq(created.pendingOwner(), address(tl));
+        assertEq(created.owner(), address(escrowDeploy));
+        assertTrue(address(tl) != escrowDeploy.LIVE_TIMELOCK());
+        assertEq(address(created.denylist()), address(deny));
+        assertEq(address(created.vault()), address(v));
+        assertEq(address(created.disputePanel()), address(dispute));
+        _assertAcceptCall(escrowDeploy, address(created), tl);
+
+        Denylist swapped = new Denylist();
+        vm.expectRevert(BotAttestationEscrow.NotGovernance.selector);
+        created.setDenylist(address(swapped));
+        vm.prank(address(tl));
+        created.acceptOwnership();
+        assertEq(created.owner(), address(tl));
+        assertEq(created.pendingOwner(), address(0));
+        vm.prank(address(tl));
+        created.setDenylist(address(swapped));
+        assertEq(address(created.denylist()), address(swapped));
+    }
+
+    function test_runBroadcastCreatesFromDeployer() public dropFixtures {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        escrowDeploy.useTimelockCheck(mig);
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        _arm(safe, address(tl));
+
+        address deployer = makeAddr("escrowBroadcaster");
+        vm.deal(deployer, 1 ether);
+        uint256 nonce = vm.getNonce(deployer);
+        escrowDeploy.useRunInputs(
+            address(tl), escrowDeploy.LIVE_DENYLIST(), escrowDeploy.LIVE_VAULT(), escrowDeploy.LIVE_DISPUTE_PANEL()
+        );
+        escrowDeploy.runBroadcast(deployer);
+
+        address createdAddr = _acceptTarget(escrowDeploy);
+        assertEq(createdAddr, vm.computeCreateAddress(deployer, nonce));
+        BotAttestationEscrow created = BotAttestationEscrow(createdAddr);
+        assertEq(created.owner(), deployer);
+        assertTrue(created.owner() != address(escrowDeploy));
+        assertEq(created.governance(), address(tl));
+        assertEq(created.pendingOwner(), address(tl));
+        _assertAcceptCall(escrowDeploy, createdAddr, tl);
+    }
+
+    function test_escrowDeployRejectsCodelessGovernance() public {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK has no code"));
+        escrowDeploy.deploy(address(deny), address(v), address(dispute), address(0xBEEF));
+    }
+
+    function test_escrowDeployRejectsNonTimelockContract() public {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK getMinDelay failed"));
+        escrowDeploy.deploy(address(deny), address(v), address(dispute), address(deny));
+    }
+
+    function test_escrowDeployRejectsExpectedMismatch() public dropFixtures {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        escrowDeploy.useTimelockCheck(mig);
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        _arm(safe, address(tl));
+        mig.useExpected(address(0xBEEF));
+
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK is not the deployed TimelockController"));
+        escrowDeploy.deploy(address(deny), address(v), address(dispute), address(tl));
+    }
+
+    function test_escrowDeployRejectsBadRoleRecord() public dropFixtures {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        escrowDeploy.useTimelockCheck(mig);
+        address safe = _etchSafe();
+        address[] memory proposers = new address[](1);
+        proposers[0] = makeAddr("otherProposer");
+        address[] memory executors = new address[](1);
+        vm.recordLogs();
+        TimelockController bad = new TimelockController(300, proposers, executors, address(0));
+        mig.pinFromLogs(address(bad), vm.getRecordedLogs());
+        mig.useSafe(safe);
+        mig.useExpected(address(bad));
+        _pinDeployRecord(address(bad));
+
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        vm.expectRevert(bytes("MigrateOwnership: unexpected RoleGranted"));
+        escrowDeploy.deploy(address(deny), address(v), address(dispute), address(bad));
+    }
+
+    function test_escrowDeployRejectsBookMismatch() public dropFixtures {
+        DeployBotAttestationEscrow escrowDeploy = new DeployBotAttestationEscrow();
+        escrowDeploy.useTimelockCheck(mig);
+        (TimelockController tl, address safe) = _controller(300, address(0));
+        _arm(safe, address(tl));
+        string memory path = _fixturePath();
+        vm.writeFile(path, string.concat('{"governanceTimelock":"', vm.toString(address(uint160(0xBEEF))), '"}'));
+        escrowDeploy.useBook(path);
+
+        (Denylist deny, Vault v, DisputePanel dispute) = _freshDeps();
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK is not governanceTimelock"));
+        escrowDeploy.deploy(address(deny), address(v), address(dispute), address(tl));
+    }
+
+    function _acceptTarget(
+        DeployBotAttestationEscrow escrowDeploy
+    ) internal view returns (address target) {
+        (target,,,,,,,,) = escrowDeploy.lastAcceptCall();
+    }
+
+    function _assertAcceptCall(
+        DeployBotAttestationEscrow escrowDeploy,
+        address created,
+        TimelockController tl
+    ) internal view {
+        (
+            address target,
+            bytes memory data,
+            uint256 value,
+            bytes32 predecessor,
+            bytes32 salt,
+            uint256 delay,
+            bytes memory scheduleCalldata,
+            bytes memory executeCalldata,
+            bytes32 operationId
+        ) = escrowDeploy.lastAcceptCall();
+        bytes memory acceptData = abi.encodeWithSelector(bytes4(keccak256("acceptOwnership()")));
+        assertEq(target, created);
+        assertEq(data, acceptData);
+        assertEq(value, 0);
+        assertEq(predecessor, bytes32(0));
+        assertEq(delay, tl.getMinDelay());
+        assertEq(operationId, tl.hashOperation(created, 0, acceptData, bytes32(0), salt));
+        assertEq(bytes4(scheduleCalldata), TimelockController.schedule.selector);
+        assertEq(bytes4(executeCalldata), TimelockController.execute.selector);
+    }
+
+    function _freshDeps() internal returns (Denylist deny, Vault v, DisputePanel dispute) {
+        deny = new Denylist();
+        v = new Vault(address(deny));
+        dispute = new DisputePanel();
     }
 
     function _arm(

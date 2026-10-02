@@ -10,6 +10,7 @@ export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as cons
 export const FALLBACK_PIN = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
   network: "base-sepolia",
+  /** Pre-migration owner. The CORE EOA, not the TimelockController. */
   coreTimelock: "0x10CC9474b45625ADfd05C209f2518023484878D9",
   denylist: "0xeE76876bECcFc1B58fC06fF4E654a517d784B224",
   vault: "0x1463D664fA467FBCDA4B05443434494f05e565bc",
@@ -32,7 +33,10 @@ export type AddressBook = {
   source: BookSource
   chainId: typeof BASE_SEPOLIA_CHAIN_ID
   network: "base-sepolia"
+  /** Pre-migration owner. The CORE EOA, not the TimelockController. */
   coreTimelock: Address
+  /** TimelockController from DeployTimelock. Null until that broadcast is recorded. */
+  governanceTimelock: Address | null
   denylist: Address
   vault: Address
   disputePanel: Address
@@ -105,6 +109,7 @@ export function fallbackBook(): AddressBook {
     chainId: BASE_SEPOLIA_CHAIN_ID,
     network: "base-sepolia",
     coreTimelock: getAddress(FALLBACK_PIN.coreTimelock),
+    governanceTimelock: null,
     denylist: getAddress(FALLBACK_PIN.denylist),
     vault: getAddress(FALLBACK_PIN.vault),
     disputePanel: getAddress(FALLBACK_PIN.disputePanel),
@@ -117,6 +122,17 @@ export function fallbackBook(): AddressBook {
     bvtTimelock: null,
     bvtGovernor: null,
   }
+}
+
+/** Null, blank, or the zero address means the TimelockController is not recorded yet. */
+function readGovernanceTimelock(raw: Record<string, unknown>): Address | null | "bad" {
+  if (!("governanceTimelock" in raw)) return null
+  const value = raw.governanceTimelock
+  if (value === null || value === "") return null
+  const address = checksum(value)
+  if (!address) return "bad"
+  if (address === ZERO_ADDRESS) return null
+  return address
 }
 
 function usesForbidden(address: Address | null, blocked: Set<string>): boolean {
@@ -134,6 +150,7 @@ export function resolveAddressBook(raw: unknown): AddressBook {
 
   const blocked = forbiddenAddresses(raw)
   const coreTimelock = checksum(raw.coreTimelock)
+  const governanceTimelock = readGovernanceTimelock(raw)
   const denylist = requiredSlot(raw, "Denylist")
   const vaultSlot = raw.Vault
   const vault = requiredSlot(raw, "Vault")
@@ -142,11 +159,21 @@ export function resolveAddressBook(raw: unknown): AddressBook {
   const liability = requiredSlot(raw, "Liability")
   const insuranceFund = requiredSlot(raw, "InsuranceFund")
 
-  if (!coreTimelock || !denylist || !vault || !vaultDenylist || !disputePanel || !liability || !insuranceFund) {
+  if (
+    governanceTimelock === "bad" ||
+    !coreTimelock ||
+    !denylist ||
+    !vault ||
+    !vaultDenylist ||
+    !disputePanel ||
+    !liability ||
+    !insuranceFund
+  ) {
     return fallback
   }
   if (vaultDenylist !== denylist) return fallback
   if (coreTimelock === ZERO_ADDRESS) return fallback
+  if (usesForbidden(governanceTimelock, blocked)) return fallback
 
   const nullable: Record<(typeof NULLABLE_SLOTS)[number], Address | null> = {
     BotAttestationEscrow: null,
@@ -173,6 +200,7 @@ export function resolveAddressBook(raw: unknown): AddressBook {
     chainId: BASE_SEPOLIA_CHAIN_ID,
     network: "base-sepolia",
     coreTimelock,
+    governanceTimelock,
     denylist,
     vault,
     disputePanel,

@@ -16,7 +16,8 @@ abstract contract OpsDenylistLog is OpsLive {
         console.log("op", op);
         console.log("chainid", block.chainid);
         console.log("Denylist", address(denylist));
-        console.log("CORE_TIMELOCK", timelock);
+        console.log("NEW_TIMELOCK", timelock);
+        console.log("pre-migration CORE_TIMELOCK", LIVE_TIMELOCK);
         console.log("bucket", uint256(bucket));
         console.logBytes32(id);
     }
@@ -42,10 +43,9 @@ contract OpsDenylistAddExact is OpsDenylistLog {
         (Denylist denylist, address timelock) = loadDenylist();
         bytes32 id = readBytes32("LISTING_ID", "OpsLive: LISTING_ID unset");
         _logDenylist("addExact", denylist, timelock, id, Denylist.Bucket.Exact);
-        bool send = asOwner(timelock);
-        denylist.addExact(id);
-        finishOwner(send);
-        _logRow(denylist, id, Denylist.Bucket.Exact);
+        if (performOwnerCall(address(denylist), abi.encodeWithSelector(Denylist.addExact.selector, id))) {
+            _logRow(denylist, id, Denylist.Bucket.Exact);
+        }
     }
 }
 
@@ -56,10 +56,9 @@ contract OpsDenylistAddSignature is OpsDenylistLog {
         (Denylist denylist, address timelock) = loadDenylist();
         bytes32 id = readBytes32("LISTING_ID", "OpsLive: LISTING_ID unset");
         _logDenylist("addSignature", denylist, timelock, id, Denylist.Bucket.Signature);
-        bool send = asOwner(timelock);
-        denylist.addSignature(id);
-        finishOwner(send);
-        _logRow(denylist, id, Denylist.Bucket.Signature);
+        if (performOwnerCall(address(denylist), abi.encodeWithSelector(Denylist.addSignature.selector, id))) {
+            _logRow(denylist, id, Denylist.Bucket.Signature);
+        }
     }
 }
 
@@ -71,10 +70,9 @@ contract OpsDenylistAddPrompt is OpsDenylistLog {
         (Denylist denylist, address timelock) = loadDenylist();
         bytes32 id = readBytes32("LISTING_ID", "OpsLive: LISTING_ID unset");
         _logDenylist("addPrompt", denylist, timelock, id, Denylist.Bucket.Prompt);
-        bool send = asOwner(timelock);
-        denylist.addPrompt(id);
-        finishOwner(send);
-        _logRow(denylist, id, Denylist.Bucket.Prompt);
+        if (performOwnerCall(address(denylist), abi.encodeWithSelector(Denylist.addPrompt.selector, id))) {
+            _logRow(denylist, id, Denylist.Bucket.Prompt);
+        }
     }
 }
 
@@ -88,9 +86,8 @@ contract OpsDenylistRemove is OpsDenylistLog {
         bytes32 id = readBytes32("LISTING_ID", "OpsLive: LISTING_ID unset");
         Denylist.Bucket bucket = parseBucket(readString("BUCKET", "OpsLive: BUCKET unset"));
         _logDenylist("remove", denylist, timelock, id, bucket);
-        bool send = asOwner(timelock);
-        denylist.remove(id, uint8(bucket));
-        finishOwner(send);
-        _logRow(denylist, id, bucket);
+        if (performOwnerCall(address(denylist), abi.encodeWithSelector(Denylist.remove.selector, id, uint8(bucket)))) {
+            _logRow(denylist, id, bucket);
+        }
     }
 }

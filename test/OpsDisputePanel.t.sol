@@ -126,10 +126,10 @@ contract OpsDisputePanelGuardTest is Test {
 
     function test_refusesOtherChains() public {
         vm.chainId(11155111);
-        vm.expectRevert(bytes("OpsLive: Base Sepolia (84532) only"));
+        vm.expectRevert(bytes("OpsLive: Base Sepolia (84532) or Anvil (31337) only"));
         addOp.requireAllowedChain();
         vm.chainId(31337);
-        vm.expectRevert(bytes("OpsLive: Base Sepolia (84532) only"));
+        addOp.requireAllowedChain();
         seatOp.requireAllowedChain();
     }
 
@@ -273,11 +273,13 @@ contract DisputePanelLiveReadTest is Test {
 
     function test_forkLoadPanelMatchesBook() public {
         vm.setEnv("DISPUTE_PANEL", vm.toString(PANEL));
-        vm.setEnv("CORE_TIMELOCK", vm.toString(CORE_TIMELOCK));
+        // Not a deployed controller. The live owner is still CORE, so this stays on the legacy path.
+        vm.setEnv("NEW_TIMELOCK", vm.toString(address(0xBEEF)));
         (DisputePanel loaded, address timelock) = addOp.loadPanel();
         assertEq(address(loaded), PANEL);
-        assertEq(timelock, CORE_TIMELOCK);
-        assertEq(loaded.owner(), timelock);
+        assertEq(timelock, address(0xBEEF));
+        assertEq(loaded.owner(), CORE_TIMELOCK);
+        assertFalse(addOp.timelockMode(loaded.owner(), timelock));
         loaded.arbitratorCount();
     }
 }

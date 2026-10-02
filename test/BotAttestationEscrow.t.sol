@@ -1627,17 +1627,12 @@ contract DeployEscrowGuardTest is Test {
 
     function test_refusesEthSepoliaByDefault() public {
         vm.chainId(11155111);
-        vm.expectRevert(
-            bytes("DeployEscrow: Base Sepolia (84532) only; see README to switch to ETH Sepolia (11155111)")
-        );
+        vm.expectRevert(bytes("DeployEscrow: Base Sepolia (84532) or Anvil (31337) only"));
         deploy.requireAllowedChain();
     }
 
-    function test_refusesAnvil() public {
+    function test_allowsAnvil() public {
         vm.chainId(31337);
-        vm.expectRevert(
-            bytes("DeployEscrow: Base Sepolia (84532) only; see README to switch to ETH Sepolia (11155111)")
-        );
         deploy.requireAllowedChain();
     }
 
@@ -1649,11 +1644,12 @@ contract DeployEscrowGuardTest is Test {
 
     function test_timelockMustBeSetAndNotDeployer() public {
         address deployer = address(this);
-        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK unset"));
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK unset"));
         deploy.requireTimelock(deployer, address(0));
-        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK must not be deployer"));
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK must not be deployer"));
         deploy.requireTimelock(deployer, deployer);
-        deploy.requireTimelock(deployer, address(0x71C0));
+        vm.expectRevert(bytes("MigrateOwnership: NEW_TIMELOCK has no code"));
+        deploy.requireGovernance(deployer, address(0xBEEF));
     }
 
     function test_depsMustBeSet() public {
@@ -1673,9 +1669,8 @@ contract DeployEscrowGuardTest is Test {
     }
 
     function test_readAddressZeroReverts() public {
-        vm.setEnv("DENYLIST", vm.toString(address(0)));
         vm.expectRevert(bytes("DeployEscrow: DENYLIST unset"));
-        deploy.readAddress("DENYLIST", "DeployEscrow: DENYLIST unset");
+        deploy.rejectZero(address(0), "DeployEscrow: DENYLIST unset");
     }
 
     function test_liveStackOnly() public {
@@ -1684,15 +1679,13 @@ contract DeployEscrowGuardTest is Test {
         address panel = deploy.LIVE_DISPUTE_PANEL();
         address timelock = deploy.LIVE_TIMELOCK();
         address other = address(0x1234);
-        deploy.requireLiveStack(denylist, vault, panel, timelock);
+        deploy.requireLiveStack(denylist, vault, panel);
         vm.expectRevert(bytes("DeployEscrow: DENYLIST is not the live Base Sepolia Denylist"));
-        deploy.requireLiveStack(other, vault, panel, timelock);
+        deploy.requireLiveStack(other, vault, panel);
         vm.expectRevert(bytes("DeployEscrow: VAULT is not the live Base Sepolia Vault"));
-        deploy.requireLiveStack(denylist, other, panel, timelock);
+        deploy.requireLiveStack(denylist, other, panel);
         vm.expectRevert(bytes("DeployEscrow: DISPUTE_PANEL is not the live Base Sepolia DisputePanel"));
-        deploy.requireLiveStack(denylist, vault, other, timelock);
-        vm.expectRevert(bytes("DeployEscrow: CORE_TIMELOCK is not the live owner"));
-        deploy.requireLiveStack(denylist, vault, panel, other);
+        deploy.requireLiveStack(denylist, vault, other);
         assertEq(deploy.SIMULATE_SENDER(), 0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001);
         assertTrue(deploy.SIMULATE_SENDER() != timelock);
         assertEq(deploy.FOUNDRY_DEFAULT_SENDER(), 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38);
@@ -1711,34 +1704,12 @@ contract DeployEscrowGuardTest is Test {
         deploy.requireBroadcastSender(address(0x5D46));
     }
 
-    function test_deployWiresDepsAndHandsOffToTimelock() public {
+    function test_deployRejectsCoreGovernance() public {
         Denylist denylist = new Denylist();
         Vault vault = new Vault(address(denylist));
         DisputePanel panel = new DisputePanel();
-        address timelock = address(0x71C0);
-
-        BotAttestationEscrow escrow = deploy.deploy(address(denylist), address(vault), address(panel), timelock);
-        assertEq(address(escrow.denylist()), address(denylist));
-        assertEq(address(escrow.vault()), address(vault));
-        assertEq(address(escrow.disputePanel()), address(panel));
-        assertEq(escrow.governance(), timelock);
-        assertEq(escrow.owner(), address(deploy));
-        assertEq(escrow.pendingOwner(), timelock);
-
-        Denylist swapped = new Denylist();
-        vm.expectRevert(BotAttestationEscrow.NotGovernance.selector);
-        escrow.setDenylist(address(swapped));
-
-        vm.prank(timelock);
-        escrow.acceptOwnership();
-        assertEq(escrow.owner(), timelock);
-        assertEq(escrow.pendingOwner(), address(0));
-
-        vm.expectRevert(BotAttestationEscrow.NotGovernance.selector);
-        escrow.setDenylist(address(swapped));
-
-        vm.prank(timelock);
-        escrow.setDenylist(address(swapped));
-        assertEq(address(escrow.denylist()), address(swapped));
+        address core = deploy.LIVE_TIMELOCK();
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK is pre-migration CORE"));
+        deploy.deploy(address(denylist), address(vault), address(panel), core);
     }
 }

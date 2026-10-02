@@ -723,6 +723,13 @@ contract MigrateOwnershipToTimelock is Script {
         pin[8] = 0x141214F04b0E1d949B6e6bf32D019Ad7Ab5B284c;
     }
 
+    /// @notice True when `account` code starts with the EIP-7702 designator `0xef0100`.
+    function isDelegation(
+        address account
+    ) public view returns (bool) {
+        return _isDelegation(account);
+    }
+
     /// @dev Code length is not enough: an EIP-7702 designator (`0xef0100` plus an address) has code.
     function _requireSafe(
         address safe

@@ -30,6 +30,7 @@ describe("config gates", () => {
     assert.equal(health.escrowStartBlockSource, "address_book");
     assert.equal(config.disputePanelAddress, "0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb");
     assert.equal(config.coreTimelock, "0x10CC9474b45625ADfd05C209f2518023484878D9");
+    assert.equal(config.governanceTimelock, null);
     assert.equal(config.bvtAddress, null);
     assert.equal(config.liveSubmit.allowed, false);
     assert.equal(config.claimApiSecret, undefined);
@@ -239,6 +240,38 @@ describe("retired and superseded addresses", () => {
     assert.match(err.message, new RegExp(retired));
     assert.match(err.message, new RegExp(current));
     assert.equal(err.current, current);
+  });
+
+  it("refuses a governanceTimelock on the forbidden list", async () => {
+    const filePath = await writeBook({
+      BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },
+      governanceTimelock: RETIRED_ESCROW,
+    });
+    const err = loadConfigError({ ADDRESS_BOOK_PATH: filePath });
+    assert.equal(err.error, "retired_or_superseded_address");
+    assert.match(err.message, new RegExp(RETIRED_ESCROW));
+    assert.match(err.message, new RegExp(BOOKED_SEPOLIA_ESCROW));
+
+    const denylistBook = await writeBook({
+      BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },
+      governanceTimelock: SUPERSEDED_DENYLIST,
+    });
+    const denylistErr = loadConfigError({ ADDRESS_BOOK_PATH: denylistBook });
+    assert.equal(denylistErr.error, "retired_or_superseded_address");
+    assert.match(denylistErr.message, new RegExp(SUPERSEDED_DENYLIST));
+    assert.match(denylistErr.message, new RegExp(CURRENT_DENYLIST));
+  });
+
+  it("keeps a governanceTimelock that is not forbidden", async () => {
+    const next = "0x1111111111111111111111111111111111111111";
+    const filePath = await writeBook({
+      BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },
+      governanceTimelock: next,
+    });
+    const loaded = loadAddressBook(filePath);
+    assert.equal(loaded.governanceTimelock, next);
+    const config = loadConfig({ ADDRESS_BOOK_PATH: filePath });
+    assert.equal(config.governanceTimelock, next);
   });
 
   it("refuses a dispute panel that is the retired escrow", async () => {

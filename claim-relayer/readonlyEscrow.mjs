@@ -44,6 +44,120 @@ function sameAddress(a, b) {
   return String(a).toLowerCase() === String(b).toLowerCase();
 }
 
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+function normalizeAddress(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!ADDRESS_RE.test(trimmed) || trimmed.toLowerCase() === ZERO_ADDRESS) return null;
+  return trimmed;
+}
+
+function hasText(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+/**
+ * Expected owner is `NEW_TIMELOCK` from the environment when that is a real address,
+ * otherwise `governanceTimelock` from the address book. Blank, zero, and missing are unset.
+ * A malformed `NEW_TIMELOCK` fails closed and does not fall back to the book.
+ * `NEW_TIMELOCK` equal to the pre-migration CORE owner is rejected.
+ * The field is not filled in with CORE. CORE is a separate owner check in `assessOwner`.
+ * @param {string | undefined | null} envValue
+ * @param {string | undefined | null} bookValue
+ * @param {string | undefined | null} [preMigrationOwner]
+ * @returns {string | null}
+ */
+export function readExpectedOwner(envValue, bookValue, preMigrationOwner) {
+  if (hasText(envValue)) {
+    const trimmed = String(envValue).trim();
+    if (trimmed.toLowerCase() !== ZERO_ADDRESS) {
+      const parsed = normalizeAddress(trimmed);
+      if (!parsed) {
+        throw Object.assign(new Error("NEW_TIMELOCK is not an address"), { error: "invalid_new_timelock" });
+      }
+      if (preMigrationOwner && sameAddress(parsed, preMigrationOwner)) {
+        throw Object.assign(new Error("NEW_TIMELOCK must not be the pre-migration CORE owner"), {
+          error: "new_timelock_is_core",
+        });
+      }
+      return parsed;
+    }
+  }
+  return normalizeAddress(bookValue);
+}
+
+/**
+ * Escrow migration is opt-in, so CORE may stay the owner permanently.
+ * Pass first when the on-chain owner is the labeled pre-migration CORE owner, even if the
+ * expected-owner field is unset. That result is labeled pre-migration/legacy.
+ * Otherwise pass when the owner equals the configured `governanceTimelock` / `NEW_TIMELOCK`.
+ * If the field is unset and the owner is not CORE, fail closed.
+ * Any other owner fails closed.
+ * @param {string | null | undefined} owner
+ * @param {string | null | undefined} expectedOwner
+ * @param {string | null | undefined} preMigrationOwner
+ */
+export function assessOwner(owner, expectedOwner, preMigrationOwner) {
+  if (preMigrationOwner && sameAddress(owner, preMigrationOwner)) {
+    return {
+      ok: true,
+      code: "pre_migration_core",
+      message: "pre-migration/legacy: on-chain owner is CORE",
+    };
+  }
+  if (expectedOwner && sameAddress(owner, expectedOwner)) {
+    return {
+      ok: true,
+      code: "configured_owner",
+      message: "on-chain owner matches the configured timelock",
+    };
+  }
+  if (!expectedOwner) {
+    return {
+      ok: false,
+      code: "expected_owner_unset",
+      message:
+        "expected owner is unset and the on-chain owner is not the pre-migration CORE owner; set NEW_TIMELOCK or governanceTimelock",
+    };
+  }
+  return {
+    ok: false,
+    code: "owner_mismatch",
+    message: "on-chain owner matches neither the configured timelock nor the pre-migration CORE owner",
+  };
+}
+
+/**
+ * Current escrows keep CORE as immutable governance. A redeployed escrow passes when
+ * governance equals the configured timelock. Anything else fails closed.
+ * @param {string | null | undefined} governance
+ * @param {string | null | undefined} preMigrationGovernance
+ * @param {string | null | undefined} configuredGovernance
+ */
+export function assessGovernance(governance, preMigrationGovernance, configuredGovernance) {
+  if (preMigrationGovernance && sameAddress(governance, preMigrationGovernance)) {
+    return {
+      ok: true,
+      code: "pre_migration_core",
+      message: "pre-migration/legacy: on-chain governance is CORE",
+    };
+  }
+  if (configuredGovernance && sameAddress(governance, configuredGovernance)) {
+    return {
+      ok: true,
+      code: "configured_governance",
+      message: "on-chain governance matches the configured timelock",
+    };
+  }
+  return {
+    ok: false,
+    code: "governance_mismatch",
+    message: "on-chain governance matches neither the configured timelock nor the pre-migration CORE governance",
+  };
+}
+
 /**
  * Read Escrow owner, governance, disputePanel, and panel arbitratorCount.
  * Refuses any chain other than Base Sepolia before further calls.
@@ -113,17 +227,28 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
   const config = loadConfig(process.env);
   const rpcUrl = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+  let expectedOwner;
+  try {
+    expectedOwner = readExpectedOwner(process.env.NEW_TIMELOCK, config.governanceTimelock, config.coreTimelock);
+  } catch (err) {
+    console.error(err.message || err.error || "invalid_new_timelock");
+    process.exit(2);
+  }
   try {
     const state = await readEscrowState({
       rpcUrl,
       escrowAddress: config.escrowAddress,
       disputePanelAddress: config.disputePanelAddress,
-      expectedOwner: config.escrowOwner,
+      expectedOwner,
       expectedGovernance: config.coreTimelock,
       expectedDisputePanel: config.disputePanelAddress,
     });
-    console.log(JSON.stringify(state));
-    if (!state.hasCode || state.bookMatch.owner === false || state.bookMatch.governance === false || state.bookMatch.disputePanel === false) {
+    const ownerCheck = assessOwner(state.owner, expectedOwner, config.coreTimelock);
+    const governanceCheck = assessGovernance(state.governance, config.coreTimelock, expectedOwner);
+    console.log(JSON.stringify({ ...state, ownerCheck: ownerCheck.code, governanceCheck: governanceCheck.code }));
+    if (!ownerCheck.ok) console.error(ownerCheck.message);
+    if (!governanceCheck.ok) console.error(governanceCheck.message);
+    if (!ownerCheck.ok || !governanceCheck.ok || !state.hasCode || state.bookMatch.disputePanel === false) {
       process.exitCode = 2;
     }
   } catch (err) {
