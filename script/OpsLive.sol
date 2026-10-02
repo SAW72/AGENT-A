@@ -35,6 +35,18 @@ abstract contract OpsLive is Script {
     /// @dev The default salt repeats for an identical call, so a second `schedule` hits the same operation id.
     string public constant SALT_REPEAT_HINT = "set TIMELOCK_SALT to a fresh value to repeat an identical call";
 
+    /// @dev Test-only. Broadcast still reads `NEW_TIMELOCK` and `TIMELOCK_SALT`.
+    enum SaltSource {
+        Env,
+        Pinned,
+        Default
+    }
+
+    bool internal newTimelockPinned;
+    address internal pinnedNewTimelock;
+    SaltSource internal saltSource;
+    bytes32 internal pinnedSalt;
+
     struct TimelockCall {
         address target;
         bytes data;
@@ -74,6 +86,39 @@ abstract contract OpsLive is Script {
             revert(unsetErr);
         }
         if (a == address(0)) revert(unsetErr);
+    }
+
+    /// @notice Test-only `NEW_TIMELOCK`. `address(0)` is unset. Broadcast reads the env var.
+    function useNewTimelock(
+        address timelock
+    ) external {
+        if (broadcasting()) revert("OpsLive: set NEW_TIMELOCK");
+        newTimelockPinned = true;
+        pinnedNewTimelock = timelock;
+    }
+
+    /// @notice Test-only `TIMELOCK_SALT`. Broadcast reads the env var.
+    function useSalt(
+        bytes32 salt
+    ) external {
+        if (broadcasting()) revert("OpsLive: set TIMELOCK_SALT");
+        saltSource = SaltSource.Pinned;
+        pinnedSalt = salt;
+    }
+
+    /// @notice Test-only default salt, ignoring `TIMELOCK_SALT` in the environment.
+    function useDefaultSalt() external {
+        if (broadcasting()) revert("OpsLive: set TIMELOCK_SALT");
+        saltSource = SaltSource.Default;
+    }
+
+    /// @notice `NEW_TIMELOCK` from a test pin, otherwise the env var. No default address.
+    function configuredTimelock() public view returns (address timelock) {
+        if (!broadcasting() && newTimelockPinned) {
+            if (pinnedNewTimelock == address(0)) revert("OpsLive: NEW_TIMELOCK unset");
+            return pinnedNewTimelock;
+        }
+        timelock = readAddress("NEW_TIMELOCK", "OpsLive: NEW_TIMELOCK unset");
     }
 
     function readBytes32(
@@ -163,6 +208,10 @@ abstract contract OpsLive is Script {
         address target,
         bytes memory data
     ) public view returns (bytes32 salt) {
+        if (!broadcasting()) {
+            if (saltSource == SaltSource.Pinned) return pinnedSalt;
+            if (saltSource == SaltSource.Default) return keccak256(abi.encode(SALT_TAG, target, data));
+        }
         try vm.envBytes32("TIMELOCK_SALT") returns (bytes32 set) {
             return set;
         } catch { }
@@ -197,6 +246,13 @@ abstract contract OpsLive is Script {
         call.executeCalldata =
             abi.encodeWithSelector(TimelockController.execute.selector, target, uint256(0), data, predecessor, salt);
         call.operationId = TimelockController(payable(timelock)).hashOperation(target, 0, data, predecessor, salt);
+        TimelockController controller = TimelockController(payable(timelock));
+        bool exists = controller.isOperation(call.operationId);
+        bool pending = controller.isOperationPending(call.operationId);
+        bool done = controller.isOperationDone(call.operationId);
+        if (exists || pending || done) {
+            revert(string.concat("OpsLive: operation already exists; ", SALT_REPEAT_HINT));
+        }
     }
 
     /// @dev Timelock owner: print calldata and do not send. Pre-migration CORE owner: send as that EOA.
@@ -204,7 +260,7 @@ abstract contract OpsLive is Script {
         address target,
         bytes memory data
     ) public returns (bool sent) {
-        address newTimelock = readAddress("NEW_TIMELOCK", "OpsLive: NEW_TIMELOCK unset");
+        address newTimelock = configuredTimelock();
         address owner = IOwner(target).owner();
         if (timelockMode(owner, newTimelock)) {
             _logTimelockCall(timelockCalldata(newTimelock, target, data, resolveSalt(target, data)));
@@ -237,6 +293,13 @@ abstract contract OpsLive is Script {
         console.log("operationId");
         console.logBytes32(call.operationId);
         console.log(SALT_REPEAT_HINT);
+    }
+
+    /// @notice Print one prepared owner call. Calldata mode does not send it.
+    function logTimelockCall(
+        TimelockCall memory call
+    ) public pure {
+        _logTimelockCall(call);
     }
 
     function _bubble(
@@ -311,3 +374,6 @@ abstract contract OpsLive is Script {
         return keccak256(bytes(a)) == keccak256(bytes(b));
     }
 }
+
+/// @notice Concrete caller so other scripts can build Safe-ready timelock calldata without copying it.
+contract OpsTimelockCall is OpsLive { }

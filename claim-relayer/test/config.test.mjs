@@ -242,6 +242,38 @@ describe("retired and superseded addresses", () => {
     assert.equal(err.current, current);
   });
 
+  it("refuses a governanceTimelock on the forbidden list", async () => {
+    const filePath = await writeBook({
+      BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },
+      governanceTimelock: RETIRED_ESCROW,
+    });
+    const err = loadConfigError({ ADDRESS_BOOK_PATH: filePath });
+    assert.equal(err.error, "retired_or_superseded_address");
+    assert.match(err.message, new RegExp(RETIRED_ESCROW));
+    assert.match(err.message, new RegExp(BOOKED_SEPOLIA_ESCROW));
+
+    const denylistBook = await writeBook({
+      BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },
+      governanceTimelock: SUPERSEDED_DENYLIST,
+    });
+    const denylistErr = loadConfigError({ ADDRESS_BOOK_PATH: denylistBook });
+    assert.equal(denylistErr.error, "retired_or_superseded_address");
+    assert.match(denylistErr.message, new RegExp(SUPERSEDED_DENYLIST));
+    assert.match(denylistErr.message, new RegExp(CURRENT_DENYLIST));
+  });
+
+  it("keeps a governanceTimelock that is not forbidden", async () => {
+    const next = "0x1111111111111111111111111111111111111111";
+    const filePath = await writeBook({
+      BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },
+      governanceTimelock: next,
+    });
+    const loaded = loadAddressBook(filePath);
+    assert.equal(loaded.governanceTimelock, next);
+    const config = loadConfig({ ADDRESS_BOOK_PATH: filePath });
+    assert.equal(config.governanceTimelock, next);
+  });
+
   it("refuses a dispute panel that is the retired escrow", async () => {
     const filePath = await writeBook({
       BotAttestationEscrow: { address: BOOKED_SEPOLIA_ESCROW, startBlock: BOOKED_SEPOLIA_ESCROW_START_BLOCK },

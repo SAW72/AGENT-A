@@ -20,13 +20,13 @@ contract OpsTimelockModeTest is Test {
     }
 
     function test_newTimelockUnsetReverts() public {
-        vm.setEnv("NEW_TIMELOCK", "");
         Denylist denylist = new Denylist();
+        op.useNewTimelock(address(0));
         vm.expectRevert(bytes("OpsLive: NEW_TIMELOCK unset"));
         op.performOwnerCall(address(denylist), abi.encodeWithSelector(Denylist.addExact.selector, bytes32("id")));
 
         vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK unset"));
-        deploy.readAddress("NEW_TIMELOCK", "DeployEscrow: NEW_TIMELOCK unset");
+        deploy.requireTimelock(address(this), address(0));
     }
 
     function test_calldataModeWhenOwnerIsTimelock() public {
@@ -40,8 +40,8 @@ contract OpsTimelockModeTest is Test {
         bytes32 id = keccak256("listed");
         bytes memory inner = abi.encodeWithSelector(Denylist.addExact.selector, id);
         bytes32 salt = keccak256("salt");
-        vm.setEnv("NEW_TIMELOCK", vm.toString(address(timelock)));
-        vm.setEnv("TIMELOCK_SALT", vm.toString(salt));
+        op.useNewTimelock(address(timelock));
+        op.useSalt(salt);
 
         bool sent = op.performOwnerCall(address(denylist), inner);
         assertFalse(sent);
@@ -62,7 +62,7 @@ contract OpsTimelockModeTest is Test {
         assertEq(denylist.owner(), core);
 
         TimelockController timelock = _timelock();
-        vm.setEnv("NEW_TIMELOCK", vm.toString(address(timelock)));
+        op.useNewTimelock(address(timelock));
         bytes32 id = keccak256("legacy");
         bytes memory inner = abi.encodeWithSelector(Denylist.addExact.selector, id);
         assertFalse(op.timelockMode(denylist.owner(), address(timelock)));
@@ -77,7 +77,7 @@ contract OpsTimelockModeTest is Test {
         Denylist denylist = new Denylist();
         TimelockController timelock = _timelock();
         address owner = denylist.owner();
-        vm.setEnv("NEW_TIMELOCK", vm.toString(address(timelock)));
+        op.useNewTimelock(address(timelock));
         vm.expectRevert(bytes("OpsLive: owner is neither NEW_TIMELOCK nor pre-migration CORE"));
         op.timelockMode(owner, address(timelock));
         vm.expectRevert(bytes("OpsLive: owner is neither NEW_TIMELOCK nor pre-migration CORE"));
@@ -86,11 +86,48 @@ contract OpsTimelockModeTest is Test {
     }
 
     function test_saltDefaultsWhenUnset() public {
-        vm.setEnv("TIMELOCK_SALT", "");
+        op.useDefaultSalt();
         bytes memory data = hex"1234";
         address target = address(0xBEEF);
         assertEq(op.resolveSalt(target, data), keccak256(abi.encode(op.SALT_TAG(), target, data)));
         assertEq(op.SALT_REPEAT_HINT(), "set TIMELOCK_SALT to a fresh value to repeat an identical call");
+    }
+
+    function test_repeatedAddRevertsUntilSaltChanges() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(this);
+        address[] memory executors = new address[](1);
+        executors[0] = address(0);
+        TimelockController timelock = new TimelockController(300, proposers, executors, address(0));
+
+        Denylist denylist = new Denylist();
+        denylist.transferOwnership(address(timelock));
+        vm.prank(address(timelock));
+        denylist.acceptOwnership();
+
+        bytes32 id = keccak256("again");
+        bytes memory addData = abi.encodeWithSelector(Denylist.addExact.selector, id);
+        bytes memory removeData = abi.encodeWithSelector(Denylist.remove.selector, id, uint8(Denylist.Bucket.Exact));
+        op.useDefaultSalt();
+        bytes32 salt = op.resolveSalt(address(denylist), addData);
+        _scheduleAndExecute(timelock, address(denylist), addData, salt);
+        assertTrue(denylist.listing(uint8(Denylist.Bucket.Exact), id).active);
+
+        bytes32 removeSalt = op.resolveSalt(address(denylist), removeData);
+        _scheduleAndExecute(timelock, address(denylist), removeData, removeSalt);
+        assertFalse(denylist.listing(uint8(Denylist.Bucket.Exact), id).active);
+        assertTrue(timelock.isOperationDone(timelock.hashOperation(address(denylist), 0, addData, bytes32(0), salt)));
+
+        vm.expectRevert(bytes(string.concat("OpsLive: operation already exists; ", op.SALT_REPEAT_HINT())));
+        op.timelockCalldata(address(timelock), address(denylist), addData, salt);
+
+        bytes32 fresh = keccak256("fresh-salt");
+        op.useSalt(fresh);
+        OpsLive.TimelockCall memory again = op.timelockCalldata(address(timelock), address(denylist), addData, fresh);
+        assertEq(again.salt, fresh);
+        assertFalse(timelock.isOperation(again.operationId));
+        timelock.schedule(address(denylist), 0, addData, bytes32(0), fresh, timelock.getMinDelay());
+        assertTrue(timelock.isOperationPending(again.operationId));
     }
 
     function _assertSchedule(
@@ -134,6 +171,18 @@ contract OpsTimelockModeTest is Test {
         assembly {
             sel := mload(add(blob, 32))
         }
+    }
+
+    function _scheduleAndExecute(
+        TimelockController timelock,
+        address target,
+        bytes memory data,
+        bytes32 salt
+    ) internal {
+        uint256 delay = timelock.getMinDelay();
+        timelock.schedule(target, 0, data, bytes32(0), salt, delay);
+        vm.warp(block.timestamp + delay);
+        timelock.execute(target, 0, data, bytes32(0), salt);
     }
 
     function _timelock() internal returns (TimelockController) {

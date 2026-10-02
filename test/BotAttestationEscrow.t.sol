@@ -1669,9 +1669,8 @@ contract DeployEscrowGuardTest is Test {
     }
 
     function test_readAddressZeroReverts() public {
-        vm.setEnv("DENYLIST", vm.toString(address(0)));
         vm.expectRevert(bytes("DeployEscrow: DENYLIST unset"));
-        deploy.readAddress("DENYLIST", "DeployEscrow: DENYLIST unset");
+        deploy.rejectZero(address(0), "DeployEscrow: DENYLIST unset");
     }
 
     function test_liveStackOnly() public {
@@ -1705,34 +1704,12 @@ contract DeployEscrowGuardTest is Test {
         deploy.requireBroadcastSender(address(0x5D46));
     }
 
-    function test_deployWiresDepsAndHandsOffToTimelock() public {
+    function test_deployRejectsCoreGovernance() public {
         Denylist denylist = new Denylist();
         Vault vault = new Vault(address(denylist));
         DisputePanel panel = new DisputePanel();
-        address timelock = deploy.LIVE_TIMELOCK();
-
-        BotAttestationEscrow escrow = deploy.deploy(address(denylist), address(vault), address(panel), timelock);
-        assertEq(address(escrow.denylist()), address(denylist));
-        assertEq(address(escrow.vault()), address(vault));
-        assertEq(address(escrow.disputePanel()), address(panel));
-        assertEq(escrow.governance(), timelock);
-        assertEq(escrow.owner(), address(deploy));
-        assertEq(escrow.pendingOwner(), timelock);
-
-        Denylist swapped = new Denylist();
-        vm.expectRevert(BotAttestationEscrow.NotGovernance.selector);
-        escrow.setDenylist(address(swapped));
-
-        vm.prank(timelock);
-        escrow.acceptOwnership();
-        assertEq(escrow.owner(), timelock);
-        assertEq(escrow.pendingOwner(), address(0));
-
-        vm.expectRevert(BotAttestationEscrow.NotGovernance.selector);
-        escrow.setDenylist(address(swapped));
-
-        vm.prank(timelock);
-        escrow.setDenylist(address(swapped));
-        assertEq(address(escrow.denylist()), address(swapped));
+        address core = deploy.LIVE_TIMELOCK();
+        vm.expectRevert(bytes("DeployEscrow: NEW_TIMELOCK is pre-migration CORE"));
+        deploy.deploy(address(denylist), address(vault), address(panel), core);
     }
 }

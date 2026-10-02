@@ -93,6 +93,20 @@ function walkAddressFields(node, visit) {
   }
 }
 
+/**
+ * `governanceTimelock` uses the same forbidden set as wallet-ux: the superseded pins plus
+ * addresses recorded under `retired` and `superseded`. A hit is refused. Null stays null.
+ * @param {unknown} value
+ * @param {Set<string>} forbidden
+ * @param {Map<string, string>} replacements
+ */
+function screenedGovernanceTimelock(value, forbidden, replacements) {
+  const governanceTimelock = optionalAddress(value);
+  if (!governanceTimelock) return null;
+  rejectRetiredAddress(governanceTimelock, { forbidden, replacements });
+  return governanceTimelock;
+}
+
 /** Lowercased addresses under retired.* and superseded.*, plus the SUPERSEDED pins. */
 export function forbiddenAddresses(raw) {
   const blocked = new Set(Object.values(SUPERSEDED).map((address) => address.toLowerCase()));
@@ -184,7 +198,7 @@ export function loadAddressBook(filePath = DEFAULT_ADDRESS_BOOK) {
     denylistAddress: optionalAddress(raw.Denylist?.address),
     vaultAddress: optionalAddress(raw.Vault?.address),
     coreTimelock: optionalAddress(raw.coreTimelock),
-    governanceTimelock: optionalAddress(raw.governanceTimelock),
+    governanceTimelock: screenedGovernanceTimelock(raw.governanceTimelock, forbidden, replacements),
     bvtAddress: bvtRaw === null || bvtRaw === undefined || String(bvtRaw).trim() === "" ? null : optionalAddress(bvtRaw),
     forbidden,
     replacements,

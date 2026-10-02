@@ -6,15 +6,18 @@ import { VmSafe } from "forge-std/Vm.sol";
 import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
 import { BotAttestationEscrow } from "../contracts/BotAttestationEscrow.sol";
 import { MigrateOwnershipToTimelock } from "./MigrateOwnershipToTimelock.s.sol";
+import { OpsLive, OpsTimelockCall } from "./OpsLive.sol";
 
 /// @notice Escrow-only deploy of BotAttestationEscrow against the live Base Sepolia stack.
 /// Does not deploy Denylist, Vault, or DisputePanel. `run` accepts only the live addresses.
-/// Immutable `governance` is `NEW_TIMELOCK`. There is no default. It must be exactly one of
-/// `LIVE_TIMELOCK` (pre-migration CORE) or a `TimelockController` that passes
-/// `MigrateOwnershipToTimelock.requireValidTimelock` (code, `getMinDelay() >= 300`,
+/// Immutable `governance` is `NEW_TIMELOCK`. There is no default. It must be a
+/// `TimelockController` that passes `MigrateOwnershipToTimelock.requireValidTimelock`
+/// (code that is not an EIP-7702 designator, not CORE, not the deployer, `getMinDelay() >= 300`,
 /// `EXPECTED_TIMELOCK`, the deploy-record role grants, the Safe checks, and no CORE roles).
-/// When `governanceTimelock` in the book is set, the timelock path must equal that address.
-/// After deploy: `transferOwnership` to that same address (Ownable2Step). That account must call
+/// When `governanceTimelock` in the book is set, that address must equal `NEW_TIMELOCK`.
+/// CORE is refused: a new escrow must not hand single-key governance back to that EOA.
+/// After deploy: `transferOwnership` to that timelock (Ownable2Step), and the script prints
+/// Safe-ready `schedule` / `execute` calldata for `acceptOwnership`. The timelock must call
 /// `acceptOwnership`. `createEscrow` and dependency swaps revert until it has accepted, and
 /// swaps also revert while ETH is locked (`lockedValue != 0`).
 /// Do not fund before accept. There is no production hot key for `setDenylist`.
@@ -36,13 +39,15 @@ contract DeployBotAttestationEscrow is Script {
     address public constant LIVE_DENYLIST = 0xeE76876bECcFc1B58fC06fF4E654a517d784B224;
     address public constant LIVE_VAULT = 0x1463D664fA467FBCDA4B05443434494f05e565bc;
     address public constant LIVE_DISPUTE_PANEL = 0x31a92f9A25396968E14d2b55B6B0BB1482ECf1Bb;
-    /// @dev Pre-migration CORE owner. Allowed as constructor `governance` until the timelock path is used.
+    /// @dev Pre-migration CORE owner. Refused as constructor `governance`.
     address public constant LIVE_TIMELOCK = 0x10CC9474b45625ADfd05C209f2518023484878D9;
 
     /// @dev Test-only. Broadcast uses a fresh `MigrateOwnershipToTimelock` and the real book.
     MigrateOwnershipToTimelock internal pinnedChecker;
     bool internal bookPinned;
     string internal pinnedBookPath;
+    OpsTimelockCall internal printer;
+    OpsLive.TimelockCall public lastAcceptCall;
 
     /// @dev Dry-run sender only. Not a key and not CORE_TIMELOCK.
     ///      Forge checks this account's real balance while estimating gas. This is the
@@ -88,7 +93,7 @@ contract DeployBotAttestationEscrow is Script {
         bookPinned = true;
     }
 
-    /// @notice `governance` is pre-migration CORE, or a controller that passes `requireValidTimelock`.
+    /// @notice `governance` must be a controller that passes `requireValidTimelock`. CORE reverts.
     /// @dev Anything else reverts before the escrow is created. `EXPECTED_TIMELOCK` has no default.
     ///      A set `governanceTimelock` in the book must equal the controller.
     function requireGovernance(
@@ -97,12 +102,10 @@ contract DeployBotAttestationEscrow is Script {
     ) public {
         requireAllowedChain();
         requireTimelock(deployer, timelock);
-        if (timelock == LIVE_TIMELOCK) {
-            console.log("pre-migration/legacy: governance is CORE_TIMELOCK");
-            return;
-        }
+        if (timelock == LIVE_TIMELOCK) revert("DeployEscrow: NEW_TIMELOCK is pre-migration CORE");
         if (timelock.code.length == 0) revert("MigrateOwnership: NEW_TIMELOCK has no code");
         MigrateOwnershipToTimelock checker = _timelockChecker();
+        if (checker.isDelegation(timelock)) revert("DeployEscrow: NEW_TIMELOCK is an EIP-7702 delegation");
         uint256 delay;
         try TimelockController(payable(timelock)).getMinDelay() returns (uint256 got) {
             delay = got;
@@ -179,6 +182,14 @@ contract DeployBotAttestationEscrow is Script {
         } catch {
             revert(unsetErr);
         }
+        rejectZero(a, unsetErr);
+    }
+
+    /// @notice Zero is the same failure as an unset env var.
+    function rejectZero(
+        address a,
+        string memory unsetErr
+    ) public pure {
         if (a == address(0)) revert(unsetErr);
     }
 
@@ -192,7 +203,10 @@ contract DeployBotAttestationEscrow is Script {
     ) public returns (BotAttestationEscrow escrow) {
         requireDeps(denylist, vault, panel);
         requireGovernance(msg.sender, timelock);
+        lastAcceptCall = _prepareAccept(timelock);
         escrow = _create(denylist, vault, panel, timelock);
+        if (address(escrow) != lastAcceptCall.target) revert("DeployEscrow: accept target mismatch");
+        _printer().logTimelockCall(lastAcceptCall);
     }
 
     function _create(
@@ -217,6 +231,7 @@ contract DeployBotAttestationEscrow is Script {
 
         address deployer = msg.sender;
         requireGovernance(deployer, timelock);
+        lastAcceptCall = _prepareAccept(timelock);
         if (broadcasting()) {
             requireBroadcastSender(deployer);
             console.log("BROADCAST Spencer-only");
@@ -227,6 +242,8 @@ contract DeployBotAttestationEscrow is Script {
 
         BotAttestationEscrow escrow = _create(denylist, vault, panel, timelock);
         vm.stopBroadcast();
+        if (address(escrow) != lastAcceptCall.target) revert("DeployEscrow: accept target mismatch");
+        _printer().logTimelockCall(lastAcceptCall);
 
         console.log("chainid", block.chainid);
         console.log("deployer", deployer);
@@ -240,6 +257,21 @@ contract DeployBotAttestationEscrow is Script {
         console.log("Do not write this address into deployments/base-sepolia.json.");
         console.log("Wiring is a separate PR after a human broadcast.");
         console.log("Agents must not --broadcast.");
+    }
+
+    /// @dev Predict the escrow address, then build `acceptOwnership` calldata before `new`.
+    function _prepareAccept(
+        address timelock
+    ) internal returns (OpsLive.TimelockCall memory call) {
+        OpsTimelockCall printer_ = _printer();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        bytes memory data = abi.encodeWithSelector(bytes4(keccak256("acceptOwnership()")));
+        call = printer_.timelockCalldata(timelock, predicted, data, printer_.resolveSalt(predicted, data));
+    }
+
+    function _printer() internal returns (OpsTimelockCall printer_) {
+        if (address(printer) == address(0)) printer = new OpsTimelockCall();
+        printer_ = printer;
     }
 
     function _timelockChecker() internal returns (MigrateOwnershipToTimelock checker) {
